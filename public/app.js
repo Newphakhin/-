@@ -638,15 +638,18 @@ function renderAuthView() {
   fullNameEl.textContent = state.user.full_name || state.user.username;
 
   if (state.user.role === 'admin') {
+    fullNameEl.textContent = '';
+    fullNameEl.classList.add('hidden');
     roleBadgeEl.className =
-      'inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-indigo-100 text-indigo-800 border border-indigo-200';
-    roleBadgeEl.innerHTML = '<i class="fa-solid fa-user-shield text-[10px]"></i> ผู้ดูแลระบบ (Admin)';
+      'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-indigo-100 text-indigo-800 border border-indigo-200';
+    roleBadgeEl.innerHTML = '<i class="fa-solid fa-user-shield text-[11px]"></i> แอดมิน';
 
     navTabBack.classList.remove('hidden');
     navTabBack.classList.add('flex');
     mobNavBack.classList.remove('hidden');
     mobNavBack.classList.add('flex');
   } else {
+    fullNameEl.classList.remove('hidden');
     roleBadgeEl.className =
       'inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200';
     roleBadgeEl.innerHTML = '<i class="fa-solid fa-user-check text-[10px]"></i> ผู้บันทึกข้อมูล (Operator)';

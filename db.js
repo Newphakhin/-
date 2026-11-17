@@ -157,149 +157,26 @@ function seedDatabase(forceReset = false) {
   }
 
   // 1. Seed users (Both admin and operator roles, password: 1234)
-  const userCount = db.prepare('SELECT COUNT(*) AS count FROM users').get().count;
-  if (userCount < 2) {
-    const upsertUser = db.prepare(
-      'INSERT OR REPLACE INTO users (id, username, password, full_name, role) VALUES (?, ?, ?, ?, ?)'
-    );
-    upsertUser.run(1, 'admin', hashPassword('1234'), 'สมชาย บริหารงาน (Admin)', 'admin');
-    upsertUser.run(2, 'user', hashPassword('1234'), 'วิภาวดี จัดคิวรถ (Operator)', 'operator');
+  const upsertUser = db.prepare(
+    'INSERT OR REPLACE INTO users (id, username, password, full_name, role) VALUES (?, ?, ?, ?, ?)'
+  );
+  const existingAdmin = db.prepare("SELECT id FROM users WHERE username = 'admin'").get();
+  if (!existingAdmin) {
+    upsertUser.run(1, 'admin', hashPassword('1234'), 'แอดมิน', 'admin');
+  } else {
+    db.prepare("UPDATE users SET full_name = 'แอดมิน' WHERE username = 'admin'").run();
+  }
+  const existingOperator = db.prepare("SELECT id FROM users WHERE username = 'user'").get();
+  if (!existingOperator) {
+    upsertUser.run(2, 'user', hashPassword('1234'), 'ผู้บันทึกข้อมูล', 'operator');
   }
 
-  // 2. Seed master_routes
-  const routeCount = db.prepare('SELECT COUNT(*) AS count FROM master_routes').get().count;
-  if (routeCount === 0) {
-    const insertRoute = db.prepare('INSERT INTO master_routes (name, active) VALUES (?, ?)');
-    const initialRoutes = [
-      ['นิคมอุตสาหกรรมอมตะซิตี้ ชลบุรี', 1],
-      ['ไซต์งานก่อสร้างรถไฟฟ้า สายสีม่วง', 1],
-      ['คลังสินค้าบางนา กม.18', 1],
-      ['โรงงานประกอบรถยนต์ ระยอง', 1],
-      ['ท่าเรือแหลมฉบัง ชลบุรี', 1],
-      ['นิคมอุตสาหกรรมโรจนะ อยุธยา', 1],
-      ['ศูนย์กระจายสินค้า วังน้อย (ปิดปรับปรุง)', 0]
-    ];
-    for (const [name, active] of initialRoutes) {
-      insertRoute.run(name, active);
-    }
-  }
-
-  // 3. Seed master_workers
-  const workerCount = db.prepare('SELECT COUNT(*) AS count FROM master_workers').get().count;
-  if (workerCount === 0) {
-    const insertWorker = db.prepare(
-      'INSERT INTO master_workers (name, default_route, active) VALUES (?, ?, ?)'
-    );
-    const initialWorkers = [
-      ['สมศักดิ์ ใจดี', 'นิคมอุตสาหกรรมอมตะซิตี้ ชลบุรี', 1],
-      ['ประยุทธ์ ขยันงาน', 'ไซต์งานก่อสร้างรถไฟฟ้า สายสีม่วง', 1],
-      ['มานะ อดทน', 'คลังสินค้าบางนา กม.18', 1],
-      ['กิตติพงศ์ รักงาน', 'โรงงานประกอบรถยนต์ ระยอง', 1],
-      ['วีระชัย สายลุย', 'ท่าเรือแหลมฉบัง ชลบุรี', 1],
-      ['ธนากร พร้อมลุย', '', 1],
-      ['อนุชา มั่นคง', 'นิคมอุตสาหกรรมโรจนะ อยุธยา', 1],
-      ['สุรพล พักงาน (ลาพักร้อน)', 'คลังสินค้าบางนา กม.18', 0]
-    ];
-    for (const [name, defaultRoute, active] of initialWorkers) {
-      insertWorker.run(name, defaultRoute, active);
-    }
-  }
-
-  // 4. Seed master_vehicles (All 20 license plates)
+  // 2. Seed master_vehicles (All 20 license plates)
   const vehicleCount = db.prepare('SELECT COUNT(*) AS count FROM master_vehicles').get().count;
   if (vehicleCount === 0) {
     const insertVehicle = db.prepare('INSERT INTO master_vehicles (plate, active) VALUES (?, ?)');
     for (const plate of INITIAL_VEHICLES) {
       insertVehicle.run(plate, 1);
-    }
-  }
-
-  // 5. Seed travel_logs with GPS status
-  const logCount = db.prepare('SELECT COUNT(*) AS count FROM travel_logs').get().count;
-  if (logCount === 0) {
-    const today = getTodayDateString();
-    const insertLog = db.prepare(`
-      INSERT INTO travel_logs (worker_name, travel_date, route, departure_time, arrival_time, vehicle_plate, gps_status, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
-    `);
-    const initialLogs = [
-      [
-        'สมศักดิ์ ใจดี',
-        today,
-        'นิคมอุตสาหกรรมอมตะซิตี้ ชลบุรี',
-        '06:30',
-        '08:00',
-        '34-5798',
-        buildSampleGpsStatus(
-          'กำลังวิ่ง 68 กม./ชม.',
-          'ON',
-          68,
-          13.4258,
-          101.0021,
-          'ถ.เทพรัตน (บางนา-ตราด) กม.57 ชลบุรี'
-        )
-      ],
-      [
-        'ประยุทธ์ ขยันงาน',
-        today,
-        'ไซต์งานก่อสร้างรถไฟฟ้า สายสีม่วง',
-        '07:00',
-        '08:15',
-        '34-4546',
-        buildSampleGpsStatus(
-          'จอดอยู่ (ติดเครื่อง)',
-          'ON',
-          0,
-          13.6892,
-          100.4912,
-          'ถ.สมเด็จพระเจ้าตากสิน แขวงดาวคะนอง กทม.'
-        )
-      ],
-      [
-        'มานะ อดทน',
-        today,
-        'คลังสินค้าบางนา กม.18',
-        '22:30',
-        '01:00',
-        '34-3771',
-        buildSampleGpsStatus(
-          'กำลังวิ่ง 54 กม./ชม.',
-          'ON',
-          54,
-          13.6195,
-          100.7428,
-          'ถ.บางนา-ตราด กม.18 บางพลี สมุทรปราการ'
-        )
-      ],
-      [
-        'กิตติพงศ์ รักงาน',
-        today,
-        'โรงงานประกอบรถยนต์ ระยอง',
-        '05:45',
-        '08:30',
-        '34-5793',
-        buildSampleGpsStatus(
-          'จอดอยู่ (ดับเครื่อง)',
-          'OFF',
-          0,
-          13.0145,
-          101.1422,
-          'นิคมฯ อีสเทิร์นซีบอร์ด ปลวกแดง ระยอง'
-        )
-      ]
-    ];
-    for (const row of initialLogs) {
-      insertLog.run(...row);
-    }
-  } else {
-    // Ensure existing logs have initial GPS status if empty
-    const emptyGpsLogs = db
-      .prepare("SELECT worker_name, vehicle_plate FROM travel_logs WHERE gps_status IS NULL OR gps_status = ''")
-      .all();
-    const updateGpsStmt = db.prepare('UPDATE travel_logs SET gps_status = ? WHERE worker_name = ?');
-    for (const row of emptyGpsLogs) {
-      const mock = generateMockCartrackGps(row.vehicle_plate || '34-5798');
-      updateGpsStmt.run(JSON.stringify(mock), row.worker_name);
     }
   }
 
