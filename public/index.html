@@ -1,0 +1,1200 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ระบบจัดการบันทึกข้อมูลการเดินทางของคนงาน | Worker Dispatch &amp; Cartrack GPS Cloud</title>
+
+  <!-- Google Fonts: Prompt -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Prompt:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&display=swap"
+    rel="stylesheet"
+  />
+
+  <!-- Font Awesome 6 -->
+  <link
+    rel="stylesheet"
+    href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"
+  />
+
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- SheetJS (xlsx) for Native Microsoft Excel (.xlsx) Export -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Prompt', 'sans-serif']
+          }
+        }
+      }
+    };
+  </script>
+
+  <!-- Custom Styles -->
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body class="min-h-screen flex flex-col bg-slate-100 text-slate-800 antialiased selection:bg-indigo-600 selection:text-white pb-20 md:pb-0">
+
+  <!-- ===================================================================== -->
+  <!-- TOAST NOTIFICATION CONTAINER                                          -->
+  <!-- ===================================================================== -->
+  <div id="toast-container" class="fixed top-4 right-4 z-[100] flex flex-col gap-2.5 max-w-md w-full pointer-events-none px-4 sm:px-0"></div>
+
+  <!-- ===================================================================== -->
+  <!-- CUSTOM MODAL CONTAINER (Replaces all browser alert/confirm)           -->
+  <!-- ===================================================================== -->
+  <div id="custom-modal-backdrop" class="fixed inset-0 z-[90] hidden items-center justify-center p-4 modal-backdrop">
+    <div id="custom-modal-box" class="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-lg w-full overflow-hidden modal-content-animate max-h-[90vh] overflow-y-auto">
+      <!-- Dynamically populated by app.js -->
+    </div>
+  </div>
+
+  <!-- ===================================================================== -->
+  <!-- 1. LOGIN SCREEN                                                       -->
+  <!-- ===================================================================== -->
+  <section id="login-screen" class="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 relative overflow-hidden">
+    <div class="absolute -top-32 -left-32 w-96 h-96 rounded-full bg-indigo-500/15 blur-3xl pointer-events-none"></div>
+    <div class="absolute -bottom-32 -right-32 w-96 h-96 rounded-full bg-sky-500/15 blur-3xl pointer-events-none"></div>
+
+    <div class="w-full max-w-4xl grid grid-cols-1 lg:grid-cols-12 bg-white/95 backdrop-blur-xl rounded-3xl shadow-2xl overflow-hidden border border-white/20">
+      
+      <!-- Left Column: System Branding & Cloud/GPS Features -->
+      <div class="lg:col-span-5 bg-gradient-to-br from-indigo-700 via-indigo-800 to-slate-900 text-white p-6 sm:p-8 flex flex-col justify-between relative">
+        <div>
+          <div class="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-white/15 backdrop-blur-sm text-indigo-100 text-xs font-medium mb-5 border border-white/10">
+            <i class="fa-solid fa-satellite-dish text-amber-300"></i>
+            <span>Supabase Cloud + Cartrack GPS</span>
+          </div>
+
+          <h1 class="text-2xl sm:text-3xl font-bold leading-snug tracking-tight mb-3">
+            ระบบจัดการบันทึกข้อมูลการเดินทางของคนงาน
+          </h1>
+          <p class="text-indigo-200 text-sm leading-relaxed">
+            Worker Dispatch &amp; Travel Log System — ระบบคลาวด์ออนไลน์ เปิดใช้งานได้ทั้งบนมือถือและคอมพิวเตอร์ พร้อมเชื่อมต่อพิกัดรถ Cartrack GPS
+          </p>
+
+          <div class="mt-6 space-y-3.5 text-xs text-indigo-100/90">
+            <div class="flex items-start gap-3">
+              <div class="w-7 h-7 rounded-lg bg-white/10 flex items-center justify-center shrink-0 mt-0.5">
+                <i class="fa-solid fa-cloud-arrow-up text-sky-300"></i>
+              </div>
+              <div>
+                <p class="font-semibold text-white">ฐานข้อมูลคลาวด์ 6 ตารางหลัก &amp; โควต้าพื้นที่</p>
+                <p class="text-indigo-200/80">รองรับ Supabase PostgreSQL + Local Fallback &amp; แจ้งเตือนเมื่อข้อมูลใกล้เต็ม/เต็ม</p>
+              </div>
+            </div>
+            <div class="flex items-start gap-3">
+              <div class="w-7 h-7 rounded-lg bg-white/10 flex items-center justify-center shrink-0 mt-0.5">
+                <i class="fa-solid fa-location-crosshairs text-emerald-300"></i>
+              </div>
+              <div>
+                <p class="font-semibold text-white">เชื่อมต่อ Cartrack Fleet GPS API</p>
+                <p class="text-indigo-200/80">เช็กตำแหน่งรถ ความเร็ว สถานะเครื่องยนต์ และเปิดนำทางด้วย Google Maps</p>
+              </div>
+            </div>
+            <div class="flex items-start gap-3">
+              <div class="w-7 h-7 rounded-lg bg-white/10 flex items-center justify-center shrink-0 mt-0.5">
+                <i class="fa-solid fa-mobile-screen-button text-amber-300"></i>
+              </div>
+              <div>
+                <p class="font-semibold text-white">Mobile-First Responsive &amp; Export Excel/CSV</p>
+                <p class="text-indigo-200/80">แสดงผลเป็นการ์ดบนมือถือ ตารางบนคอมพิวเตอร์ พร้อมส่งออก Excel (.xlsx) และ CSV</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="mt-6 pt-4 border-t border-white/15 flex items-center justify-between text-xs text-indigo-200">
+          <span><i class="fa-solid fa-shield-halved mr-1.5"></i>Role-Based Access Control</span>
+          <span class="font-mono bg-white/10 px-2 py-0.5 rounded">v2.0 Cloud</span>
+        </div>
+      </div>
+
+      <!-- Right Column: Login Form & Quick Demo Fill (2 Roles) -->
+      <div class="lg:col-span-7 p-6 sm:p-10 flex flex-col justify-center">
+        <div class="mb-5">
+          <h2 class="text-xl sm:text-2xl font-bold text-slate-900 flex items-center gap-2.5">
+            <i class="fa-solid fa-right-to-bracket text-indigo-600"></i>
+            <span>เข้าสู่ระบบปฏิบัติงาน</span>
+          </h2>
+          <p class="text-sm text-slate-500 mt-1">
+            กรอกชื่อผู้ใช้งานและรหัสผ่าน หรือคลิกปุ่มกรอกข้อมูลทดลองใช้ด่วนด้านล่าง
+          </p>
+        </div>
+
+        <!-- Login Error Alert -->
+        <div id="login-error-box" class="hidden mb-4 p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-sm items-start gap-2.5">
+          <i class="fa-solid fa-circle-exclamation text-rose-600 mt-0.5 shrink-0"></i>
+          <span id="login-error-text"></span>
+        </div>
+
+        <!-- Login Form -->
+        <form id="login-form" class="space-y-4" novalidate>
+          <div>
+            <label for="login-username" class="block text-sm font-medium text-slate-700 mb-1">
+              ชื่อผู้ใช้งาน (Username)
+            </label>
+            <div class="relative">
+              <span class="absolute inset-y-0 left-0 pl-3.5 flex items-center text-slate-400 pointer-events-none">
+                <i class="fa-solid fa-user"></i>
+              </span>
+              <input
+                type="text"
+                id="login-username"
+                name="username"
+                value="admin"
+                autocomplete="username"
+                placeholder="เช่น admin หรือ user"
+                required
+                class="w-full min-h-[44px] pl-10 pr-4 py-2.5 rounded-xl border border-slate-300 bg-slate-50/60 focus:bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 transition"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label for="login-password" class="block text-sm font-medium text-slate-700 mb-1">
+              รหัสผ่าน (Password)
+            </label>
+            <div class="relative">
+              <span class="absolute inset-y-0 left-0 pl-3.5 flex items-center text-slate-400 pointer-events-none">
+                <i class="fa-solid fa-lock"></i>
+              </span>
+              <input
+                type="password"
+                id="login-password"
+                name="password"
+                autocomplete="current-password"
+                placeholder="กรอกรหัสผ่าน (1234)"
+                required
+                class="w-full min-h-[44px] pl-10 pr-12 py-2.5 rounded-xl border border-slate-300 bg-slate-50/60 focus:bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 transition"
+              />
+              <button
+                type="button"
+                id="toggle-password-btn"
+                title="แสดง/ซ่อนรหัสผ่าน"
+                class="absolute inset-y-0 right-0 px-3.5 flex items-center text-slate-400 hover:text-indigo-600 focus:outline-none transition cursor-pointer min-h-[44px]"
+              >
+                <i id="toggle-password-icon" class="fa-solid fa-eye"></i>
+              </button>
+            </div>
+          </div>
+
+          <button
+            type="submit"
+            id="btn-login-submit"
+            class="w-full min-h-[46px] py-3 px-5 rounded-xl bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white font-semibold text-sm shadow-lg shadow-indigo-600/25 flex items-center justify-center gap-2 transition cursor-pointer"
+          >
+            <i class="fa-solid fa-unlock-keyhole"></i>
+            <span>เข้าสู่ระบบ (Sign In)</span>
+          </button>
+        </form>
+
+        <!-- Quick Demo Account Fill Section (2 Roles) -->
+        <div class="mt-6 pt-5 border-t border-slate-200">
+          <div class="flex items-center justify-between mb-3">
+            <span class="text-xs font-semibold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+              <i class="fa-solid fa-bolt text-amber-500"></i>
+              คลิกเพื่อกรอกข้อมูลทดลองใช้ด่วน (สำหรับ 2 บทบาท)
+            </span>
+          </div>
+
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <!-- 1. Admin Quick Fill -->
+            <button
+              type="button"
+              id="btn-quick-admin"
+              class="min-h-[44px] group text-left p-3.5 rounded-xl border-2 border-indigo-200 hover:border-indigo-600 bg-indigo-50/60 hover:bg-indigo-50 transition flex flex-col justify-between cursor-pointer"
+            >
+              <div class="flex items-center justify-between w-full mb-1">
+                <span class="inline-flex items-center gap-1.5 text-xs font-bold text-indigo-950">
+                  <i class="fa-solid fa-user-shield text-indigo-600"></i>
+                  ผู้ดูแลระบบ (Admin)
+                </span>
+                <span class="text-[11px] font-mono bg-indigo-600 text-white px-2 py-0.5 rounded-md font-semibold">
+                  admin / 1234
+                </span>
+              </div>
+              <p class="text-[11px] text-slate-600 leading-snug">
+                เข้าถึงได้ทั้ง <strong>หน้าบันทึกข้อมูล</strong>, <strong>ระบบหลังบ้าน (Dropdown)</strong>, <strong>ตั้งค่า Cartrack GPS &amp; โควต้า</strong> และปุ่มรีเซ็ต/ล้างข้อมูล
+              </p>
+            </button>
+
+            <!-- 2. Operator Quick Fill -->
+            <button
+              type="button"
+              id="btn-quick-operator"
+              class="min-h-[44px] group text-left p-3.5 rounded-xl border-2 border-emerald-200 hover:border-emerald-600 bg-emerald-50/60 hover:bg-emerald-50 transition flex flex-col justify-between cursor-pointer"
+            >
+              <div class="flex items-center justify-between w-full mb-1">
+                <span class="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-950">
+                  <i class="fa-solid fa-user-check text-emerald-600"></i>
+                  ผู้บันทึกข้อมูลทั่วไป (Operator)
+                </span>
+                <span class="text-[11px] font-mono bg-emerald-600 text-white px-2 py-0.5 rounded-md font-semibold">
+                  user / 1234
+                </span>
+              </div>
+              <p class="text-[11px] text-slate-600 leading-snug">
+                เข้าถึงได้เฉพาะ <strong>หน้าบันทึกข้อมูล</strong> และ <strong>ดูสถานะ GPS</strong> (ซ่อนเมนูหลังบ้านและตั้งค่า API)
+              </p>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================================================================== -->
+  <!-- 2. MAIN APPLICATION SHELL (After Login)                               -->
+  <!-- ===================================================================== -->
+  <div id="app-screen" class="hidden min-h-screen flex-col">
+
+    <!-- Cloud / Local Database Top Status Banner -->
+    <div id="cloud-fallback-banner" class="bg-slate-900 text-slate-200 text-xs py-2 px-4 border-b border-slate-800">
+      <div class="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-2">
+        <div class="flex items-center gap-2">
+          <span id="db-mode-dot" class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+          <span id="db-mode-text">
+            <strong>สถานะฐานข้อมูล: เชื่อมต่อฐานข้อมูล SQLite จริงเรียบร้อยแล้ว (database.sqlite)</strong> — บันทึกข้อมูลถาวรในเครื่อง และพร้อมซิงค์ขึ้น Supabase Cloud ทันทีเมื่อใส่ค่าใน <code>.env</code>
+          </span>
+        </div>
+        <span class="text-[11px] text-slate-400 hidden sm:inline">
+          <i class="fa-solid fa-satellite-dish text-emerald-400 mr-1"></i>Cartrack GPS Proxy Ready
+        </span>
+      </div>
+    </div>
+
+    <!-- Top Navigation Bar -->
+    <header class="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-200 shadow-sm">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div class="flex flex-wrap items-center justify-between py-2.5 gap-3">
+          
+          <!-- App Brand -->
+          <div class="flex items-center gap-3">
+            <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-600 to-indigo-800 text-white flex items-center justify-center shadow-md shadow-indigo-600/20 shrink-0">
+              <i class="fa-solid fa-truck-fast text-lg"></i>
+            </div>
+            <div>
+              <h1 class="text-sm sm:text-lg font-bold text-slate-900 leading-tight">
+                ระบบจัดการบันทึกข้อมูลการเดินทางของคนงาน
+              </h1>
+              <p class="text-[11px] text-slate-500 hidden sm:block">
+                Worker Dispatch &amp; Cartrack GPS Cloud System
+              </p>
+            </div>
+          </div>
+
+          <!-- Desktop Navigation Tabs & User Controls -->
+          <div class="flex flex-wrap items-center gap-2 sm:gap-3">
+            <nav class="hidden md:flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200/80">
+              <button
+                type="button"
+                id="nav-tab-front"
+                class="min-h-[40px] px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold transition flex items-center gap-1.5 bg-indigo-600 text-white shadow-sm cursor-pointer"
+              >
+                <i class="fa-solid fa-clipboard-list"></i>
+                <span>หน้าบันทึกข้อมูล &amp; GPS</span>
+              </button>
+
+              <!-- Admin Only Tab: Back-Office Dropdown & GPS Settings -->
+              <button
+                type="button"
+                id="nav-tab-back"
+                class="hidden min-h-[40px] px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold transition items-center gap-1.5 text-slate-600 hover:text-slate-900 cursor-pointer"
+              >
+                <i class="fa-solid fa-sliders"></i>
+                <span>ระบบหลังบ้าน &amp; ตั้งค่า GPS</span>
+              </button>
+            </nav>
+
+            <!-- Admin Only Button: Reset Database -->
+            <button
+              type="button"
+              id="btn-reset-db"
+              title="รีเซ็ตข้อมูลฐานข้อมูลกลับเป็นค่าเริ่มต้น (Seed Data)"
+              class="hidden min-h-[44px] px-3 py-2 rounded-xl border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-800 text-xs font-semibold items-center gap-1.5 transition cursor-pointer"
+            >
+              <i class="fa-solid fa-rotate-left"></i>
+              <span class="hidden lg:inline">รีเซ็ตฐานข้อมูล</span>
+            </button>
+
+            <!-- User Profile & Role Badge -->
+            <div class="flex items-center gap-2.5 pl-2 border-l border-slate-200">
+              <div class="text-right">
+                <div class="flex items-center justify-end gap-1.5">
+                  <span id="nav-user-fullname" class="text-xs sm:text-sm font-semibold text-slate-800"></span>
+                </div>
+                <div class="flex items-center justify-end gap-1 mt-0.5">
+                  <span id="nav-user-role-badge" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold"></span>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                id="btn-logout"
+                title="ออกจากระบบ"
+                class="min-h-[44px] px-3 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
+              >
+                <i class="fa-solid fa-right-from-bracket"></i>
+                <span class="hidden sm:inline">ออกจากระบบ</span>
+              </button>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Content Container -->
+    <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-5 space-y-6">
+
+      <!-- =================================================================== -->
+      <!-- STORAGE QUOTA WARNING BANNER (>= 80% Amber / 100% Red Alert)        -->
+      <!-- =================================================================== -->
+      <div id="storage-warning-banner" class="hidden rounded-2xl p-4 border shadow-sm transition-all">
+        <!-- Dynamically populated by app.js when quota >= 80% -->
+      </div>
+
+      <!-- =================================================================== -->
+      <!-- VIEW A: FRONT-OFFICE (หน้าบันทึกข้อมูลหลัก & Cartrack GPS)           -->
+      <!-- =================================================================== -->
+      <div id="view-front-office" class="space-y-6">
+
+        <!-- KPI Summary Bar -->
+        <div class="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
+          <div class="bg-white rounded-2xl p-4 border border-slate-200/90 shadow-sm flex items-center gap-3.5">
+            <div class="w-11 h-11 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center text-lg shrink-0">
+              <i class="fa-solid fa-users-gear"></i>
+            </div>
+            <div>
+              <p class="text-xs text-slate-500">รายการบันทึกเดินทาง</p>
+              <p class="text-xl font-bold text-slate-900">
+                <span id="stat-total-logs">0</span>
+                <span class="text-xs font-normal text-slate-500">/ <span id="stat-max-quota">100</span></span>
+              </p>
+            </div>
+          </div>
+
+          <div class="bg-white rounded-2xl p-4 border border-slate-200/90 shadow-sm flex items-center gap-3.5">
+            <div class="w-11 h-11 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center text-lg shrink-0">
+              <i class="fa-solid fa-calendar-check"></i>
+            </div>
+            <div>
+              <p class="text-xs text-slate-500">คิวเดินทางวันนี้</p>
+              <p class="text-xl font-bold text-slate-900"><span id="stat-today-logs">0</span> <span class="text-xs font-normal text-slate-500">รายการ</span></p>
+            </div>
+          </div>
+
+          <div class="bg-white rounded-2xl p-4 border border-slate-200/90 shadow-sm flex items-center gap-3.5">
+            <div class="w-11 h-11 rounded-xl bg-sky-50 text-sky-600 flex items-center justify-center text-lg shrink-0">
+              <i class="fa-solid fa-user-clock"></i>
+            </div>
+            <div>
+              <p class="text-xs text-slate-500">คนงานพร้อมจัดคิว</p>
+              <p class="text-xl font-bold text-slate-900">
+                <span id="stat-available-workers">0</span>
+                <span class="text-xs font-normal text-slate-500">/ <span id="stat-active-workers">0</span> คน</span>
+              </p>
+            </div>
+          </div>
+
+          <div class="bg-white rounded-2xl p-4 border border-slate-200/90 shadow-sm flex items-center gap-3.5">
+            <div class="w-11 h-11 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center text-lg shrink-0">
+              <i class="fa-solid fa-satellite-dish"></i>
+            </div>
+            <div>
+              <p class="text-xs text-slate-500">เส้นทาง &amp; รถพร้อม GPS</p>
+              <p class="text-xl font-bold text-slate-900">
+                <span id="stat-active-routes">0</span> <span class="text-xs font-normal text-slate-500">ที่หมาย</span>
+                <span class="text-slate-300 mx-1">|</span>
+                <span id="stat-active-vehicles">20</span> <span class="text-xs font-normal text-slate-500">คัน</span>
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Travel Log Form Section -->
+        <section id="form-card-container" class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden transition-all">
+          <!-- Form Card Header -->
+          <div id="form-header-bar" class="px-5 sm:px-6 py-4 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
+            <div class="flex items-center gap-2.5">
+              <div id="form-mode-icon" class="w-8 h-8 rounded-lg bg-indigo-600 text-white flex items-center justify-center text-sm shrink-0">
+                <i class="fa-solid fa-plus"></i>
+              </div>
+              <div>
+                <h2 id="form-mode-title" class="text-base font-bold text-slate-900">
+                  บันทึกข้อมูลการเดินทางของคนงาน
+                </h2>
+                <p id="form-mode-subtitle" class="text-xs text-slate-500">
+                  บังคับเลือกเฉพาะ "ชื่อคนงาน (PK)" ส่วนช่องอื่นเว้นว่างได้ พร้อมระบบเช็กพิกัด Cartrack GPS
+                </p>
+              </div>
+            </div>
+
+            <!-- Edit Mode Indicator Badge & Cancel Button -->
+            <div id="edit-mode-badge-group" class="hidden items-center gap-2">
+              <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-100 text-amber-900 border border-amber-300 text-xs font-semibold">
+                <i class="fa-solid fa-pen-to-square"></i>
+                <span>โหมดแก้ไข: <strong id="edit-mode-worker-label"></strong></span>
+              </span>
+              <button
+                type="button"
+                id="btn-cancel-edit-top"
+                class="min-h-[38px] px-3 py-1 rounded-lg bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 text-xs font-medium transition cursor-pointer"
+              >
+                <i class="fa-solid fa-xmark mr-1"></i>ยกเลิกแก้ไข
+              </button>
+            </div>
+          </div>
+
+          <!-- Form Body -->
+          <form id="travel-log-form" class="p-5 sm:p-6 space-y-5" novalidate>
+            <div class="grid grid-cols-1 md:grid-cols-12 gap-5">
+              
+              <!-- 1. ชื่อคนงาน (PK) [บังคับเลือก] -->
+              <div class="md:col-span-5">
+                <label for="form-worker" class="block text-sm font-semibold text-slate-700 mb-1.5">
+                  <i class="fa-solid fa-id-badge text-indigo-600 mr-1"></i>
+                  ชื่อคนงาน (PK) <span class="text-rose-600 font-bold">* [บังคับเลือก]</span>
+                </label>
+                <select
+                  id="form-worker"
+                  class="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 disabled:bg-slate-100 disabled:text-slate-500 disabled:cursor-not-allowed transition"
+                >
+                  <option value="">-- เลือกรายชื่อคนงาน --</option>
+                </select>
+                <p id="worker-pk-hint" class="mt-1.5 text-[11px] text-slate-500 flex items-center gap-1">
+                  <i class="fa-solid fa-key text-amber-500"></i>
+                  <span>ใช้ชื่อคนงานเป็น Primary Key (ห้ามบันทึกซ้ำคนเดิม)</span>
+                </p>
+              </div>
+
+              <!-- 2. วันที่หมายที่ต้องไป -->
+              <div class="md:col-span-3">
+                <label for="form-date" class="block text-sm font-semibold text-slate-700 mb-1.5">
+                  <i class="fa-regular fa-calendar-days text-indigo-600 mr-1"></i>
+                  วันที่หมายที่ต้องไป
+                </label>
+                <input
+                  type="date"
+                  id="form-date"
+                  class="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 transition"
+                />
+                <p id="form-date-thai-preview" class="mt-1.5 text-[11px] text-indigo-600 font-medium"></p>
+              </div>
+
+              <!-- 6. ทะเบียนรถ + ปุ่ม "เช็กพิกัด GPS รถคันนี้" -->
+              <div class="md:col-span-4">
+                <label for="form-vehicle" class="block text-sm font-semibold text-slate-700 mb-1.5">
+                  <i class="fa-solid fa-truck-front text-indigo-600 mr-1"></i>
+                  ทะเบียนรถ &amp; เช็กพิกัด Cartrack GPS
+                </label>
+                <div class="flex gap-2">
+                  <select
+                    id="form-vehicle"
+                    class="flex-1 min-h-[44px] px-3 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 transition"
+                  >
+                    <option value="">-- เลือกทะเบียนรถ --</option>
+                  </select>
+                  <button
+                    type="button"
+                    id="btn-check-vehicle-gps"
+                    title="ดึงตำแหน่งและความเร็วปัจจุบันของรถคันนี้จาก Cartrack GPS"
+                    class="min-h-[44px] px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white text-xs font-semibold shadow-sm flex items-center gap-1.5 shrink-0 transition cursor-pointer"
+                  >
+                    <i class="fa-solid fa-location-crosshairs"></i>
+                    <span>เช็กพิกัด GPS รถคันนี้</span>
+                  </button>
+                </div>
+
+                <!-- Live GPS Preview Box right under Vehicle select -->
+                <div id="form-gps-preview-card" class="hidden mt-2 p-2.5 rounded-xl bg-emerald-50/90 border border-emerald-200 text-xs">
+                  <!-- Populated dynamically when checking GPS -->
+                </div>
+              </div>
+
+              <!-- 3. เส้นทาง / ที่หมาย (Combo Box + Auto-fill + Action Buttons) -->
+              <div class="md:col-span-6">
+                <div class="flex flex-wrap items-center justify-between gap-2 mb-1.5">
+                  <label for="form-route" class="text-sm font-semibold text-slate-700 flex items-center gap-1.5">
+                    <i class="fa-solid fa-map-location-dot text-indigo-600"></i>
+                    <span>เส้นทาง / ที่หมาย (Combo Box)</span>
+                  </label>
+
+                  <!-- Badge: ไซต์งานประจำ -->
+                  <span
+                    id="badge-default-route"
+                    class="hidden items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300 text-[11px] font-semibold"
+                  >
+                    <i class="fa-solid fa-star text-emerald-600 text-[10px]"></i>
+                    <span>ไซต์งานประจำ</span>
+                  </span>
+                </div>
+
+                <div class="relative" id="route-combobox-wrapper">
+                  <input
+                    type="text"
+                    id="form-route"
+                    autocomplete="off"
+                    placeholder="เลือกจากรายการ Dropdown หรือพิมพ์ระบุเส้นทาง/ที่หมายเองได้อิสระ..."
+                    class="w-full min-h-[44px] pl-3.5 pr-10 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 transition"
+                  />
+                  <button
+                    type="button"
+                    id="btn-toggle-route-dropdown"
+                    title="คลิกเพื่อเลือกจากรายการเส้นทาง/ที่หมาย"
+                    class="absolute inset-y-0 right-0 px-3.5 flex items-center text-slate-400 hover:text-indigo-600 transition cursor-pointer"
+                  >
+                    <i class="fa-solid fa-chevron-down text-xs"></i>
+                  </button>
+
+                  <div
+                    id="route-combobox-menu"
+                    class="hidden absolute left-0 right-0 mt-1.5 bg-white rounded-xl shadow-xl border border-slate-200 max-h-60 overflow-y-auto z-30 divide-y divide-slate-100"
+                  ></div>
+                </div>
+
+                <!-- Smart Route Action Buttons -->
+                <div class="mt-2 flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    id="btn-reset-default-route"
+                    class="hidden min-h-[36px] px-2.5 py-1 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 text-xs font-medium items-center gap-1 transition cursor-pointer"
+                  >
+                    <i class="fa-solid fa-rotate-left text-[11px]"></i>
+                    <span>รีเซ็ตเป็นไซต์งานประจำ</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    id="btn-add-to-routes"
+                    class="min-h-[36px] px-2.5 py-1 rounded-lg bg-sky-50 hover:bg-sky-100 text-sky-800 border border-sky-200 text-xs font-medium inline-flex items-center gap-1 transition disabled:opacity-45 disabled:cursor-not-allowed cursor-pointer"
+                  >
+                    <i class="fa-solid fa-plus text-[11px]"></i>
+                    <span>+ เพิ่มในรายการที่หมาย</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    id="btn-set-worker-default-route"
+                    class="min-h-[36px] px-2.5 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200 text-xs font-medium inline-flex items-center gap-1 transition disabled:opacity-45 disabled:cursor-not-allowed cursor-pointer"
+                  >
+                    <i class="fa-solid fa-thumbtack text-[11px]"></i>
+                    <span>ตั้งเป็นไซต์งานประจำคนนี้</span>
+                  </button>
+                </div>
+              </div>
+
+              <!-- 4. เวลาขับรถ (ออกเดินทาง) -->
+              <div class="md:col-span-3">
+                <label for="form-departure" class="block text-sm font-semibold text-slate-700 mb-1.5">
+                  <i class="fa-regular fa-clock text-indigo-600 mr-1"></i>
+                  เวลาขับรถ (ออกเดินทาง)
+                </label>
+                <input
+                  type="time"
+                  id="form-departure"
+                  class="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 transition"
+                />
+                <p class="mt-1.5 text-[11px] text-slate-500">รูปแบบเวลา 24 ชั่วโมง (HH:mm)</p>
+              </div>
+
+              <!-- 5. เวลาที่ต้องไปถึงไซต์งาน -->
+              <div class="md:col-span-3">
+                <label for="form-arrival" class="block text-sm font-semibold text-slate-700 mb-1.5">
+                  <i class="fa-solid fa-flag-checkered text-indigo-600 mr-1"></i>
+                  เวลาที่ต้องไปถึงไซต์งาน
+                </label>
+                <input
+                  type="time"
+                  id="form-arrival"
+                  class="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 transition"
+                />
+                <div id="form-duration-preview" class="mt-1.5 text-[11px] text-slate-500 flex items-center gap-1">
+                  <i class="fa-solid fa-stopwatch text-slate-400"></i>
+                  <span>คำนวณระยะเวลาอัตโนมัติ (รองรับข้ามวัน)</span>
+                </div>
+              </div>
+
+            </div>
+
+            <!-- Form Footer Actions -->
+            <div class="pt-4 border-t border-slate-200/80 flex flex-wrap items-center justify-between gap-3">
+              <div class="text-xs text-slate-500 flex items-center gap-2">
+                <span class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-indigo-50 text-indigo-600 shrink-0">
+                  <i class="fa-solid fa-circle-info text-[11px]"></i>
+                </span>
+                <span>หากเว้นว่างบางช่อง ระบบจะแสดง Custom Modal แจ้งรายชื่อช่องที่ว่างให้กดยืนยันก่อนบันทึก</span>
+              </div>
+
+              <div class="flex flex-wrap items-center gap-2.5 w-full sm:w-auto justify-end">
+                <button
+                  type="button"
+                  id="btn-clear-form"
+                  class="min-h-[44px] px-4 py-2.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 text-sm font-medium flex items-center gap-1.5 transition cursor-pointer"
+                >
+                  <i class="fa-solid fa-eraser"></i>
+                  <span>ล้างฟอร์ม</span>
+                </button>
+
+                <button
+                  type="button"
+                  id="btn-cancel-edit"
+                  class="hidden min-h-[44px] px-4 py-2.5 rounded-xl border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-900 text-sm font-semibold items-center gap-1.5 transition cursor-pointer"
+                >
+                  <i class="fa-solid fa-xmark"></i>
+                  <span>ยกเลิกการแก้ไข</span>
+                </button>
+
+                <button
+                  type="submit"
+                  id="btn-submit-log"
+                  class="flex-1 sm:flex-initial min-h-[44px] px-6 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white text-sm font-semibold shadow-md shadow-indigo-600/20 flex items-center justify-center gap-2 transition cursor-pointer"
+                >
+                  <i id="btn-submit-icon" class="fa-solid fa-floppy-disk"></i>
+                  <span id="btn-submit-text">บันทึกข้อมูลการเดินทาง</span>
+                </button>
+              </div>
+            </div>
+          </form>
+        </section>
+
+        <!-- ================================================================= -->
+        <!-- STORAGE USAGE METER (แถบสถานะพื้นที่เก็บข้อมูล & โควต้า)             -->
+        <!-- ================================================================= -->
+        <section id="storage-quota-meter-card" class="bg-white rounded-2xl border border-slate-200 p-4 sm:p-5 shadow-sm">
+          <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+            <div class="flex items-start sm:items-center gap-3">
+              <div id="quota-meter-icon" class="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0">
+                <i class="fa-solid fa-hard-drive"></i>
+              </div>
+              <div>
+                <div class="flex flex-wrap items-center gap-2">
+                  <h3 class="text-sm font-bold text-slate-900">แถบสถานะพื้นที่เก็บข้อมูล (Storage Usage Meter)</h3>
+                  <span id="quota-status-badge" class="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800">
+                    ปกติ
+                  </span>
+                </div>
+                <p id="quota-meter-subtitle" class="text-xs text-slate-500 mt-0.5">
+                  จำนวนรายการบันทึกปัจจุบันเทียบกับขีดจำกัด (Supabase Free Tier 500MB / Max Record Limit)
+                </p>
+              </div>
+            </div>
+
+            <!-- Admin Quick Quota Simulator Buttons (For testing 80% Warning & 100% Full HTTP 507) -->
+            <div id="admin-quota-test-controls" class="hidden flex-wrap items-center gap-1.5 text-xs">
+              <span class="text-slate-400 text-[11px] mr-1">จำลองโควต้าด่วน:</span>
+              <button
+                type="button"
+                data-sim-quota="warning"
+                class="px-2.5 py-1 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 font-semibold transition cursor-pointer"
+              >
+                ทดสอบใกล้เต็ม (80%)
+              </button>
+              <button
+                type="button"
+                data-sim-quota="full"
+                class="px-2.5 py-1 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-800 border border-rose-300 font-semibold transition cursor-pointer"
+              >
+                ทดสอบข้อมูลเต็ม (100%)
+              </button>
+              <button
+                type="button"
+                data-sim-quota="normal"
+                class="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 font-semibold transition cursor-pointer"
+              >
+                โควต้าปกติ (100)
+              </button>
+            </div>
+          </div>
+
+          <div class="mt-3.5">
+            <div class="flex items-center justify-between text-xs font-semibold mb-1.5">
+              <span id="quota-progress-label" class="text-slate-700">ใช้งานแล้ว 4 / 100 รายการ (4%)</span>
+              <span id="quota-db-size-label" class="text-slate-500 font-mono text-[11px]">Supabase Cloud Limit: 500 MB</span>
+            </div>
+            <div class="w-full h-3 bg-slate-100 rounded-full overflow-hidden border border-slate-200/80">
+              <div
+                id="quota-progress-bar"
+                class="h-full bg-indigo-600 rounded-full transition-all duration-300"
+                style="width: 4%"
+              ></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ================================================================= -->
+        <!-- TRAVEL LOGS TABLE (Desktop) & RESPONSIVE CARDS (Mobile)           -->
+        <!-- ================================================================= -->
+        <section id="logs-section-anchor" class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+          <!-- Table Toolbar -->
+          <div class="p-4 sm:p-5 bg-slate-50 border-b border-slate-200 flex flex-col gap-4">
+            <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
+              <div>
+                <h3 class="text-base font-bold text-slate-900 flex flex-wrap items-center gap-2">
+                  <i class="fa-solid fa-table-list text-indigo-600"></i>
+                  <span>รายการบันทึกการเดินทาง &amp; สถานะ Cartrack GPS</span>
+                  <span id="table-count-badge" class="px-2.5 py-0.5 rounded-full bg-indigo-100 text-indigo-800 text-xs font-bold">0 รายการ</span>
+                </h3>
+                <p class="text-xs text-slate-500 mt-0.5">
+                  กดปุ่มแผนที่เพื่อเปิด Google Maps นำทางบนมือถือ หรือกดปุ่มอัปเดตพิกัด GPS เพื่อซิงค์ตำแหน่งรถล่าสุด
+                </p>
+              </div>
+
+              <!-- Action Buttons: Sync All GPS, Export Excel (.xlsx), Export CSV (UTF-8 BOM) -->
+              <div class="flex flex-wrap items-center gap-2">
+                <!-- Sync All GPS Button -->
+                <button
+                  type="button"
+                  id="btn-sync-all-gps"
+                  class="min-h-[44px] px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs sm:text-sm font-semibold shadow-sm flex items-center gap-1.5 transition cursor-pointer"
+                >
+                  <i id="sync-all-gps-icon" class="fa-solid fa-satellite-dish"></i>
+                  <span>อัปเดตพิกัด GPS ทั้งหมด</span>
+                </button>
+
+                <!-- Export Excel (.xlsx) -->
+                <button
+                  type="button"
+                  id="btn-export-excel"
+                  class="min-h-[44px] px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs sm:text-sm font-semibold shadow-sm flex items-center gap-1.5 transition cursor-pointer"
+                >
+                  <i class="fa-solid fa-file-excel"></i>
+                  <span>ส่งออก Excel (.xlsx)</span>
+                </button>
+
+                <!-- Export CSV (UTF-8 with BOM) -->
+                <button
+                  type="button"
+                  id="btn-export-csv"
+                  class="min-h-[44px] px-3.5 py-2 rounded-xl bg-teal-600 hover:bg-teal-700 text-white text-xs sm:text-sm font-semibold shadow-sm flex items-center gap-1.5 transition cursor-pointer"
+                >
+                  <i class="fa-solid fa-file-csv"></i>
+                  <span>ส่งออกไฟล์ CSV</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- Filters Row: Date Filter & Search Input -->
+            <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 pt-2 border-t border-slate-200/70">
+              <div class="flex items-center bg-white rounded-xl border border-slate-300 px-3 py-1.5 gap-2 min-h-[44px]">
+                <i class="fa-regular fa-calendar text-slate-400 text-xs"></i>
+                <input
+                  type="date"
+                  id="filter-date"
+                  title="กรองตามวันที่เดินทาง"
+                  class="text-xs sm:text-sm text-slate-800 focus:outline-none bg-transparent flex-1"
+                />
+                <button
+                  type="button"
+                  id="btn-filter-today"
+                  class="px-2.5 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-semibold transition cursor-pointer"
+                >
+                  วันนี้
+                </button>
+                <button
+                  type="button"
+                  id="btn-filter-all-dates"
+                  class="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-semibold transition cursor-pointer"
+                >
+                  ทั้งหมด
+                </button>
+              </div>
+
+              <div class="relative flex-1">
+                <span class="absolute inset-y-0 left-0 pl-3.5 flex items-center text-slate-400 pointer-events-none">
+                  <i class="fa-solid fa-magnifying-glass text-xs"></i>
+                </span>
+                <input
+                  type="text"
+                  id="filter-search"
+                  placeholder="ค้นหาชื่อคนงาน, วันที่, เส้นทาง, ทะเบียนรถ, พิกัดถนน..."
+                  class="w-full min-h-[44px] pl-9 pr-9 py-2 rounded-xl border border-slate-300 bg-white text-xs sm:text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                />
+                <button
+                  type="button"
+                  id="btn-clear-search"
+                  title="ล้างคำค้นหา"
+                  class="hidden absolute inset-y-0 right-0 pr-3 items-center text-slate-400 hover:text-slate-600 cursor-pointer"
+                >
+                  <i class="fa-solid fa-circle-xmark text-sm"></i>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Desktop Standard Table View (md and up) -->
+          <div class="hidden md:block overflow-x-auto">
+            <table class="w-full text-left border-collapse">
+              <thead>
+                <tr class="bg-slate-100/80 border-b border-slate-200 text-slate-600 text-xs font-semibold uppercase tracking-wider">
+                  <th class="py-3.5 px-4">ชื่อคนงาน (PK)</th>
+                  <th class="py-3.5 px-4">วันที่หมายที่ต้องไป</th>
+                  <th class="py-3.5 px-4">เส้นทาง / ที่หมาย</th>
+                  <th class="py-3.5 px-3 text-center">เวลาขับรถ - ถึงไซต์</th>
+                  <th class="py-3.5 px-3 text-center">ระยะเวลาเดินทาง</th>
+                  <th class="py-3.5 px-4">ทะเบียนรถ</th>
+                  <th class="py-3.5 px-4">สถานะ Cartrack GPS</th>
+                  <th class="py-3.5 px-4 text-right">จัดการ</th>
+                </tr>
+              </thead>
+              <tbody id="logs-table-body" class="divide-y divide-slate-200/80 text-sm">
+                <!-- Populated dynamically by app.js -->
+              </tbody>
+            </table>
+          </div>
+
+          <!-- Mobile Responsive Cards View (Below md) -->
+          <div id="logs-mobile-cards" class="md:hidden divide-y divide-slate-200 p-3 space-y-3 bg-slate-50/50">
+            <!-- Populated dynamically by app.js -->
+          </div>
+        </section>
+
+      </div>
+
+      <!-- =================================================================== -->
+      <!-- VIEW B: BACK-OFFICE (4 ส่วนจัดการหลัก: Dropdown & ตั้งค่า GPS - Admin) -->
+      <!-- =================================================================== -->
+      <div id="view-back-office" class="hidden space-y-6">
+
+        <!-- Back-Office Banner -->
+        <div class="bg-gradient-to-r from-indigo-900 via-indigo-800 to-slate-900 rounded-2xl p-5 sm:p-6 text-white shadow-md flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+          <div class="space-y-1">
+            <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/15 text-amber-300 text-xs font-semibold">
+              <i class="fa-solid fa-user-shield"></i>
+              <span>Back-Office &amp; Cartrack GPS Settings (เฉพาะ Admin)</span>
+            </div>
+            <h2 class="text-lg sm:text-xl font-bold">
+              จัดการตัวเลือก Dropdown &amp; ตั้งค่าการเชื่อมต่อ Cartrack GPS (4 ส่วนหลัก)
+            </h2>
+            <p class="text-xs sm:text-sm text-indigo-100/90">
+              แก้ไขข้อมูลคนงาน, เส้นทาง หรือทะเบียนรถ จะอัปเดตเชื่อมโยง (Cascade Update) ไปยัง <code>travel_logs</code> และ <code>default_route</code> อัตโนมัติ
+            </p>
+          </div>
+
+          <button
+            type="button"
+            id="btn-back-to-front"
+            class="min-h-[44px] self-start md:self-center px-4 py-2.5 rounded-xl bg-white text-indigo-900 hover:bg-indigo-50 text-xs sm:text-sm font-bold shadow-sm flex items-center gap-2 shrink-0 transition cursor-pointer"
+          >
+            <i class="fa-solid fa-arrow-left"></i>
+            <span>กลับหน้าบันทึกข้อมูลหลัก</span>
+          </button>
+        </div>
+
+        <!-- PART 4: ตั้งค่าการเชื่อมต่อ Cartrack GPS & โควต้าพื้นที่ (/api/settings/gps) -->
+        <section class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+          <div class="p-4 sm:p-5 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
+            <div class="flex items-center gap-3">
+              <div class="w-10 h-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center text-base">
+                <i class="fa-solid fa-satellite-dish"></i>
+              </div>
+              <div>
+                <h3 class="text-base font-bold text-slate-900">
+                  ส่วนการตั้งค่า: เชื่อมต่อ Cartrack GPS API &amp; โควต้าพื้นที่เก็บข้อมูล
+                </h3>
+                <p class="text-xs text-slate-500">
+                  API Endpoint: <code>/api/settings/gps</code> (จัดเก็บในตาราง <code>system_settings</code>)
+                </p>
+              </div>
+            </div>
+
+            <span id="gps-mode-status-pill" class="px-3 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+              โหมดจำลองข้อมูล (Mock GPS Mode)
+            </span>
+          </div>
+
+          <form id="form-gps-settings" class="p-5 sm:p-6 space-y-5">
+            <div class="grid grid-cols-1 md:grid-cols-12 gap-5">
+              
+              <!-- Mode Toggle Switch -->
+              <div class="md:col-span-6 p-4 rounded-2xl bg-indigo-50/60 border border-indigo-100 flex items-center justify-between gap-4">
+                <div>
+                  <p class="text-sm font-bold text-slate-900 flex items-center gap-2">
+                    <i class="fa-solid fa-flask text-indigo-600"></i>
+                    <span>โหมดทดสอบจำลองพิกัด (Mock GPS Mode)</span>
+                  </p>
+                  <p class="text-xs text-slate-600 mt-0.5">
+                    เปิดเพื่อสุ่มจำลองพิกัดรถในไทย (ความเร็ว, สถานะเครื่องยนต์, ถนน และลิงก์ Google Maps) หรือปิดเพื่อยิง Cartrack Live API จริง
+                  </p>
+                </div>
+                <label class="relative inline-flex items-center cursor-pointer shrink-0">
+                  <input type="checkbox" id="setting-mock-mode" class="sr-only peer" checked />
+                  <div class="w-12 h-7 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-6 after:w-6 after:transition-all peer-checked:bg-emerald-600"></div>
+                </label>
+              </div>
+
+              <!-- Max Storage Limit -->
+              <div class="md:col-span-6 p-4 rounded-2xl bg-amber-50/50 border border-amber-200/80">
+                <label for="setting-max-limit" class="block text-sm font-bold text-slate-900 mb-1">
+                  <i class="fa-solid fa-database text-amber-600 mr-1"></i>
+                  ขีดจำกัดจำนวนรายการบันทึกสูงสุด (<code>max_storage_limit</code>)
+                </label>
+                <div class="flex items-center gap-2">
+                  <input
+                    type="number"
+                    id="setting-max-limit"
+                    min="1"
+                    max="100000"
+                    value="100"
+                    required
+                    class="w-36 min-h-[44px] px-3.5 py-2 rounded-xl border border-slate-300 bg-white text-sm font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                  />
+                  <span class="text-xs text-slate-600">รายการ (แจ้งเตือนสีเหลืองที่ 80% และบล็อก HTTP 507 เมื่อครบ 100%)</span>
+                </div>
+              </div>
+
+              <!-- Cartrack API URL -->
+              <div class="md:col-span-5">
+                <label for="setting-api-url" class="block text-xs font-semibold text-slate-700 mb-1">
+                  Cartrack API Endpoint URL
+                </label>
+                <input
+                  type="url"
+                  id="setting-api-url"
+                  placeholder="https://fleetapi-th.cartrack.com/rest/vehicles/status"
+                  class="w-full min-h-[44px] px-3.5 py-2 rounded-xl border border-slate-300 bg-white text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                />
+              </div>
+
+              <!-- Cartrack Username -->
+              <div class="md:col-span-3">
+                <label for="setting-api-username" class="block text-xs font-semibold text-slate-700 mb-1">
+                  Cartrack Username
+                </label>
+                <input
+                  type="text"
+                  id="setting-api-username"
+                  placeholder="เช่น FLEET_USER_TH"
+                  class="w-full min-h-[44px] px-3.5 py-2 rounded-xl border border-slate-300 bg-white text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                />
+              </div>
+
+              <!-- Cartrack API Key -->
+              <div class="md:col-span-4">
+                <label for="setting-api-key" class="block text-xs font-semibold text-slate-700 mb-1">
+                  Cartrack API Key / Password
+                </label>
+                <input
+                  type="password"
+                  id="setting-api-key"
+                  placeholder="กรอก API Key สำหรับ Basic Auth / Bearer"
+                  class="w-full min-h-[44px] px-3.5 py-2 rounded-xl border border-slate-300 bg-white text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                />
+              </div>
+            </div>
+
+            <!-- Test Result Box -->
+            <div id="gps-test-result-box" class="hidden p-3.5 rounded-xl border text-xs sm:text-sm"></div>
+
+            <div class="pt-3 border-t border-slate-200 flex flex-wrap items-center justify-end gap-2.5">
+              <button
+                type="button"
+                id="btn-test-gps-api"
+                class="min-h-[44px] px-4 py-2 rounded-xl border border-indigo-300 bg-indigo-50 hover:bg-indigo-100 text-indigo-800 text-xs sm:text-sm font-semibold flex items-center gap-2 transition cursor-pointer"
+              >
+                <i class="fa-solid fa-plug-circle-check"></i>
+                <span>ทดสอบการเชื่อมต่อ API</span>
+              </button>
+
+              <button
+                type="submit"
+                class="min-h-[44px] px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs sm:text-sm font-semibold shadow-sm flex items-center gap-2 transition cursor-pointer"
+              >
+                <i class="fa-solid fa-floppy-disk"></i>
+                <span>บันทึกการตั้งค่า GPS &amp; โควต้า</span>
+              </button>
+            </div>
+          </form>
+        </section>
+
+        <!-- PARTS 1, 2, 3: 3 Master Data Management Columns -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+          <!-- 1. จัดการรายชื่อคนงาน (/api/master/workers) -->
+          <div class="bg-white rounded-2xl border border-slate-200 shadow-sm flex flex-col overflow-hidden">
+            <div class="p-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+              <div class="flex items-center gap-2.5">
+                <div class="w-9 h-9 rounded-xl bg-indigo-100 text-indigo-700 flex items-center justify-center">
+                  <i class="fa-solid fa-users"></i>
+                </div>
+                <div>
+                  <h3 class="text-sm font-bold text-slate-900">1. จัดการรายชื่อคนงาน</h3>
+                  <p class="text-[11px] text-slate-500">API: <code>/api/master/workers</code></p>
+                </div>
+              </div>
+              <span id="badge-count-workers" class="px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 text-xs font-bold">0</span>
+            </div>
+
+            <form id="form-add-worker" class="p-4 bg-indigo-50/40 border-b border-slate-200 space-y-2.5">
+              <p class="text-xs font-semibold text-slate-700">
+                <i class="fa-solid fa-user-plus text-indigo-600 mr-1"></i>เพิ่มคนงานใหม่
+              </p>
+              <input
+                type="text"
+                id="new-worker-name"
+                placeholder="ชื่อ-นามสกุลคนงาน *"
+                required
+                class="w-full min-h-[42px] px-3 py-2 rounded-xl border border-slate-300 bg-white text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600"
+              />
+              <div class="flex gap-2">
+                <input
+                  type="text"
+                  id="new-worker-default-route"
+                  list="datalist-master-routes"
+                  placeholder="ไซต์งานประจำ (เว้นว่างได้)"
+                  class="flex-1 min-h-[42px] px-3 py-2 rounded-xl border border-slate-300 bg-white text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                />
+                <button
+                  type="submit"
+                  class="min-h-[42px] px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shrink-0 flex items-center gap-1 transition cursor-pointer"
+                >
+                  <i class="fa-solid fa-plus"></i>
+                  <span>เพิ่ม</span>
+                </button>
+              </div>
+            </form>
+
+            <div id="master-workers-list" class="divide-y divide-slate-100 max-h-[460px] overflow-y-auto flex-1"></div>
+          </div>
+
+          <!-- 2. จัดการเส้นทาง / ที่หมาย (/api/master/routes) -->
+          <div class="bg-white rounded-2xl border border-slate-200 shadow-sm flex flex-col overflow-hidden">
+            <div class="p-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+              <div class="flex items-center gap-2.5">
+                <div class="w-9 h-9 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center">
+                  <i class="fa-solid fa-map-location-dot"></i>
+                </div>
+                <div>
+                  <h3 class="text-sm font-bold text-slate-900">2. จัดการเส้นทาง / ที่หมาย</h3>
+                  <p class="text-[11px] text-slate-500">API: <code>/api/master/routes</code></p>
+                </div>
+              </div>
+              <span id="badge-count-routes" class="px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 text-xs font-bold">0</span>
+            </div>
+
+            <form id="form-add-route" class="p-4 bg-emerald-50/40 border-b border-slate-200 space-y-2.5">
+              <p class="text-xs font-semibold text-slate-700">
+                <i class="fa-solid fa-circle-plus text-emerald-600 mr-1"></i>เพิ่มเส้นทาง / ไซต์งานใหม่
+              </p>
+              <div class="flex gap-2">
+                <input
+                  type="text"
+                  id="new-route-name"
+                  placeholder="ชื่อเส้นทาง หรือ ไซต์งานที่หมาย *"
+                  required
+                  class="flex-1 min-h-[42px] px-3 py-2 rounded-xl border border-slate-300 bg-white text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-emerald-600"
+                />
+                <button
+                  type="submit"
+                  class="min-h-[42px] px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold shrink-0 flex items-center gap-1 transition cursor-pointer"
+                >
+                  <i class="fa-solid fa-plus"></i>
+                  <span>เพิ่ม</span>
+                </button>
+              </div>
+            </form>
+
+            <div id="master-routes-list" class="divide-y divide-slate-100 max-h-[460px] overflow-y-auto flex-1"></div>
+          </div>
+
+          <!-- 3. จัดการทะเบียนรถ (/api/master/vehicles) -->
+          <div class="bg-white rounded-2xl border border-slate-200 shadow-sm flex flex-col overflow-hidden">
+            <div class="p-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+              <div class="flex items-center gap-2.5">
+                <div class="w-9 h-9 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center">
+                  <i class="fa-solid fa-truck-pickup"></i>
+                </div>
+                <div>
+                  <h3 class="text-sm font-bold text-slate-900">3. จัดการทะเบียนรถ</h3>
+                  <p class="text-[11px] text-slate-500">API: <code>/api/master/vehicles</code></p>
+                </div>
+              </div>
+              <span id="badge-count-vehicles" class="px-2.5 py-0.5 rounded-full bg-amber-50 text-amber-700 text-xs font-bold">0</span>
+            </div>
+
+            <form id="form-add-vehicle" class="p-4 bg-amber-50/40 border-b border-slate-200 space-y-2.5">
+              <p class="text-xs font-semibold text-slate-700">
+                <i class="fa-solid fa-circle-plus text-amber-600 mr-1"></i>เพิ่มทะเบียนรถใหม่
+              </p>
+              <div class="flex gap-2">
+                <input
+                  type="text"
+                  id="new-vehicle-plate"
+                  placeholder="เช่น 34-5798 หรือ 1นข 1609 *"
+                  required
+                  class="flex-1 min-h-[42px] px-3 py-2 rounded-xl border border-slate-300 bg-white text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-amber-600"
+                />
+                <button
+                  type="submit"
+                  class="min-h-[42px] px-3.5 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold shrink-0 flex items-center gap-1 transition cursor-pointer"
+                >
+                  <i class="fa-solid fa-plus"></i>
+                  <span>เพิ่ม</span>
+                </button>
+              </div>
+            </form>
+
+            <div id="master-vehicles-list" class="divide-y divide-slate-100 max-h-[460px] overflow-y-auto flex-1"></div>
+          </div>
+
+        </div>
+
+        <datalist id="datalist-master-routes"></datalist>
+      </div>
+
+    </main>
+
+    <!-- Mobile Bottom Navigation Bar (Visible on Mobile screens < md) -->
+    <nav id="mobile-bottom-nav" class="md:hidden fixed bottom-0 inset-x-0 z-40 bg-white border-t border-slate-200 shadow-lg flex items-center justify-around py-1.5 px-2">
+      <button
+        type="button"
+        id="mob-nav-form"
+        class="flex-1 min-h-[46px] flex flex-col items-center justify-center rounded-xl text-indigo-600 font-semibold text-[11px] gap-0.5 cursor-pointer"
+      >
+        <i class="fa-solid fa-pen-to-square text-base"></i>
+        <span>บันทึกคิวรถ</span>
+      </button>
+
+      <button
+        type="button"
+        id="mob-nav-table"
+        class="flex-1 min-h-[46px] flex flex-col items-center justify-center rounded-xl text-slate-600 font-medium text-[11px] gap-0.5 cursor-pointer"
+      >
+        <i class="fa-solid fa-satellite-dish text-base"></i>
+        <span>รายการ &amp; GPS</span>
+      </button>
+
+      <button
+        type="button"
+        id="mob-nav-backoffice"
+        class="hidden flex-1 min-h-[46px] flex-col items-center justify-center rounded-xl text-slate-600 font-medium text-[11px] gap-0.5 cursor-pointer"
+      >
+        <i class="fa-solid fa-sliders text-base"></i>
+        <span>ตั้งค่าหลังบ้าน</span>
+      </button>
+    </nav>
+
+    <!-- Footer -->
+    <footer class="bg-white border-t border-slate-200 py-4 mt-8">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between text-xs text-slate-500 gap-2">
+        <div>
+          <strong>Worker Dispatch &amp; Travel Log System v2.0</strong> — Supabase PostgreSQL Cloud + Cartrack GPS API
+        </div>
+        <div class="flex items-center gap-3">
+          <span><i class="fa-solid fa-circle text-[8px] text-emerald-500 mr-1"></i>พร้อมใช้งานบนมือถือและคอมพิวเตอร์</span>
+        </div>
+      </div>
+    </footer>
+
+  </div>
+
+  <!-- Frontend Logic -->
+  <script src="/app.js"></script>
+</body>
+</html>

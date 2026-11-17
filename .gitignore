@@ -1,0 +1,6 @@
+node_modules/
+.env
+database.sqlite*
+fallback_storage.json
+*.log
+.DS_Store
