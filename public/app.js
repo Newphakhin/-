@@ -1611,7 +1611,7 @@ function renderLogsTable() {
         </div>
       </div>
     `;
-    tbody.innerHTML = `<tr><td colspan="8">${emptyHtml}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="7">${emptyHtml}</td></tr>`;
     if (mobileCards) mobileCards.innerHTML = emptyHtml;
     return;
   }
@@ -1722,10 +1722,6 @@ function renderLogsTable() {
             }
           </td>
 
-          <td class="py-3.5 px-4">
-            ${buildGpsCellHtml(row)}
-          </td>
-
           <td class="py-3.5 px-4 text-right whitespace-nowrap">
             <div class="inline-flex items-center gap-1.5">
               <button
@@ -1814,53 +1810,6 @@ function renderLogsTable() {
                 </span>
               </div>
             </div>
-
-            ${
-              gps
-                ? `
-              <div class="p-2.5 rounded-xl ${
-                isMoving ? 'bg-emerald-50 border border-emerald-200' : 'bg-slate-100/80 border border-slate-200'
-              } text-xs space-y-2">
-                <div class="flex items-center justify-between">
-                  <span class="font-bold ${isMoving ? 'text-emerald-900' : 'text-slate-800'}">
-                    <i class="fa-solid fa-satellite-dish mr-1"></i>${escapeHtml(gps.status)}
-                  </span>
-                  <span class="text-[11px] text-slate-500">${escapeHtml(gps.updated_at || '')}</span>
-                </div>
-                ${
-                  gps.location
-                    ? `<p class="text-[11px] text-slate-600"><i class="fa-solid fa-location-dot text-rose-500 mr-1"></i>${escapeHtml(
-                        gps.location
-                      )}</p>`
-                    : ''
-                }
-                <div class="flex items-center gap-2 pt-1">
-                  ${
-                    gps.maps_url
-                      ? `<a
-                          href="${escapeHtml(gps.maps_url)}"
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          class="flex-1 min-h-[42px] rounded-xl bg-white hover:bg-sky-50 text-sky-700 border border-sky-200 font-bold text-xs flex items-center justify-center gap-1.5 shadow-sm"
-                        >
-                          <i class="fa-solid fa-map-location-dot"></i>
-                          <span>เปิด Google Maps นำทาง</span>
-                        </a>`
-                      : ''
-                  }
-                  <button
-                    type="button"
-                    data-refresh-gps="${escapeHtml(row.vehicle_plate)}"
-                    class="min-h-[42px] px-3.5 rounded-xl bg-white hover:bg-indigo-50 text-indigo-700 border border-indigo-200 font-semibold text-xs flex items-center gap-1 cursor-pointer"
-                  >
-                    <i class="fa-solid fa-rotate"></i>
-                    <span>รีเฟรชพิกัด</span>
-                  </button>
-                </div>
-              </div>
-            `
-                : ''
-            }
 
             <div class="flex items-center gap-2 pt-1">
               <button
@@ -2720,46 +2669,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
-  // 2. Quick Demo Credentials Fill Buttons (Admin & Operator)
-  const fillCredentials = (username, password, roleTitle) => {
-    const uInput = document.getElementById('login-username');
-    const pInput = document.getElementById('login-password');
-    const errBox = document.getElementById('login-error-box');
-    errBox?.classList.add('hidden');
-
-    if (uInput) {
-      uInput.value = username;
-      uInput.classList.remove('input-highlight-pulse');
-      void uInput.offsetWidth;
-      uInput.classList.add('input-highlight-pulse');
-    }
-    if (pInput) {
-      pInput.value = password;
-      pInput.classList.remove('input-highlight-pulse');
-      void pInput.offsetWidth;
-      pInput.classList.add('input-highlight-pulse');
-    }
-
-    showToast(
-      `กรอกข้อมูลทดลองใช้ (${roleTitle}) เรียบร้อยแล้ว`,
-      'info',
-      `Username: ${username} / Password: ${password} — กดปุ่ม "เข้าสู่ระบบ" ได้ทันที`
-    );
-    document.getElementById('btn-login-submit')?.focus();
-  };
-
-  document.getElementById('btn-quick-admin')?.addEventListener('click', () => {
-    fillCredentials('admin', '1234', 'ผู้ดูแลระบบ Admin');
-  });
-
-  document.getElementById('btn-quick-operator')?.addEventListener('click', () => {
-    fillCredentials('user', '1234', 'ผู้บันทึกข้อมูลทั่วไป Operator');
-  });
-
-  // 3. Login Form Submit
+  // 2. Login Form Submit (No Quick-Fill Buttons)
   document.getElementById('login-form')?.addEventListener('submit', async (e) => {
     e.preventDefault();
-    const username = document.getElementById('login-username').value.trim() || 'admin';
+    const username = document.getElementById('login-username').value.trim();
     const password = document.getElementById('login-password').value;
     const errBox = document.getElementById('login-error-box');
     const errText = document.getElementById('login-error-text');
@@ -3044,15 +2957,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('btn-export-excel')?.addEventListener('click', exportLogsToExcel);
   document.getElementById('btn-export-csv')?.addEventListener('click', exportLogsToCSV);
 
-  // 12. Back-Office Part 4: Cartrack GPS & Quota Settings Form & Test Button
+  // 12. Back-Office: Storage Quota Settings Form
   document.getElementById('form-gps-settings')?.addEventListener('submit', async (e) => {
     e.preventDefault();
     const payload = {
-      cartrack_mock_mode: document.getElementById('setting-mock-mode').checked,
-      max_storage_limit: Number(document.getElementById('setting-max-limit').value) || 100,
-      cartrack_api_url: document.getElementById('setting-api-url').value.trim(),
-      cartrack_username: document.getElementById('setting-api-username').value.trim(),
-      cartrack_api_key: document.getElementById('setting-api-key').value.trim()
+      ...state.gpsSettings,
+      max_storage_limit: Number(document.getElementById('setting-max-limit').value) || 100
     };
 
     const res = await apiFetch('/api/settings/gps', {
@@ -3069,52 +2979,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     state.storageQuota = res.data.storageQuota;
     populateGpsSettingsForm();
     renderStorageQuotaUI(false);
-    showToast(res.data?.message || 'บันทึกการตั้งค่าสำเร็จ', 'success');
-  });
-
-  document.getElementById('btn-test-gps-api')?.addEventListener('click', async () => {
-    const testBox = document.getElementById('gps-test-result-box');
-    const payload = {
-      cartrack_mock_mode: document.getElementById('setting-mock-mode').checked,
-      cartrack_api_url: document.getElementById('setting-api-url').value.trim(),
-      cartrack_username: document.getElementById('setting-api-username').value.trim(),
-      cartrack_api_key: document.getElementById('setting-api-key').value.trim()
-    };
-
-    const res = await apiFetch('/api/settings/gps/test', {
-      method: 'POST',
-      body: JSON.stringify(payload)
-    });
-
-    if (testBox) {
-      testBox.classList.remove('hidden');
-      if (res.ok && res.data?.success) {
-        testBox.className = 'p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs sm:text-sm';
-        testBox.innerHTML = `
-          <div class="font-bold flex items-center gap-2">
-            <i class="fa-solid fa-circle-check text-emerald-600"></i>
-            <span>${escapeHtml(res.data.message)}</span>
-          </div>
-          ${
-            res.data.sample
-              ? `<p class="text-xs text-emerald-700 mt-1">ตัวอย่างพิกัดที่ดึงได้: ทะเบียน <strong>${escapeHtml(
-                  res.data.sample.plate
-                )}</strong> — ${escapeHtml(res.data.sample.status)} (${escapeHtml(
-                  res.data.sample.location
-                )})</p>`
-              : ''
-          }
-        `;
-      } else {
-        testBox.className = 'p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs sm:text-sm';
-        testBox.innerHTML = `
-          <div class="font-bold flex items-center gap-2">
-            <i class="fa-solid fa-circle-exclamation text-rose-600"></i>
-            <span>${escapeHtml(res.data?.error || 'เชื่อมต่อไม่สำเร็จ')}</span>
-          </div>
-        `;
-      }
-    }
+    showToast('บันทึกการตั้งค่าขีดจำกัดพื้นที่เก็บข้อมูลเรียบร้อยแล้ว', 'success');
   });
 
   // 13. Back-Office Add Forms (Workers, Routes, Vehicles)

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>ระบบจัดการบันทึกข้อมูลการเดินทางของคนงาน | Worker Dispatch &amp; Cartrack GPS Cloud</title>
+  <title>ระบบจัดการบันทึกข้อมูลการเดินทางของคนงาน | Worker Dispatch &amp; Travel Log System</title>
 
   <!-- Google Fonts: Prompt -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -63,19 +63,19 @@
 
     <div class="w-full max-w-4xl grid grid-cols-1 lg:grid-cols-12 bg-white/95 backdrop-blur-xl rounded-3xl shadow-2xl overflow-hidden border border-white/20">
       
-      <!-- Left Column: System Branding & Cloud/GPS Features -->
+      <!-- Left Column: System Branding & Cloud Features -->
       <div class="lg:col-span-5 bg-gradient-to-br from-indigo-700 via-indigo-800 to-slate-900 text-white p-6 sm:p-8 flex flex-col justify-between relative">
         <div>
           <div class="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-white/15 backdrop-blur-sm text-indigo-100 text-xs font-medium mb-5 border border-white/10">
-            <i class="fa-solid fa-satellite-dish text-amber-300"></i>
-            <span>Supabase Cloud + Cartrack GPS</span>
+            <i class="fa-solid fa-truck-fast text-amber-300"></i>
+            <span>Supabase Cloud Dispatch System</span>
           </div>
 
           <h1 class="text-2xl sm:text-3xl font-bold leading-snug tracking-tight mb-3">
             ระบบจัดการบันทึกข้อมูลการเดินทางของคนงาน
           </h1>
           <p class="text-indigo-200 text-sm leading-relaxed">
-            Worker Dispatch &amp; Travel Log System — ระบบคลาวด์ออนไลน์ เปิดใช้งานได้ทั้งบนมือถือและคอมพิวเตอร์ พร้อมเชื่อมต่อพิกัดรถ Cartrack GPS
+            Worker Dispatch &amp; Travel Log System — ระบบคลาวด์ออนไลน์ เปิดใช้งานได้ทั้งบนมือถือและคอมพิวเตอร์ทุกที่
           </p>
 
           <div class="mt-6 space-y-3.5 text-xs text-indigo-100/90">
@@ -84,17 +84,17 @@
                 <i class="fa-solid fa-cloud-arrow-up text-sky-300"></i>
               </div>
               <div>
-                <p class="font-semibold text-white">ฐานข้อมูลคลาวด์ 6 ตารางหลัก &amp; โควต้าพื้นที่</p>
-                <p class="text-indigo-200/80">รองรับ Supabase PostgreSQL + Local Fallback &amp; แจ้งเตือนเมื่อข้อมูลใกล้เต็ม/เต็ม</p>
+                <p class="font-semibold text-white">ฐานข้อมูลคลาวด์ Supabase &amp; โควต้าพื้นที่</p>
+                <p class="text-indigo-200/80">รองรับ Supabase PostgreSQL + แจ้งเตือนเมื่อข้อมูลใกล้เต็ม/เต็ม</p>
               </div>
             </div>
             <div class="flex items-start gap-3">
               <div class="w-7 h-7 rounded-lg bg-white/10 flex items-center justify-center shrink-0 mt-0.5">
-                <i class="fa-solid fa-location-crosshairs text-emerald-300"></i>
+                <i class="fa-solid fa-route text-emerald-300"></i>
               </div>
               <div>
-                <p class="font-semibold text-white">เชื่อมต่อ Cartrack Fleet GPS API</p>
-                <p class="text-indigo-200/80">เช็กตำแหน่งรถ ความเร็ว สถานะเครื่องยนต์ และเปิดนำทางด้วย Google Maps</p>
+                <p class="font-semibold text-white">Auto-fill ไซต์งานประจำ &amp; Combo Box</p>
+                <p class="text-indigo-200/80">เลือกจากรายการหรือพิมพ์เอง พร้อมตั้งค่าไซต์ประจำและจัดการหลังบ้านได้ทันที</p>
               </div>
             </div>
             <div class="flex items-start gap-3">
@@ -115,15 +115,15 @@
         </div>
       </div>
 
-      <!-- Right Column: Login Form & Quick Demo Fill (2 Roles) -->
+      <!-- Right Column: Login Form (No Quick Demo Buttons) -->
       <div class="lg:col-span-7 p-6 sm:p-10 flex flex-col justify-center">
-        <div class="mb-5">
+        <div class="mb-6">
           <h2 class="text-xl sm:text-2xl font-bold text-slate-900 flex items-center gap-2.5">
             <i class="fa-solid fa-right-to-bracket text-indigo-600"></i>
             <span>เข้าสู่ระบบปฏิบัติงาน</span>
           </h2>
           <p class="text-sm text-slate-500 mt-1">
-            กรอกชื่อผู้ใช้งานและรหัสผ่าน หรือคลิกปุ่มกรอกข้อมูลทดลองใช้ด่วนด้านล่าง
+            กรุณากรอกชื่อผู้ใช้งานและรหัสผ่านเพื่อเข้าสู่ระบบ
           </p>
         </div>
 
@@ -147,9 +147,8 @@
                 type="text"
                 id="login-username"
                 name="username"
-                value="admin"
                 autocomplete="username"
-                placeholder="เช่น admin หรือ user"
+                placeholder="กรอกชื่อผู้ใช้งาน"
                 required
                 class="w-full min-h-[44px] pl-10 pr-4 py-2.5 rounded-xl border border-slate-300 bg-slate-50/60 focus:bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 transition"
               />
@@ -169,7 +168,7 @@
                 id="login-password"
                 name="password"
                 autocomplete="current-password"
-                placeholder="กรอกรหัสผ่าน (1234)"
+                placeholder="กรอกรหัสผ่าน"
                 required
                 class="w-full min-h-[44px] pl-10 pr-12 py-2.5 rounded-xl border border-slate-300 bg-slate-50/60 focus:bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 transition"
               />
@@ -193,58 +192,6 @@
             <span>เข้าสู่ระบบ (Sign In)</span>
           </button>
         </form>
-
-        <!-- Quick Demo Account Fill Section (2 Roles) -->
-        <div class="mt-6 pt-5 border-t border-slate-200">
-          <div class="flex items-center justify-between mb-3">
-            <span class="text-xs font-semibold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
-              <i class="fa-solid fa-bolt text-amber-500"></i>
-              คลิกเพื่อกรอกข้อมูลทดลองใช้ด่วน (สำหรับ 2 บทบาท)
-            </span>
-          </div>
-
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <!-- 1. Admin Quick Fill -->
-            <button
-              type="button"
-              id="btn-quick-admin"
-              class="min-h-[44px] group text-left p-3.5 rounded-xl border-2 border-indigo-200 hover:border-indigo-600 bg-indigo-50/60 hover:bg-indigo-50 transition flex flex-col justify-between cursor-pointer"
-            >
-              <div class="flex items-center justify-between w-full mb-1">
-                <span class="inline-flex items-center gap-1.5 text-xs font-bold text-indigo-950">
-                  <i class="fa-solid fa-user-shield text-indigo-600"></i>
-                  ผู้ดูแลระบบ (Admin)
-                </span>
-                <span class="text-[11px] font-mono bg-indigo-600 text-white px-2 py-0.5 rounded-md font-semibold">
-                  admin / 1234
-                </span>
-              </div>
-              <p class="text-[11px] text-slate-600 leading-snug">
-                เข้าถึงได้ทั้ง <strong>หน้าบันทึกข้อมูล</strong>, <strong>ระบบหลังบ้าน (Dropdown)</strong>, <strong>ตั้งค่า Cartrack GPS &amp; โควต้า</strong> และปุ่มรีเซ็ต/ล้างข้อมูล
-              </p>
-            </button>
-
-            <!-- 2. Operator Quick Fill -->
-            <button
-              type="button"
-              id="btn-quick-operator"
-              class="min-h-[44px] group text-left p-3.5 rounded-xl border-2 border-emerald-200 hover:border-emerald-600 bg-emerald-50/60 hover:bg-emerald-50 transition flex flex-col justify-between cursor-pointer"
-            >
-              <div class="flex items-center justify-between w-full mb-1">
-                <span class="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-950">
-                  <i class="fa-solid fa-user-check text-emerald-600"></i>
-                  ผู้บันทึกข้อมูลทั่วไป (Operator)
-                </span>
-                <span class="text-[11px] font-mono bg-emerald-600 text-white px-2 py-0.5 rounded-md font-semibold">
-                  user / 1234
-                </span>
-              </div>
-              <p class="text-[11px] text-slate-600 leading-snug">
-                เข้าถึงได้เฉพาะ <strong>หน้าบันทึกข้อมูล</strong> และ <strong>ดูสถานะ GPS</strong> (ซ่อนเมนูหลังบ้านและตั้งค่า API)
-              </p>
-            </button>
-          </div>
-        </div>
       </div>
     </div>
   </section>
@@ -264,7 +211,7 @@
           </span>
         </div>
         <span class="text-[11px] text-slate-400 hidden sm:inline">
-          <i class="fa-solid fa-satellite-dish text-emerald-400 mr-1"></i>Cartrack GPS Proxy Ready
+          <i class="fa-solid fa-cloud text-emerald-400 mr-1"></i>Cloud Sync Ready
         </span>
       </div>
     </div>
@@ -284,7 +231,7 @@
                 ระบบจัดการบันทึกข้อมูลการเดินทางของคนงาน
               </h1>
               <p class="text-[11px] text-slate-500 hidden sm:block">
-                Worker Dispatch &amp; Cartrack GPS Cloud System
+                Worker Dispatch &amp; Travel Log System
               </p>
             </div>
           </div>
@@ -298,17 +245,17 @@
                 class="min-h-[40px] px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold transition flex items-center gap-1.5 bg-indigo-600 text-white shadow-sm cursor-pointer"
               >
                 <i class="fa-solid fa-clipboard-list"></i>
-                <span>หน้าบันทึกข้อมูล &amp; GPS</span>
+                <span>หน้าบันทึกข้อมูล</span>
               </button>
 
-              <!-- Admin Only Tab: Back-Office Dropdown & GPS Settings -->
+              <!-- Admin Only Tab: Back-Office Dropdown & Quota Settings -->
               <button
                 type="button"
                 id="nav-tab-back"
                 class="hidden min-h-[40px] px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold transition items-center gap-1.5 text-slate-600 hover:text-slate-900 cursor-pointer"
               >
                 <i class="fa-solid fa-sliders"></i>
-                <span>ระบบหลังบ้าน &amp; ตั้งค่า GPS</span>
+                <span>ระบบหลังบ้าน (Dropdown)</span>
               </button>
             </nav>
 
@@ -405,10 +352,10 @@
 
           <div class="bg-white rounded-2xl p-4 border border-slate-200/90 shadow-sm flex items-center gap-3.5">
             <div class="w-11 h-11 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center text-lg shrink-0">
-              <i class="fa-solid fa-satellite-dish"></i>
+              <i class="fa-solid fa-van-shuttle"></i>
             </div>
             <div>
-              <p class="text-xs text-slate-500">เส้นทาง &amp; รถพร้อม GPS</p>
+              <p class="text-xs text-slate-500">เส้นทาง &amp; รถที่เปิดใช้งาน</p>
               <p class="text-xl font-bold text-slate-900">
                 <span id="stat-active-routes">0</span> <span class="text-xs font-normal text-slate-500">ที่หมาย</span>
                 <span class="text-slate-300 mx-1">|</span>
@@ -431,7 +378,7 @@
                   บันทึกข้อมูลการเดินทางของคนงาน
                 </h2>
                 <p id="form-mode-subtitle" class="text-xs text-slate-500">
-                  บังคับเลือกเฉพาะ "ชื่อคนงาน (PK)" ส่วนช่องอื่นเว้นว่างได้ พร้อมระบบเช็กพิกัด Cartrack GPS
+                  บังคับเลือกเฉพาะ "ชื่อคนงาน (PK)" ส่วนช่องอื่นสามารถเว้นว่างได้ (มีระบบแจ้งเตือนตรวจสอบก่อนบันทึก)
                 </p>
               </div>
             </div>
@@ -488,34 +435,19 @@
                 <p id="form-date-thai-preview" class="mt-1.5 text-[11px] text-indigo-600 font-medium"></p>
               </div>
 
-              <!-- 6. ทะเบียนรถ + ปุ่ม "เช็กพิกัด GPS รถคันนี้" -->
+              <!-- 6. ทะเบียนรถ -->
               <div class="md:col-span-4">
                 <label for="form-vehicle" class="block text-sm font-semibold text-slate-700 mb-1.5">
                   <i class="fa-solid fa-truck-front text-indigo-600 mr-1"></i>
-                  ทะเบียนรถ &amp; เช็กพิกัด Cartrack GPS
+                  ทะเบียนรถ
                 </label>
-                <div class="flex gap-2">
-                  <select
-                    id="form-vehicle"
-                    class="flex-1 min-h-[44px] px-3 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 transition"
-                  >
-                    <option value="">-- เลือกทะเบียนรถ --</option>
-                  </select>
-                  <button
-                    type="button"
-                    id="btn-check-vehicle-gps"
-                    title="ดึงตำแหน่งและความเร็วปัจจุบันของรถคันนี้จาก Cartrack GPS"
-                    class="min-h-[44px] px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white text-xs font-semibold shadow-sm flex items-center gap-1.5 shrink-0 transition cursor-pointer"
-                  >
-                    <i class="fa-solid fa-location-crosshairs"></i>
-                    <span>เช็กพิกัด GPS รถคันนี้</span>
-                  </button>
-                </div>
-
-                <!-- Live GPS Preview Box right under Vehicle select -->
-                <div id="form-gps-preview-card" class="hidden mt-2 p-2.5 rounded-xl bg-emerald-50/90 border border-emerald-200 text-xs">
-                  <!-- Populated dynamically when checking GPS -->
-                </div>
+                <select
+                  id="form-vehicle"
+                  class="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 transition"
+                >
+                  <option value="">-- เลือกทะเบียนรถ --</option>
+                </select>
+                <p class="mt-1.5 text-[11px] text-slate-500">ดึงเฉพาะรถที่เปิดใช้งานจากฐานข้อมูล</p>
               </div>
 
               <!-- 3. เส้นทาง / ที่หมาย (Combo Box + Auto-fill + Action Buttons) -->
@@ -738,26 +670,16 @@
               <div>
                 <h3 class="text-base font-bold text-slate-900 flex flex-wrap items-center gap-2">
                   <i class="fa-solid fa-table-list text-indigo-600"></i>
-                  <span>รายการบันทึกการเดินทาง &amp; สถานะ Cartrack GPS</span>
+                  <span>รายการบันทึกการเดินทางของคนงาน</span>
                   <span id="table-count-badge" class="px-2.5 py-0.5 rounded-full bg-indigo-100 text-indigo-800 text-xs font-bold">0 รายการ</span>
                 </h3>
                 <p class="text-xs text-slate-500 mt-0.5">
-                  กดปุ่มแผนที่เพื่อเปิด Google Maps นำทางบนมือถือ หรือกดปุ่มอัปเดตพิกัด GPS เพื่อซิงค์ตำแหน่งรถล่าสุด
+                  ข้อมูลจากฐานข้อมูลตาราง <code>travel_logs</code> (เรียงตามวันที่และเวลาออกเดินทาง)
                 </p>
               </div>
 
-              <!-- Action Buttons: Sync All GPS, Export Excel (.xlsx), Export CSV (UTF-8 BOM) -->
+              <!-- Action Buttons: Export Excel (.xlsx), Export CSV (UTF-8 BOM) -->
               <div class="flex flex-wrap items-center gap-2">
-                <!-- Sync All GPS Button -->
-                <button
-                  type="button"
-                  id="btn-sync-all-gps"
-                  class="min-h-[44px] px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs sm:text-sm font-semibold shadow-sm flex items-center gap-1.5 transition cursor-pointer"
-                >
-                  <i id="sync-all-gps-icon" class="fa-solid fa-satellite-dish"></i>
-                  <span>อัปเดตพิกัด GPS ทั้งหมด</span>
-                </button>
-
                 <!-- Export Excel (.xlsx) -->
                 <button
                   type="button"
@@ -813,7 +735,7 @@
                 <input
                   type="text"
                   id="filter-search"
-                  placeholder="ค้นหาชื่อคนงาน, วันที่, เส้นทาง, ทะเบียนรถ, พิกัดถนน..."
+                  placeholder="ค้นหาชื่อคนงาน, วันที่, เส้นทาง, ทะเบียนรถ..."
                   class="w-full min-h-[44px] pl-9 pr-9 py-2 rounded-xl border border-slate-300 bg-white text-xs sm:text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-600"
                 />
                 <button
@@ -839,7 +761,6 @@
                   <th class="py-3.5 px-3 text-center">เวลาขับรถ - ถึงไซต์</th>
                   <th class="py-3.5 px-3 text-center">ระยะเวลาเดินทาง</th>
                   <th class="py-3.5 px-4">ทะเบียนรถ</th>
-                  <th class="py-3.5 px-4">สถานะ Cartrack GPS</th>
                   <th class="py-3.5 px-4 text-right">จัดการ</th>
                 </tr>
               </thead>
@@ -858,7 +779,7 @@
       </div>
 
       <!-- =================================================================== -->
-      <!-- VIEW B: BACK-OFFICE (4 ส่วนจัดการหลัก: Dropdown & ตั้งค่า GPS - Admin) -->
+      <!-- VIEW B: BACK-OFFICE (ระบบหลังบ้านจัดการ Dropdown & โควต้า - Admin)     -->
       <!-- =================================================================== -->
       <div id="view-back-office" class="hidden space-y-6">
 
@@ -867,10 +788,10 @@
           <div class="space-y-1">
             <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/15 text-amber-300 text-xs font-semibold">
               <i class="fa-solid fa-user-shield"></i>
-              <span>Back-Office &amp; Cartrack GPS Settings (เฉพาะ Admin)</span>
+              <span>Back-Office Management (เฉพาะผู้ดูแลระบบ Admin)</span>
             </div>
             <h2 class="text-lg sm:text-xl font-bold">
-              จัดการตัวเลือก Dropdown &amp; ตั้งค่าการเชื่อมต่อ Cartrack GPS (4 ส่วนหลัก)
+              จัดการตัวเลือก Dropdown &amp; โควต้าพื้นที่เก็บข้อมูล
             </h2>
             <p class="text-xs sm:text-sm text-indigo-100/90">
               แก้ไขข้อมูลคนงาน, เส้นทาง หรือทะเบียนรถ จะอัปเดตเชื่อมโยง (Cascade Update) ไปยัง <code>travel_logs</code> และ <code>default_route</code> อัตโนมัติ
@@ -887,129 +808,50 @@
           </button>
         </div>
 
-        <!-- PART 4: ตั้งค่าการเชื่อมต่อ Cartrack GPS & โควต้าพื้นที่ (/api/settings/gps) -->
+        <!-- Storage Quota Settings Card (/api/settings/gps) -->
         <section class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
           <div class="p-4 sm:p-5 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
             <div class="flex items-center gap-3">
-              <div class="w-10 h-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center text-base">
-                <i class="fa-solid fa-satellite-dish"></i>
+              <div class="w-10 h-10 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center text-base">
+                <i class="fa-solid fa-database"></i>
               </div>
               <div>
                 <h3 class="text-base font-bold text-slate-900">
-                  ส่วนการตั้งค่า: เชื่อมต่อ Cartrack GPS API &amp; โควต้าพื้นที่เก็บข้อมูล
+                  ตั้งค่าขีดจำกัดพื้นที่เก็บข้อมูล (Storage Quota Limit)
                 </h3>
                 <p class="text-xs text-slate-500">
-                  API Endpoint: <code>/api/settings/gps</code> (จัดเก็บในตาราง <code>system_settings</code>)
+                  กำหนดจำนวนรายการบันทึกสูงสุดเพื่อแจ้งเตือนเมื่อใกล้เต็ม (80%) และบล็อกเมื่อครบ (100%)
                 </p>
               </div>
             </div>
-
-            <span id="gps-mode-status-pill" class="px-3 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
-              โหมดจำลองข้อมูล (Mock GPS Mode)
-            </span>
           </div>
 
-          <form id="form-gps-settings" class="p-5 sm:p-6 space-y-5">
-            <div class="grid grid-cols-1 md:grid-cols-12 gap-5">
-              
-              <!-- Mode Toggle Switch -->
-              <div class="md:col-span-6 p-4 rounded-2xl bg-indigo-50/60 border border-indigo-100 flex items-center justify-between gap-4">
-                <div>
-                  <p class="text-sm font-bold text-slate-900 flex items-center gap-2">
-                    <i class="fa-solid fa-flask text-indigo-600"></i>
-                    <span>โหมดทดสอบจำลองพิกัด (Mock GPS Mode)</span>
-                  </p>
-                  <p class="text-xs text-slate-600 mt-0.5">
-                    เปิดเพื่อสุ่มจำลองพิกัดรถในไทย (ความเร็ว, สถานะเครื่องยนต์, ถนน และลิงก์ Google Maps) หรือปิดเพื่อยิง Cartrack Live API จริง
-                  </p>
-                </div>
-                <label class="relative inline-flex items-center cursor-pointer shrink-0">
-                  <input type="checkbox" id="setting-mock-mode" class="sr-only peer" checked />
-                  <div class="w-12 h-7 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-6 after:w-6 after:transition-all peer-checked:bg-emerald-600"></div>
-                </label>
-              </div>
-
-              <!-- Max Storage Limit -->
-              <div class="md:col-span-6 p-4 rounded-2xl bg-amber-50/50 border border-amber-200/80">
-                <label for="setting-max-limit" class="block text-sm font-bold text-slate-900 mb-1">
-                  <i class="fa-solid fa-database text-amber-600 mr-1"></i>
-                  ขีดจำกัดจำนวนรายการบันทึกสูงสุด (<code>max_storage_limit</code>)
-                </label>
-                <div class="flex items-center gap-2">
-                  <input
-                    type="number"
-                    id="setting-max-limit"
-                    min="1"
-                    max="100000"
-                    value="100"
-                    required
-                    class="w-36 min-h-[44px] px-3.5 py-2 rounded-xl border border-slate-300 bg-white text-sm font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-600"
-                  />
-                  <span class="text-xs text-slate-600">รายการ (แจ้งเตือนสีเหลืองที่ 80% และบล็อก HTTP 507 เมื่อครบ 100%)</span>
-                </div>
-              </div>
-
-              <!-- Cartrack API URL -->
-              <div class="md:col-span-5">
-                <label for="setting-api-url" class="block text-xs font-semibold text-slate-700 mb-1">
-                  Cartrack API Endpoint URL
-                </label>
+          <form id="form-gps-settings" class="p-5 sm:p-6 flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+            <div class="flex-1">
+              <label for="setting-max-limit" class="block text-sm font-bold text-slate-900 mb-1.5">
+                ขีดจำกัดจำนวนรายการบันทึกสูงสุด (<code>max_storage_limit</code>)
+              </label>
+              <div class="flex flex-wrap items-center gap-2.5">
                 <input
-                  type="url"
-                  id="setting-api-url"
-                  placeholder="https://fleetapi-th.cartrack.com/rest/vehicles/status"
-                  class="w-full min-h-[44px] px-3.5 py-2 rounded-xl border border-slate-300 bg-white text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                  type="number"
+                  id="setting-max-limit"
+                  min="1"
+                  max="100000"
+                  value="100"
+                  required
+                  class="w-36 min-h-[44px] px-3.5 py-2 rounded-xl border border-slate-300 bg-white text-sm font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-600"
                 />
-              </div>
-
-              <!-- Cartrack Username -->
-              <div class="md:col-span-3">
-                <label for="setting-api-username" class="block text-xs font-semibold text-slate-700 mb-1">
-                  Cartrack Username
-                </label>
-                <input
-                  type="text"
-                  id="setting-api-username"
-                  placeholder="เช่น FLEET_USER_TH"
-                  class="w-full min-h-[44px] px-3.5 py-2 rounded-xl border border-slate-300 bg-white text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600"
-                />
-              </div>
-
-              <!-- Cartrack API Key -->
-              <div class="md:col-span-4">
-                <label for="setting-api-key" class="block text-xs font-semibold text-slate-700 mb-1">
-                  Cartrack API Key / Password
-                </label>
-                <input
-                  type="password"
-                  id="setting-api-key"
-                  placeholder="กรอก API Key สำหรับ Basic Auth / Bearer"
-                  class="w-full min-h-[44px] px-3.5 py-2 rounded-xl border border-slate-300 bg-white text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600"
-                />
+                <span class="text-xs text-slate-600">รายการ (แจ้งเตือนสีเหลืองที่ 80% และบล็อก HTTP 507 เมื่อครบ 100%)</span>
               </div>
             </div>
 
-            <!-- Test Result Box -->
-            <div id="gps-test-result-box" class="hidden p-3.5 rounded-xl border text-xs sm:text-sm"></div>
-
-            <div class="pt-3 border-t border-slate-200 flex flex-wrap items-center justify-end gap-2.5">
-              <button
-                type="button"
-                id="btn-test-gps-api"
-                class="min-h-[44px] px-4 py-2 rounded-xl border border-indigo-300 bg-indigo-50 hover:bg-indigo-100 text-indigo-800 text-xs sm:text-sm font-semibold flex items-center gap-2 transition cursor-pointer"
-              >
-                <i class="fa-solid fa-plug-circle-check"></i>
-                <span>ทดสอบการเชื่อมต่อ API</span>
-              </button>
-
-              <button
-                type="submit"
-                class="min-h-[44px] px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs sm:text-sm font-semibold shadow-sm flex items-center gap-2 transition cursor-pointer"
-              >
-                <i class="fa-solid fa-floppy-disk"></i>
-                <span>บันทึกการตั้งค่า GPS &amp; โควต้า</span>
-              </button>
-            </div>
+            <button
+              type="submit"
+              class="min-h-[44px] px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs sm:text-sm font-semibold shadow-sm flex items-center justify-center gap-2 transition cursor-pointer shrink-0"
+            >
+              <i class="fa-solid fa-floppy-disk"></i>
+              <span>บันทึกการตั้งค่าโควต้า</span>
+            </button>
           </form>
         </section>
 
@@ -1166,8 +1008,8 @@
         id="mob-nav-table"
         class="flex-1 min-h-[46px] flex flex-col items-center justify-center rounded-xl text-slate-600 font-medium text-[11px] gap-0.5 cursor-pointer"
       >
-        <i class="fa-solid fa-satellite-dish text-base"></i>
-        <span>รายการ &amp; GPS</span>
+        <i class="fa-solid fa-table-list text-base"></i>
+        <span>รายการบันทึก</span>
       </button>
 
       <button
@@ -1184,7 +1026,7 @@
     <footer class="bg-white border-t border-slate-200 py-4 mt-8">
       <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between text-xs text-slate-500 gap-2">
         <div>
-          <strong>Worker Dispatch &amp; Travel Log System v2.0</strong> — Supabase PostgreSQL Cloud + Cartrack GPS API
+          <strong>Worker Dispatch &amp; Travel Log System v2.0</strong> — Supabase PostgreSQL Cloud
         </div>
         <div class="flex items-center gap-3">
           <span><i class="fa-solid fa-circle text-[8px] text-emerald-500 mr-1"></i>พร้อมใช้งานบนมือถือและคอมพิวเตอร์</span>
