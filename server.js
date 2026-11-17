@@ -624,7 +624,7 @@ app.put('/api/master/workers/:id', requireAuth, (req, res) => {
   }
 });
 
-app.delete('/api/master/workers/:id', requireAuth, requireAdmin, (req, res) => {
+app.delete('/api/master/workers/:id', requireAuth, requireAdmin, async (req, res) => {
   try {
     const id = Number(req.params.id);
     const existing = db.prepare('SELECT id, name FROM master_workers WHERE id = ?').get(id);
@@ -632,6 +632,9 @@ app.delete('/api/master/workers/:id', requireAuth, requireAdmin, (req, res) => {
       return res.status(404).json({ error: 'ไม่พบรายชื่อคนงานที่ต้องการลบ' });
     }
     db.prepare('DELETE FROM master_workers WHERE id = ?').run(id);
+    if (isSupabaseConfigured && supabase) {
+      await supabase.from('master_workers').delete().eq('name', existing.name);
+    }
     syncJsonFallbackFile();
     return res.json({ message: 'ลบรายชื่อคนงานสำเร็จ', deleted: existing });
   } catch (err) {
@@ -779,7 +782,7 @@ app.put('/api/master/routes/:id', requireAuth, requireAdmin, (req, res) => {
   }
 });
 
-app.delete('/api/master/routes/:id', requireAuth, requireAdmin, (req, res) => {
+app.delete('/api/master/routes/:id', requireAuth, requireAdmin, async (req, res) => {
   try {
     const id = Number(req.params.id);
     const existing = db.prepare('SELECT id, name FROM master_routes WHERE id = ?').get(id);
@@ -799,6 +802,9 @@ app.delete('/api/master/routes/:id', requireAuth, requireAdmin, (req, res) => {
       throw txErr;
     }
 
+    if (isSupabaseConfigured && supabase) {
+      await supabase.from('master_routes').delete().eq('name', existing.name);
+    }
     syncJsonFallbackFile();
     return res.json({ message: 'ลบเส้นทาง/ที่หมายสำเร็จ', deleted: existing });
   } catch (err) {
@@ -932,7 +938,7 @@ app.put('/api/master/vehicles/:id', requireAuth, requireAdmin, (req, res) => {
   }
 });
 
-app.delete('/api/master/vehicles/:id', requireAuth, requireAdmin, (req, res) => {
+app.delete('/api/master/vehicles/:id', requireAuth, requireAdmin, async (req, res) => {
   try {
     const id = Number(req.params.id);
     const existing = db.prepare('SELECT id, plate FROM master_vehicles WHERE id = ?').get(id);
@@ -940,6 +946,9 @@ app.delete('/api/master/vehicles/:id', requireAuth, requireAdmin, (req, res) => 
       return res.status(404).json({ error: 'ไม่พบทะเบียนรถที่ต้องการลบ' });
     }
     db.prepare('DELETE FROM master_vehicles WHERE id = ?').run(id);
+    if (isSupabaseConfigured && supabase) {
+      await supabase.from('master_vehicles').delete().eq('plate', existing.plate);
+    }
     syncJsonFallbackFile();
     return res.json({ message: 'ลบทะเบียนรถสำเร็จ', deleted: existing });
   } catch (err) {
@@ -1123,7 +1132,7 @@ app.put('/api/logs/:worker_name', requireAuth, (req, res) => {
   }
 });
 
-app.delete('/api/logs/:worker_name', requireAuth, (req, res) => {
+app.delete('/api/logs/:worker_name', requireAuth, async (req, res) => {
   try {
     const worker_name = decodeURIComponent(req.params.worker_name || '').trim();
     const existing = db
@@ -1135,6 +1144,9 @@ app.delete('/api/logs/:worker_name', requireAuth, (req, res) => {
     }
 
     db.prepare('DELETE FROM travel_logs WHERE worker_name = ?').run(worker_name);
+    if (isSupabaseConfigured && supabase) {
+      await supabase.from('travel_logs').delete().eq('worker_name', worker_name);
+    }
     syncJsonFallbackFile();
     return res.json({
       message: `ลบข้อมูลการเดินทางของ "${worker_name}" สำเร็จ`,
