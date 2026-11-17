@@ -634,7 +634,6 @@ function renderAuthView() {
   const roleBadgeEl = document.getElementById('nav-user-role-badge');
   const navTabBack = document.getElementById('nav-tab-back');
   const mobNavBack = document.getElementById('mob-nav-backoffice');
-  const btnResetDb = document.getElementById('btn-reset-db');
 
   fullNameEl.textContent = state.user.full_name || state.user.username;
 
@@ -647,8 +646,6 @@ function renderAuthView() {
     navTabBack.classList.add('flex');
     mobNavBack.classList.remove('hidden');
     mobNavBack.classList.add('flex');
-    btnResetDb.classList.remove('hidden');
-    btnResetDb.classList.add('flex');
   } else {
     roleBadgeEl.className =
       'inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200';
@@ -658,8 +655,6 @@ function renderAuthView() {
     navTabBack.classList.remove('flex');
     mobNavBack.classList.add('hidden');
     mobNavBack.classList.remove('flex');
-    btnResetDb.classList.add('hidden');
-    btnResetDb.classList.remove('flex');
 
     if (state.currentView === 'back') {
       state.currentView = 'front';
