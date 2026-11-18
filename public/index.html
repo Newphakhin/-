@@ -744,65 +744,55 @@
                 </p>
               </div>
 
-              <!-- Action Buttons: แยก 2 ไฟล์ชัดเจน (1. ไฟล์สำเนา / 2. ไฟล์ใบเบิก) พร้อมปุ่มผูกไฟล์และปุ่มแยกบันทึก -->
-              <div class="flex flex-wrap items-center gap-2.5">
-                <!-- กล่องที่ 1: ไฟล์ "สำเนา" (ผูกไฟล์ + บันทึกแยกได้) -->
-                <div class="flex flex-wrap items-center gap-1.5 p-1.5 rounded-2xl bg-amber-50/90 border border-amber-300 shadow-xs">
+              <!-- Action Buttons: แยก 2 ชุดชัดเจน (1. ไฟล์สำเนา / 2. ไฟล์ใบเบิก) -->
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5 w-full lg:w-auto">
+                <!-- ชุดที่ 1: ไฟล์ "สำเนา" -->
+                <div class="flex items-center justify-between gap-2 p-2 rounded-2xl bg-amber-50/90 border border-amber-300 shadow-xs">
                   <button
                     type="button"
                     id="btn-link-copy-excel"
-                    title="คลิกเพื่อเลือกผูกไฟล์ Excel แบบสำเนา"
-                    class="min-h-[38px] px-3 py-1.5 rounded-xl bg-white hover:bg-amber-100 text-amber-950 border border-amber-300 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
+                    title="คลิกเพื่อเลือกไฟล์ Excel แบบสำเนาในเครื่องมาผูกไว้"
+                    class="min-h-[40px] px-3 py-1.5 rounded-xl bg-white hover:bg-amber-100 text-amber-950 border border-amber-300 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer truncate max-w-[260px]"
                   >
-                    <i class="fa-solid fa-link text-amber-600"></i>
-                    <span>ผูกไฟล์สำเนา:</span>
-                    <strong id="linked-copy-filename" class="font-bold text-amber-700">ยังไม่ได้เลือก</strong>
+                    <i class="fa-solid fa-folder-open text-amber-600 shrink-0"></i>
+                    <span class="shrink-0">ผูกไฟล์สำเนา:</span>
+                    <strong id="linked-copy-filename" class="font-bold text-amber-700 truncate">เลือกไฟล์...</strong>
                   </button>
 
                   <button
                     type="button"
                     id="btn-save-copy-excel"
-                    title="บันทึก/ไหลข้อมูลเข้าเฉพาะไฟล์สำเนา"
-                    class="min-h-[38px] px-3.5 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 active:bg-amber-800 text-white text-xs font-bold shadow-xs flex items-center gap-1.5 transition cursor-pointer"
+                    title="กดเพื่อนำข้อมูลไหลเข้าไฟล์สำเนาที่ผูกไว้"
+                    class="min-h-[40px] px-3.5 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 active:bg-amber-800 text-white text-xs font-bold shadow-xs flex items-center gap-1.5 shrink-0 transition cursor-pointer"
                   >
-                    <i class="fa-solid fa-file-export"></i>
+                    <i class="fa-solid fa-floppy-disk"></i>
                     <span>บันทึกไฟล์สำเนา</span>
                   </button>
                 </div>
 
-                <!-- กล่องที่ 2: ไฟล์ "ใบเบิก" (ผูกไฟล์ + บันทึกแยกได้) -->
-                <div class="flex flex-wrap items-center gap-1.5 p-1.5 rounded-2xl bg-sky-50/90 border border-sky-300 shadow-xs">
+                <!-- ชุดที่ 2: ไฟล์ "ใบเบิก" -->
+                <div class="flex items-center justify-between gap-2 p-2 rounded-2xl bg-sky-50/90 border border-sky-300 shadow-xs">
                   <button
                     type="button"
                     id="btn-link-billing-excel"
-                    title="คลิกเพื่อเลือกผูกไฟล์ Excel แบบใบเบิก"
-                    class="min-h-[38px] px-3 py-1.5 rounded-xl bg-white hover:bg-sky-100 text-sky-950 border border-sky-300 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
+                    title="คลิกเพื่อเลือกไฟล์ Excel แบบใบเบิกในเครื่องมาผูกไว้"
+                    class="min-h-[40px] px-3 py-1.5 rounded-xl bg-white hover:bg-sky-100 text-sky-950 border border-sky-300 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer truncate max-w-[260px]"
                   >
-                    <i class="fa-solid fa-link text-sky-600"></i>
-                    <span>ผูกไฟล์ใบเบิก:</span>
-                    <strong id="linked-billing-filename" class="font-bold text-sky-700">ยังไม่ได้เลือก</strong>
+                    <i class="fa-solid fa-folder-open text-sky-600 shrink-0"></i>
+                    <span class="shrink-0">ผูกไฟล์ใบเบิก:</span>
+                    <strong id="linked-billing-filename" class="font-bold text-sky-700 truncate">เลือกไฟล์...</strong>
                   </button>
 
                   <button
                     type="button"
                     id="btn-save-billing-excel"
-                    title="บันทึก/ไหลข้อมูลเข้าเฉพาะไฟล์ใบเบิก"
-                    class="min-h-[38px] px-3.5 py-1.5 rounded-xl bg-sky-600 hover:bg-sky-700 active:bg-sky-800 text-white text-xs font-bold shadow-xs flex items-center gap-1.5 transition cursor-pointer"
+                    title="กดเพื่อนำข้อมูลไหลเข้าไฟล์ใบเบิกที่ผูกไว้"
+                    class="min-h-[40px] px-3.5 py-1.5 rounded-xl bg-sky-600 hover:bg-sky-700 active:bg-sky-800 text-white text-xs font-bold shadow-xs flex items-center gap-1.5 shrink-0 transition cursor-pointer"
                   >
-                    <i class="fa-solid fa-file-invoice"></i>
+                    <i class="fa-solid fa-floppy-disk"></i>
                     <span>บันทึกไฟล์ใบเบิก</span>
                   </button>
                 </div>
-
-                <!-- ปุ่มรวม: บันทึกพร้อมกันทั้ง 2 ไฟล์ -->
-                <button
-                  type="button"
-                  id="btn-export-excel"
-                  class="min-h-[44px] px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white text-xs sm:text-sm font-bold shadow-sm flex items-center gap-2 transition cursor-pointer"
-                >
-                  <i class="fa-solid fa-file-excel text-base"></i>
-                  <span id="btn-export-excel-label">บันทึกทั้ง 2 ไฟล์พร้อมกัน</span>
-                </button>
               </div>
             </div>
 

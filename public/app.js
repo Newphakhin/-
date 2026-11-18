@@ -2133,40 +2133,62 @@ function updateLinkedExcelUI() {
   const billingNameEl = document.getElementById('linked-billing-filename');
   const btnCopy = document.getElementById('btn-link-copy-excel');
   const btnBilling = document.getElementById('btn-link-billing-excel');
-  const btnLabel = document.getElementById('btn-export-excel-label');
 
   const hasCopy = Boolean(state.linkedCopyHandle && state.linkedCopyHandle.name);
   const hasBilling = Boolean(state.linkedBillingHandle && state.linkedBillingHandle.name);
 
   if (copyNameEl) {
-    copyNameEl.textContent = hasCopy ? state.linkedCopyHandle.name : 'ยังไม่ได้เลือก (คลิกเพื่อผูกไฟล์)';
+    copyNameEl.textContent = hasCopy ? state.linkedCopyHandle.name : 'เลือกไฟล์...';
   }
   if (btnCopy) {
     btnCopy.className = hasCopy
-      ? 'min-h-[42px] px-3 py-2 rounded-xl border border-emerald-400 bg-emerald-50 hover:bg-emerald-100 text-emerald-950 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer shadow-xs'
-      : 'min-h-[42px] px-3 py-2 rounded-xl border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-900 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer';
+      ? 'min-h-[40px] px-3 py-1.5 rounded-xl border border-emerald-400 bg-emerald-50 hover:bg-emerald-100 text-emerald-950 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer truncate max-w-[260px]'
+      : 'min-h-[40px] px-3 py-1.5 rounded-xl bg-white hover:bg-amber-100 text-amber-950 border border-amber-300 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer truncate max-w-[260px]';
   }
 
   if (billingNameEl) {
-    billingNameEl.textContent = hasBilling
-      ? state.linkedBillingHandle.name
-      : 'ยังไม่ได้เลือก (คลิกเพื่อผูกไฟล์)';
+    billingNameEl.textContent = hasBilling ? state.linkedBillingHandle.name : 'เลือกไฟล์...';
   }
   if (btnBilling) {
     btnBilling.className = hasBilling
-      ? 'min-h-[42px] px-3 py-2 rounded-xl border border-emerald-400 bg-emerald-50 hover:bg-emerald-100 text-emerald-950 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer shadow-xs'
-      : 'min-h-[42px] px-3 py-2 rounded-xl border border-sky-300 bg-sky-50 hover:bg-sky-100 text-sky-900 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer';
+      ? 'min-h-[40px] px-3 py-1.5 rounded-xl border border-emerald-400 bg-emerald-50 hover:bg-emerald-100 text-emerald-950 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer truncate max-w-[260px]'
+      : 'min-h-[40px] px-3 py-1.5 rounded-xl bg-white hover:bg-sky-100 text-sky-950 border border-sky-300 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer truncate max-w-[260px]';
+  }
+}
+
+// เลือกผูกไฟล์แยกกัน (ผูกไฟล์เฉยๆ ยังไม่เขียนทับจนกว่าจะกดปุ่ม "บันทึกไฟล์สำเนา" หรือ "บันทึกไฟล์ใบเบิก")
+async function pickAndLinkExcelFileOnly(type) {
+  const isCopy = type === 'copy';
+  const typeLabel = isCopy ? 'สำเนา' : 'ใบเบิก';
+
+  if (typeof window.showOpenFilePicker !== 'function') {
+    openExcelLinkModalByType(type);
+    return;
   }
 
-  if (btnLabel) {
-    if (hasCopy && hasBilling) {
-      btnLabel.textContent = 'ไหลข้อมูลเข้าทั้ง 2 ไฟล์เดิม (สำเนา + ใบเบิก)';
-    } else if (hasCopy) {
-      btnLabel.textContent = `ไหลข้อมูลเข้าไฟล์สำเนา (${state.linkedCopyHandle.name})`;
-    } else if (hasBilling) {
-      btnLabel.textContent = `ไหลข้อมูลเข้าไฟล์ใบเบิก (${state.linkedBillingHandle.name})`;
-    } else {
-      btnLabel.textContent = 'ไหลข้อมูลเข้าไฟล์ Excel (สำเนา + ใบเบิก)';
+  try {
+    const [handle] = await window.showOpenFilePicker({
+      multiple: false,
+      types: [
+        {
+          description: `ไฟล์ Excel แบบ${typeLabel} (.xlsx)`,
+          accept: {
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx']
+          }
+        }
+      ]
+    });
+    if (handle) {
+      await saveLinkedExcelHandleByType(type, handle);
+      showToast(
+        `ผูกไฟล์${typeLabel} "${handle.name}" สำเร็จ!`,
+        'success',
+        `เมื่อต้องการให้ข้อมูลไหลเข้าไฟล์นี้ ให้กดปุ่ม "บันทึกไฟล์${typeLabel}" ได้เลยครับ`
+      );
+    }
+  } catch (err) {
+    if (err?.name !== 'AbortError') {
+      showToast(`ยกเลิกการเลือกผูกไฟล์${typeLabel}`, 'info');
     }
   }
 }
@@ -4451,10 +4473,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('btn-save-copy-excel')?.addEventListener('click', saveCopyExcelFile);
   document.getElementById('btn-save-billing-excel')?.addEventListener('click', saveBillingExcelFile);
   document.getElementById('btn-link-copy-excel')?.addEventListener('click', () => {
-    openExcelLinkModalByType('copy');
+    pickAndLinkExcelFileOnly('copy');
   });
   document.getElementById('btn-link-billing-excel')?.addEventListener('click', () => {
-    openExcelLinkModalByType('billing');
+    pickAndLinkExcelFileOnly('billing');
   });
   loadLinkedExcelHandles();
 
