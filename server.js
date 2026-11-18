@@ -510,9 +510,10 @@ app.post('/api/logs', requireAuth, async (req, res) => {
     const arrival_time = String(req.body.arrival_time || '').trim();
     const vehicle_plate = String(req.body.vehicle_plate || '').trim();
     const passenger_count = req.body.passenger_count;
+    const note = String(req.body.note || '').trim();
 
     if (!worker_name) {
-      return res.status(400).json({ error: 'กรุณาเลือกชื่อคนงาน (Primary Key)' });
+      return res.status(400).json({ error: 'กรุณาเลือกชื่อคนงาน/คนขับ' });
     }
 
     const created = await store.createLog({
@@ -524,6 +525,7 @@ app.post('/api/logs', requireAuth, async (req, res) => {
       arrival_time,
       vehicle_plate,
       passenger_count,
+      note,
       gps_status: String(req.body.gps_status || '').trim()
     });
     return res.status(201).json(created);
@@ -539,8 +541,10 @@ app.post('/api/logs', requireAuth, async (req, res) => {
 
 app.put('/api/logs/:worker_name', requireAuth, async (req, res) => {
   try {
-    const worker_name = decodeURIComponent(req.params.worker_name || '').trim();
+    const log_id = decodeURIComponent(req.params.worker_name || '').trim();
     const updates = {};
+    if (req.body.worker_name !== undefined)
+      updates.worker_name = String(req.body.worker_name).trim();
     if (req.body.site_name !== undefined)
       updates.site_name = String(req.body.site_name).trim();
     if (req.body.travel_date !== undefined)
@@ -554,8 +558,10 @@ app.put('/api/logs/:worker_name', requireAuth, async (req, res) => {
       updates.vehicle_plate = String(req.body.vehicle_plate).trim();
     if (req.body.passenger_count !== undefined)
       updates.passenger_count = req.body.passenger_count;
+    if (req.body.note !== undefined)
+      updates.note = String(req.body.note).trim();
 
-    const updated = await store.updateLog(worker_name, updates);
+    const updated = await store.updateLog(log_id, updates);
     return res.json(updated);
   } catch (err) {
     return res

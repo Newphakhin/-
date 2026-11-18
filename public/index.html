@@ -387,10 +387,10 @@
               </div>
               <div>
                 <h2 id="form-mode-title" class="text-base font-bold text-zinc-900">
-                  บันทึกข้อมูลการเดินทางพนักงาน
+                  บันทึกข้อมูลการเดินทางพนักงาน (สะสมรายเที่ยว)
                 </h2>
                 <p id="form-mode-subtitle" class="text-xs text-slate-500">
-                  บังคับเลือกเฉพาะ "ชื่อพนักงาน/คนงาน (PK)" ส่วนช่องอื่นสามารถเว้นว่างได้ (มีระบบแจ้งเตือนตรวจสอบก่อนบันทึก)
+                  สามารถบันทึกคนขับ/พนักงานคนเดิมซ้ำได้หลายเที่ยวและหลายวัน เพื่อสะสมข้อมูลออกใบเบิกและสำเนา
                 </p>
               </div>
             </div>
@@ -415,11 +415,11 @@
           <form id="travel-log-form" class="p-5 sm:p-6 space-y-5" novalidate>
             <div class="grid grid-cols-1 md:grid-cols-12 gap-5">
               
-              <!-- 1. ชื่อคนงาน (PK) [บังคับเลือก] -->
+              <!-- 1. ชื่อคนงาน / คนขับ [บังคับเลือก] -->
               <div class="md:col-span-6 lg:col-span-3">
                 <label for="form-worker" class="block text-sm font-semibold text-slate-700 mb-1.5">
                   <i class="fa-solid fa-id-badge text-indigo-600 mr-1"></i>
-                  ชื่อคนงาน (PK) <span class="text-rose-600 font-bold">* [บังคับเลือก]</span>
+                  ชื่อคนขับ / พนักงาน <span class="text-rose-600 font-bold">* [บังคับเลือก]</span>
                 </label>
                 <select
                   id="form-worker"
@@ -427,9 +427,9 @@
                 >
                   <option value="">-- เลือกรายชื่อคนงาน --</option>
                 </select>
-                <p id="worker-pk-hint" class="mt-1.5 text-[11px] text-slate-500 flex items-center gap-1">
-                  <i class="fa-solid fa-key text-amber-500"></i>
-                  <span>ใช้ชื่อคนงานเป็น Primary Key (ห้ามบันทึกซ้ำคนเดิม)</span>
+                <p id="worker-pk-hint" class="mt-1.5 text-[11px] text-emerald-700 font-medium flex items-center gap-1">
+                  <i class="fa-solid fa-circle-check text-emerald-600"></i>
+                  <span>บันทึกคนเดิมซ้ำได้หลายเที่ยว / หลายวัน</span>
                 </p>
               </div>
 
@@ -583,10 +583,10 @@
               </div>
 
               <!-- 7. จำนวนคนโดยสาร -->
-              <div class="md:col-span-4 lg:col-span-3">
+              <div class="md:col-span-6 lg:col-span-2">
                 <label for="form-passengers" class="block text-sm font-semibold text-slate-700 mb-1.5">
                   <i class="fa-solid fa-users text-indigo-600 mr-1"></i>
-                  จำนวนคนโดยสาร (คน)
+                  จำนวนคนโดยสาร
                 </label>
                 <div class="relative">
                   <input
@@ -594,14 +594,29 @@
                     id="form-passengers"
                     min="0"
                     step="1"
-                    placeholder="ระบุจำนวนคน (เว้นว่างได้)"
-                    class="w-full min-h-[44px] pl-3.5 pr-12 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 transition"
+                    placeholder="จำนวนคน"
+                    class="w-full min-h-[44px] pl-3.5 pr-10 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 transition"
                   />
-                  <span class="absolute inset-y-0 right-0 pr-3.5 flex items-center text-xs font-medium text-slate-400 pointer-events-none">
+                  <span class="absolute inset-y-0 right-0 pr-3 flex items-center text-xs font-medium text-slate-400 pointer-events-none">
                     คน
                   </span>
                 </div>
-                <p class="mt-1.5 text-[11px] text-slate-500">ระบุจำนวนผู้โดยสารที่เดินทางไปกับรถ</p>
+                <p class="mt-1.5 text-[11px] text-slate-500">จำนวนผู้โดยสาร</p>
+              </div>
+
+              <!-- 8. หมายเหตุ -->
+              <div class="md:col-span-6 lg:col-span-1">
+                <label for="form-note" class="block text-sm font-semibold text-slate-700 mb-1.5">
+                  <i class="fa-regular fa-note-sticky text-amber-600 mr-1"></i>
+                  หมายเหตุ
+                </label>
+                <input
+                  type="text"
+                  id="form-note"
+                  placeholder="เว้นว่างได้"
+                  class="w-full min-h-[44px] px-3 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 transition"
+                />
+                <p class="mt-1.5 text-[11px] text-slate-500 truncate">เช่น พี่ปรีชาสั่ง</p>
               </div>
 
             </div>
@@ -729,46 +744,81 @@
                 </p>
               </div>
 
-              <!-- Action Buttons: 2 File-Linking Buttons (1. แบบสำเนา, 2. แบบใบเบิก) + Unified Flow Button -->
-              <div class="flex flex-wrap items-center gap-2">
-                <!-- ปุ่มเลือกผูกไฟล์ที่ 1: แบบสำเนา -->
-                <button
-                  type="button"
-                  id="btn-link-copy-excel"
-                  title="คลิกเพื่อเลือกผูกไฟล์ Excel แบบสำเนา (บันทึกรายการรถ 6 ล้อ)"
-                  class="min-h-[42px] px-3 py-2 rounded-xl border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-900 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
-                >
-                  <i class="fa-solid fa-link text-amber-600"></i>
-                  <span>ผูกไฟล์สำเนา:</span>
-                  <strong id="linked-copy-filename" class="font-bold text-amber-700">ยังไม่ได้เลือก</strong>
-                </button>
+              <!-- Action Buttons: แยก 2 ไฟล์ชัดเจน (1. ไฟล์สำเนา / 2. ไฟล์ใบเบิก) พร้อมปุ่มผูกไฟล์และปุ่มแยกบันทึก -->
+              <div class="flex flex-wrap items-center gap-2.5">
+                <!-- กล่องที่ 1: ไฟล์ "สำเนา" (ผูกไฟล์ + บันทึกแยกได้) -->
+                <div class="flex flex-wrap items-center gap-1.5 p-1.5 rounded-2xl bg-amber-50/90 border border-amber-300 shadow-xs">
+                  <button
+                    type="button"
+                    id="btn-link-copy-excel"
+                    title="คลิกเพื่อเลือกผูกไฟล์ Excel แบบสำเนา"
+                    class="min-h-[38px] px-3 py-1.5 rounded-xl bg-white hover:bg-amber-100 text-amber-950 border border-amber-300 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
+                  >
+                    <i class="fa-solid fa-link text-amber-600"></i>
+                    <span>ผูกไฟล์สำเนา:</span>
+                    <strong id="linked-copy-filename" class="font-bold text-amber-700">ยังไม่ได้เลือก</strong>
+                  </button>
 
-                <!-- ปุ่มเลือกผูกไฟล์ที่ 2: แบบใบเบิก -->
-                <button
-                  type="button"
-                  id="btn-link-billing-excel"
-                  title="คลิกเพื่อเลือกผูกไฟล์ Excel แบบใบเบิก (ใบเบิกผู้รับเหมา + ใบบันทึกปฏิบัติงาน)"
-                  class="min-h-[42px] px-3 py-2 rounded-xl border border-sky-300 bg-sky-50 hover:bg-sky-100 text-sky-900 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
-                >
-                  <i class="fa-solid fa-link text-sky-600"></i>
-                  <span>ผูกไฟล์ใบเบิก:</span>
-                  <strong id="linked-billing-filename" class="font-bold text-sky-700">ยังไม่ได้เลือก</strong>
-                </button>
+                  <button
+                    type="button"
+                    id="btn-save-copy-excel"
+                    title="บันทึก/ไหลข้อมูลเข้าเฉพาะไฟล์สำเนา"
+                    class="min-h-[38px] px-3.5 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 active:bg-amber-800 text-white text-xs font-bold shadow-xs flex items-center gap-1.5 transition cursor-pointer"
+                  >
+                    <i class="fa-solid fa-file-export"></i>
+                    <span>บันทึกไฟล์สำเนา</span>
+                  </button>
+                </div>
 
-                <!-- ปุ่มหลัก: ไหลข้อมูลเข้าไฟล์ที่ผูกไว้ (ครบทั้งสำเนา + ใบเบิก ในปุ่มเดียว) -->
+                <!-- กล่องที่ 2: ไฟล์ "ใบเบิก" (ผูกไฟล์ + บันทึกแยกได้) -->
+                <div class="flex flex-wrap items-center gap-1.5 p-1.5 rounded-2xl bg-sky-50/90 border border-sky-300 shadow-xs">
+                  <button
+                    type="button"
+                    id="btn-link-billing-excel"
+                    title="คลิกเพื่อเลือกผูกไฟล์ Excel แบบใบเบิก"
+                    class="min-h-[38px] px-3 py-1.5 rounded-xl bg-white hover:bg-sky-100 text-sky-950 border border-sky-300 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
+                  >
+                    <i class="fa-solid fa-link text-sky-600"></i>
+                    <span>ผูกไฟล์ใบเบิก:</span>
+                    <strong id="linked-billing-filename" class="font-bold text-sky-700">ยังไม่ได้เลือก</strong>
+                  </button>
+
+                  <button
+                    type="button"
+                    id="btn-save-billing-excel"
+                    title="บันทึก/ไหลข้อมูลเข้าเฉพาะไฟล์ใบเบิก"
+                    class="min-h-[38px] px-3.5 py-1.5 rounded-xl bg-sky-600 hover:bg-sky-700 active:bg-sky-800 text-white text-xs font-bold shadow-xs flex items-center gap-1.5 transition cursor-pointer"
+                  >
+                    <i class="fa-solid fa-file-invoice"></i>
+                    <span>บันทึกไฟล์ใบเบิก</span>
+                  </button>
+                </div>
+
+                <!-- ปุ่มรวม: บันทึกพร้อมกันทั้ง 2 ไฟล์ -->
                 <button
                   type="button"
                   id="btn-export-excel"
-                  class="min-h-[44px] px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white text-xs sm:text-sm font-semibold shadow-sm flex items-center gap-2 transition cursor-pointer"
+                  class="min-h-[44px] px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white text-xs sm:text-sm font-bold shadow-sm flex items-center gap-2 transition cursor-pointer"
                 >
                   <i class="fa-solid fa-file-excel text-base"></i>
-                  <span id="btn-export-excel-label">ไหลข้อมูลเข้าไฟล์ Excel (สำเนา + ใบเบิก)</span>
+                  <span id="btn-export-excel-label">บันทึกทั้ง 2 ไฟล์พร้อมกัน</span>
                 </button>
               </div>
             </div>
 
-            <!-- Filters Row: Date Filter & Search Input -->
+            <!-- Filters Row: Site Filter, Date Filter & Search Input -->
             <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 pt-2 border-t border-slate-200/70">
+              <div class="flex items-center bg-white rounded-xl border border-slate-300 px-3 py-1.5 gap-2 min-h-[44px]">
+                <i class="fa-solid fa-building-user text-amber-500 text-xs"></i>
+                <select
+                  id="filter-site"
+                  title="กรองตามไซต์งาน / โครงการ"
+                  class="text-xs sm:text-sm text-slate-800 focus:outline-none bg-transparent pr-2 font-medium"
+                >
+                  <option value="">ทุกไซต์งาน / โครงการ</option>
+                </select>
+              </div>
+
               <div class="flex items-center bg-white rounded-xl border border-slate-300 px-3 py-1.5 gap-2 min-h-[44px]">
                 <i class="fa-regular fa-calendar text-slate-400 text-xs"></i>
                 <input

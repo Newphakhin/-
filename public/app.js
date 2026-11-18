@@ -7,7 +7,8 @@ const state = {
   token: localStorage.getItem('dispatch_auth_token') || null,
   user: JSON.parse(localStorage.getItem('dispatch_auth_user') || 'null'),
   currentView: 'front', // 'front' | 'back'
-  editingWorkerName: null, // null = Create mode, string = Edit mode (PK)
+  editingWorkerName: null, // Worker name of the trip currently being edited
+  editingLogId: null, // Unique log_id of the trip currently being edited
   lastCheckedGps: null, // Stores latest checked GPS object from form button
   linkedCopyHandle: null, // Persistent FileSystemFileHandle for แบบสำเนา
   linkedBillingHandle: null, // Persistent FileSystemFileHandle for แบบใบเบิก
@@ -44,6 +45,7 @@ const state = {
   },
 
   // Filters
+  filterSite: '',
   filterDate: '',
   filterSearch: ''
 };
@@ -796,55 +798,76 @@ function renderWorkerDropdown() {
   const select = document.getElementById('form-worker');
   if (!select) return;
 
-  const currentVal = state.editingWorkerName || select.value;
-  const loggedSet = new Set(state.logs.map((l) => l.worker_name));
+  const currentVal = select.value || state.editingWorkerName || '';
+  const tripCountMap = new Map();
+  for (const l of state.logs) {
+    if (l.worker_name) {
+      tripCountMap.set(l.worker_name, (tripCountMap.get(l.worker_name) || 0) + 1);
+    }
+  }
 
-  let html = '<option value="">-- เลือกรายชื่อคนงาน (บังคับเลือก) --</option>';
+  let html = '<option value="">-- เลือกชื่อคนขับ / พนักงาน (บังคับเลือก) --</option>';
 
   const listToRender = [...state.activeWorkers];
   if (
-    state.editingWorkerName &&
-    !listToRender.some((w) => w.name === state.editingWorkerName)
+    currentVal &&
+    !listToRender.some((w) => w.name === currentVal)
   ) {
-    const foundInAll = state.allWorkers.find((w) => w.name === state.editingWorkerName);
+    const foundInAll = state.allWorkers.find((w) => w.name === currentVal);
     listToRender.unshift(
-      foundInAll || { id: 0, name: state.editingWorkerName, default_route: '', active: false }
+      foundInAll || { id: 0, name: currentVal, default_route: '', active: false }
     );
   }
 
   for (const w of listToRender) {
     const routeSuffix = w.default_route
       ? ` (ไซต์ประจำ: ${w.default_route})`
-      : ' (ไม่มีไซต์ประจำ)';
-    const alreadyLoggedSuffix = loggedSet.has(w.name) ? ' [มีบันทึกแล้ว]' : '';
+      : '';
+    const count = tripCountMap.get(w.name) || 0;
+    const countSuffix = count > 0 ? ` [บันทึกสะสม ${count} เที่ยว]` : '';
     const isSelected = w.name === currentVal ? 'selected' : '';
     html += `<option value="${escapeHtml(w.name)}" ${isSelected}>${escapeHtml(
-      w.name + routeSuffix + alreadyLoggedSuffix
+      w.name + routeSuffix + countSuffix
     )}</option>`;
   }
 
   select.innerHTML = html;
-  select.disabled = Boolean(state.editingWorkerName);
+  select.disabled = false;
 }
 
 function renderSiteDropdown() {
   const select = document.getElementById('form-site');
-  if (!select) return;
+  if (select) {
+    const currentVal = select.value;
+    let html = '<option value="">-- เลือกไซต์งาน / โครงการ --</option>';
 
-  const currentVal = select.value;
-  let html = '<option value="">-- เลือกไซต์งาน / โครงการ --</option>';
+    const listToRender = [...state.activeSites];
+    if (currentVal && !listToRender.some((s) => s.name === currentVal)) {
+      listToRender.unshift({ id: 0, name: currentVal, active: false });
+    }
 
-  const listToRender = [...state.activeSites];
-  if (currentVal && !listToRender.some((s) => s.name === currentVal)) {
-    listToRender.unshift({ id: 0, name: currentVal, active: false });
+    for (const s of listToRender) {
+      const isSelected = s.name === currentVal ? 'selected' : '';
+      html += `<option value="${escapeHtml(s.name)}" ${isSelected}>${escapeHtml(s.name)}</option>`;
+    }
+
+    select.innerHTML = html;
   }
 
-  for (const s of listToRender) {
-    const isSelected = s.name === currentVal ? 'selected' : '';
-    html += `<option value="${escapeHtml(s.name)}" ${isSelected}>${escapeHtml(s.name)}</option>`;
+  const filterSelect = document.getElementById('filter-site');
+  if (filterSelect) {
+    const currentFilter = state.filterSite || filterSelect.value || '';
+    const allSiteNames = new Set([
+      ...state.activeSites.map((s) => s.name),
+      ...state.logs.map((l) => (l.site_name || '').trim()).filter(Boolean)
+    ]);
+    let filterHtml = '<option value="">ทุกไซต์งาน / โครงการ</option>';
+    for (const sName of allSiteNames) {
+      const isSel = sName === currentFilter ? 'selected' : '';
+      filterHtml += `<option value="${escapeHtml(sName)}" ${isSel}>${escapeHtml(sName)}</option>`;
+    }
+    filterSelect.innerHTML = filterHtml;
   }
-
-  select.innerHTML = html;
 }
 
 function renderVehicleDropdown() {
@@ -1125,20 +1148,21 @@ async function syncAllVehiclesGps() {
 // CREATE / EDIT MODE & FORM SUBMISSION WITH CUSTOM MODALS
 // ============================================================================
 
-function enterEditMode(workerName) {
-  const log = state.logs.find((l) => l.worker_name === workerName);
+function enterEditMode(logId) {
+  const log = state.logs.find((l) => (l.log_id || l.worker_name) === logId);
   if (!log) {
-    showToast(`ไม่พบข้อมูลการเดินทางของ "${workerName}"`, 'error');
+    showToast(`ไม่พบข้อมูลรายการที่ต้องการแก้ไข`, 'error');
     return;
   }
 
+  state.editingLogId = log.log_id || log.worker_name;
   state.editingWorkerName = log.worker_name;
   state.lastCheckedGps = parseGpsStatus(log.gps_status);
   renderWorkerDropdown();
 
   const workerSelect = document.getElementById('form-worker');
   workerSelect.value = log.worker_name;
-  workerSelect.disabled = true;
+  workerSelect.disabled = false;
 
   document.getElementById('form-date').value = log.travel_date || '';
   document.getElementById('form-route').value = log.route || '';
@@ -1160,6 +1184,10 @@ function enterEditMode(workerName) {
     passengersEl.value =
       log.passenger_count !== null && log.passenger_count !== undefined ? log.passenger_count : '';
   }
+  const noteEl = document.getElementById('form-note');
+  if (noteEl) {
+    noteEl.value = log.note || '';
+  }
 
   const formCard = document.getElementById('form-card-container');
   const formHeaderBar = document.getElementById('form-header-bar');
@@ -1178,9 +1206,9 @@ function enterEditMode(workerName) {
   modeIcon.className =
     'w-8 h-8 rounded-lg bg-amber-600 text-white flex items-center justify-center text-sm shrink-0';
   modeIcon.innerHTML = '<i class="fa-solid fa-pen-to-square"></i>';
-  modeTitle.textContent = `แก้ไขข้อมูลการเดินทางของ: ${log.worker_name}`;
+  modeTitle.textContent = `แก้ไขรายการเดินทางของ: ${log.worker_name}`;
 
-  editWorkerLabel.textContent = log.worker_name;
+  editWorkerLabel.textContent = `${log.worker_name} (${formatShortThaiDateBE(log.travel_date) || 'ไม่ระบุวัน'})`;
   editBadgeGroup.classList.remove('hidden');
   editBadgeGroup.classList.add('flex');
 
@@ -1200,6 +1228,7 @@ function enterEditMode(workerName) {
 }
 
 function exitEditModeAndResetForm() {
+  state.editingLogId = null;
   state.editingWorkerName = null;
   state.lastCheckedGps = null;
   renderWorkerDropdown();
@@ -1218,6 +1247,8 @@ function exitEditModeAndResetForm() {
   document.getElementById('form-vehicle').value = '';
   const passengersEl = document.getElementById('form-passengers');
   if (passengersEl) passengersEl.value = '';
+  const noteEl = document.getElementById('form-note');
+  if (noteEl) noteEl.value = '';
   document.getElementById('form-gps-preview-card')?.classList.add('hidden');
 
   const formCard = document.getElementById('form-card-container');
@@ -1236,7 +1267,7 @@ function exitEditModeAndResetForm() {
   modeIcon.className =
     'w-8 h-8 rounded-lg bg-zinc-900 text-amber-400 flex items-center justify-center text-sm shrink-0';
   modeIcon.innerHTML = '<i class="fa-solid fa-plus"></i>';
-  modeTitle.textContent = 'บันทึกข้อมูลการเดินทางพนักงาน';
+  modeTitle.textContent = 'บันทึกข้อมูลการเดินทางพนักงาน (สะสมรายเที่ยว)';
 
   editBadgeGroup.classList.add('hidden');
   editBadgeGroup.classList.remove('flex');
@@ -1367,9 +1398,9 @@ function showIncompleteFieldsModal(missingFields, payload) {
 
 async function executeSaveLog(payload) {
   try {
-    const isEdit = Boolean(state.editingWorkerName);
+    const isEdit = Boolean(state.editingLogId);
     const url = isEdit
-      ? `/api/logs/${encodeURIComponent(state.editingWorkerName)}`
+      ? `/api/logs/${encodeURIComponent(state.editingLogId)}`
       : '/api/logs';
     const method = isEdit ? 'PUT' : 'POST';
 
@@ -1377,12 +1408,6 @@ async function executeSaveLog(payload) {
       method,
       body: JSON.stringify(payload)
     });
-
-    // HTTP 409 Conflict (Duplicate Primary Key)
-    if (res.status === 409) {
-      showDuplicateWorkerModal(payload.worker_name, res.data?.error);
-      return;
-    }
 
     // HTTP 507 Insufficient Storage (Storage Quota Full)
     if (res.status === 507) {
@@ -1416,11 +1441,7 @@ async function executeSaveLog(payload) {
 async function handleTravelLogSubmit(e) {
   e.preventDefault();
 
-  const worker_name = (
-    state.editingWorkerName ||
-    document.getElementById('form-worker')?.value ||
-    ''
-  ).trim();
+  const worker_name = (document.getElementById('form-worker')?.value || '').trim();
   const site_name = (document.getElementById('form-site')?.value || '').trim();
   const travel_date = (document.getElementById('form-date')?.value || '').trim();
   const route = (document.getElementById('form-route')?.value || '').trim();
@@ -1430,6 +1451,7 @@ async function handleTravelLogSubmit(e) {
   const passenger_count_raw = (document.getElementById('form-passengers')?.value || '').trim();
   const passenger_count =
     passenger_count_raw === '' ? null : Math.max(0, Number.parseInt(passenger_count_raw, 10));
+  const note = (document.getElementById('form-note')?.value || '').trim();
 
   if (!worker_name) {
     openCustomModal(`
@@ -1439,9 +1461,9 @@ async function handleTravelLogSubmit(e) {
             <i class="fa-solid fa-user-xmark"></i>
           </div>
           <div>
-            <h3 class="text-lg font-bold text-slate-900">กรุณาเลือกชื่อคนงาน (Primary Key)</h3>
+            <h3 class="text-lg font-bold text-slate-900">กรุณาเลือกชื่อคนขับ / พนักงาน</h3>
             <p class="text-sm text-slate-600 mt-1">
-              ช่อง <strong>"ชื่อคนงาน (PK)"</strong> เป็นข้อมูลบังคับเลือกก่อนทำการบันทึก
+              ช่อง <strong>"ชื่อคนขับ / พนักงาน"</strong> เป็นข้อมูลบังคับเลือกก่อนทำการบันทึก
             </p>
           </div>
         </div>
@@ -1471,14 +1493,11 @@ async function handleTravelLogSubmit(e) {
     departure_time,
     arrival_time,
     vehicle_plate,
-    passenger_count: Number.isNaN(passenger_count) ? null : passenger_count
+    passenger_count: Number.isNaN(passenger_count) ? null : passenger_count,
+    note
   };
 
-  // If in Create mode and duplicate PK or Storage Full, send directly so backend returns 409 or 507 immediately
-  if (
-    !state.editingWorkerName &&
-    (state.logs.some((l) => l.worker_name === worker_name) || state.storageQuota?.isFull)
-  ) {
+  if (!state.editingLogId && state.storageQuota?.isFull) {
     await executeSaveLog(payload);
     return;
   }
@@ -1506,17 +1525,20 @@ async function handleTravelLogSubmit(e) {
 // ============================================================================
 
 function getFilteredLogs() {
+  const siteFilter = (state.filterSite || '').trim();
   const dateFilter = state.filterDate.trim();
   const searchFilter = state.filterSearch.trim().toLowerCase();
 
   return state.logs.filter((row) => {
+    if (siteFilter && (row.site_name || '').trim() !== siteFilter) {
+      return false;
+    }
     if (dateFilter && (row.travel_date || '') !== dateFilter) {
       return false;
     }
     if (searchFilter) {
       const thaiDateShort = formatThaiDate(row.travel_date, false).toLowerCase();
       const thaiDateFull = formatThaiDate(row.travel_date, true).toLowerCase();
-      const gpsObj = parseGpsStatus(row.gps_status);
       const haystack = [
         row.worker_name || '',
         row.site_name || '',
@@ -1528,6 +1550,7 @@ function getFilteredLogs() {
         row.passenger_count !== null && row.passenger_count !== undefined
           ? `${row.passenger_count} คน`
           : '',
+        row.note || '',
         row.departure_time || '',
         row.arrival_time || ''
       ]
@@ -1653,7 +1676,8 @@ function renderLogsTable() {
   // 1. Render Desktop Table Rows
   tbody.innerHTML = filtered
     .map((row) => {
-      const isEditingThis = state.editingWorkerName === row.worker_name;
+      const rowKey = row.log_id || row.worker_name;
+      const isEditingThis = state.editingLogId === rowKey;
       const defaultRoute = workerDefaultMap.get(row.worker_name) || '';
       const isDefaultRoute = defaultRoute && row.route && row.route.trim() === defaultRoute;
       const duration = calculateTravelDuration(row.departure_time, row.arrival_time);
@@ -1674,7 +1698,6 @@ function renderLogsTable() {
               <div>
                 <div class="flex items-center gap-1.5">
                   <span>${escapeHtml(row.worker_name)}</span>
-                  <span class="px-1.5 py-0.2 rounded bg-slate-100 text-slate-500 font-mono text-[10px] border border-slate-200">PK</span>
                 </div>
                 ${
                   defaultRoute
@@ -1721,6 +1744,13 @@ function renderLogsTable() {
                         : ''
                     }
                   </div>
+                  ${
+                    row.note
+                      ? `<p class="text-[11px] text-amber-700 mt-0.5"><i class="fa-regular fa-note-sticky mr-1"></i>${escapeHtml(
+                          row.note
+                        )}</p>`
+                      : ''
+                  }
                 `
                 : '<span class="text-xs text-slate-400 italic">ไม่ได้ระบุ</span>'
             }
@@ -1779,7 +1809,7 @@ function renderLogsTable() {
               <button
                 type="button"
                 data-action="edit-log"
-                data-worker="${escapeHtml(row.worker_name)}"
+                data-log-id="${escapeHtml(rowKey)}"
                 class="px-2.5 py-1.5 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 text-xs font-semibold inline-flex items-center gap-1 transition cursor-pointer"
               >
                 <i class="fa-solid fa-pen-to-square"></i>
@@ -1788,6 +1818,7 @@ function renderLogsTable() {
               <button
                 type="button"
                 data-action="delete-log"
+                data-log-id="${escapeHtml(rowKey)}"
                 data-worker="${escapeHtml(row.worker_name)}"
                 class="px-2.5 py-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-semibold inline-flex items-center gap-1 transition cursor-pointer"
               >
@@ -1805,11 +1836,10 @@ function renderLogsTable() {
   if (mobileCards) {
     mobileCards.innerHTML = filtered
       .map((row) => {
+        const rowKey = row.log_id || row.worker_name;
         const defaultRoute = workerDefaultMap.get(row.worker_name) || '';
         const isDefaultRoute = defaultRoute && row.route && row.route.trim() === defaultRoute;
         const duration = calculateTravelDuration(row.departure_time, row.arrival_time);
-        const gps = parseGpsStatus(row.gps_status);
-        const isMoving = gps && (Number(gps.speed) > 0 || String(gps.status).includes('กำลังวิ่ง'));
 
         return `
           <div class="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm space-y-3">
@@ -1821,7 +1851,6 @@ function renderLogsTable() {
                 <div>
                   <h4 class="font-bold text-slate-900 text-sm flex items-center gap-1.5">
                     <span>${escapeHtml(row.worker_name)}</span>
-                    <span class="px-1.5 py-0.2 rounded bg-slate-100 text-slate-500 font-mono text-[10px]">PK</span>
                   </h4>
                   <p class="text-xs text-indigo-600 font-medium">
                     <i class="fa-regular fa-calendar mr-1"></i>${escapeHtml(
@@ -1877,13 +1906,21 @@ function renderLogsTable() {
                   }
                 </span>
               </div>
+              ${
+                row.note
+                  ? `<div class="flex items-center justify-between gap-2">
+                      <span class="text-slate-500">หมายเหตุ:</span>
+                      <span class="font-medium text-amber-700">${escapeHtml(row.note)}</span>
+                    </div>`
+                  : ''
+              }
             </div>
 
             <div class="flex items-center gap-2 pt-1">
               <button
                 type="button"
                 data-action="edit-log"
-                data-worker="${escapeHtml(row.worker_name)}"
+                data-log-id="${escapeHtml(rowKey)}"
                 class="flex-1 min-h-[44px] rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 font-semibold text-xs flex items-center justify-center gap-1.5 cursor-pointer"
               >
                 <i class="fa-solid fa-pen-to-square"></i>
@@ -1892,6 +1929,7 @@ function renderLogsTable() {
               <button
                 type="button"
                 data-action="delete-log"
+                data-log-id="${escapeHtml(rowKey)}"
                 data-worker="${escapeHtml(row.worker_name)}"
                 class="flex-1 min-h-[44px] rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-semibold text-xs flex items-center justify-center gap-1.5 cursor-pointer"
               >
@@ -1908,13 +1946,16 @@ function renderLogsTable() {
   // Bind Edit, Delete & Refresh GPS buttons for both Desktop & Mobile
   document.querySelectorAll('button[data-action="edit-log"]').forEach((btn) => {
     btn.addEventListener('click', () => {
-      enterEditMode(btn.getAttribute('data-worker'));
+      enterEditMode(btn.getAttribute('data-log-id'));
     });
   });
 
   document.querySelectorAll('button[data-action="delete-log"]').forEach((btn) => {
     btn.addEventListener('click', () => {
-      confirmDeleteTravelLog(btn.getAttribute('data-worker'));
+      confirmDeleteTravelLog(
+        btn.getAttribute('data-log-id'),
+        btn.getAttribute('data-worker')
+      );
     });
   });
 
@@ -1925,7 +1966,8 @@ function renderLogsTable() {
   });
 }
 
-function confirmDeleteTravelLog(workerName) {
+function confirmDeleteTravelLog(logId, workerLabel = '') {
+  const displayLabel = workerLabel || logId;
   openCustomModal(`
     <div class="p-6">
       <div class="flex items-start gap-4">
@@ -1933,9 +1975,9 @@ function confirmDeleteTravelLog(workerName) {
           <i class="fa-solid fa-trash-can"></i>
         </div>
         <div class="flex-1">
-          <h3 class="text-lg font-bold text-slate-900">ยืนยันการลบข้อมูลการเดินทาง</h3>
+          <h3 class="text-lg font-bold text-slate-900">ยืนยันการลบรายการเดินทาง</h3>
           <p class="text-sm text-slate-600 mt-1">
-            คุณต้องการลบข้อมูลการเดินทางของคนงาน <strong>"${escapeHtml(workerName)}"</strong> ออกจากฐานข้อมูลใช่หรือไม่?
+            คุณต้องการลบรายการเดินทางของ <strong>"${escapeHtml(displayLabel)}"</strong> ออกจากฐานข้อมูลใช่หรือไม่?
           </p>
         </div>
       </div>
@@ -1964,17 +2006,17 @@ function confirmDeleteTravelLog(workerName) {
   document.getElementById('modal-btn-confirm-del-log')?.addEventListener('click', async () => {
     closeCustomModal();
     try {
-      const res = await apiFetch(`/api/logs/${encodeURIComponent(workerName)}`, {
+      const res = await apiFetch(`/api/logs/${encodeURIComponent(logId)}`, {
         method: 'DELETE'
       });
       if (!res.ok) {
         showToast(res.data?.error || 'ไม่สามารถลบข้อมูลได้', 'error');
         return;
       }
-      if (state.editingWorkerName === workerName) {
+      if (state.editingLogId === logId) {
         exitEditModeAndResetForm();
       }
-      showToast(`ลบข้อมูลการเดินทางของ "${workerName}" เรียบร้อยแล้ว`, 'success');
+      showToast(`ลบรายการของ "${displayLabel}" เรียบร้อยแล้ว`, 'success');
       await loadAllData();
     } catch (err) {
       showToast(err.message || 'เกิดข้อผิดพลาดในการลบข้อมูล', 'error');
@@ -2410,6 +2452,11 @@ function appendOperationPagesToAoa(
             r.passenger_count !== ''
               ? Number(r.passenger_count)
               : '';
+          const remarkText = r.note
+            ? r.worker_name
+              ? `${r.note} (${r.worker_name})`
+              : r.note
+            : r.worker_name || '';
           aoa.push([
             seqNo,
             displayDate,
@@ -2422,7 +2469,7 @@ function appendOperationPagesToAoa(
             r.arrival_time || '',
             pax,
             '',
-            r.worker_name || ''
+            remarkText
           ]);
         } else {
           aoa.push([seqNo, '', '', '', '', '', '', '', '', '', '', '']);
@@ -2528,6 +2575,14 @@ function appendZone6WheelBlocksToAoa(aoa, merges, rows, defaultProjectTitle) {
         tallyMap.set(driverOrPlate, (tallyMap.get(driverOrPlate) || 0) + 1);
       }
 
+      const remarkText = r.note
+        ? r.worker_name && r.vehicle_plate
+          ? `${r.note} (${r.worker_name})`
+          : r.note
+        : r.worker_name && r.vehicle_plate
+        ? r.worker_name
+        : '';
+
       aoa.push(
         pad12([
           i + 1,
@@ -2537,7 +2592,7 @@ function appendZone6WheelBlocksToAoa(aoa, merges, rows, defaultProjectTitle) {
           r.departure_time ? `${r.departure_time}:00`.slice(0, 8) : '',
           pax,
           r.arrival_time || to || '',
-          r.worker_name && r.vehicle_plate ? r.worker_name : ''
+          remarkText
         ])
       );
     }
@@ -2613,7 +2668,8 @@ function extractExistingDataFromWorkbook(existingWorkbook) {
           passenger_count:
             item.passenger_count !== '' && item.passenger_count !== null && item.passenger_count !== undefined
               ? Number(item.passenger_count)
-              : null
+              : null,
+          note: String(item.note || '')
         });
       }
     }
@@ -2711,37 +2767,141 @@ function appendHistorySheet(workbook, rows) {
       arrival_time: r.arrival_time || '',
       vehicle_plate: r.vehicle_plate || '',
       passenger_count:
-        r.passenger_count !== null && r.passenger_count !== undefined ? r.passenger_count : ''
+        r.passenger_count !== null && r.passenger_count !== undefined ? r.passenger_count : '',
+      note: r.note || ''
     }))
   );
   window.XLSX.utils.book_append_sheet(workbook, wsHistory, '_CKP_HISTORY');
 }
 
-// 1. สร้างไฟล์แบบ "สำเนา" (บันทึกรายการรถ 6 ล้อ รับ-ส่งคนงาน + สรุปจำนวนเที่ยวคนขับ/ทะเบียนรถ)
+function sanitizeExcelSheetName(rawName, fallbackName) {
+  const cleaned = String(rawName || '')
+    .replace(/[\\/?*[\]:]/g, ' ')
+    .trim();
+  return (cleaned || fallbackName).slice(0, 28);
+}
+
+// 1. สร้างไฟล์แบบ "สำเนา" (แยก Sheet ตามสาย/โครงการ + สรุปจำนวนเที่ยวคนขับ/ทะเบียนรถท้ายตาราง)
 function buildCopyOnlyWorkbook(rows) {
   const { projectTitle, defaultCols } = getWorkbookMetaFromRows(rows);
   const workbook = window.XLSX.utils.book_new();
 
-  // Sheet 1: รวมสำเนาทั้งหมดในหน้าเดียว
+  // แยก Sheet ตามเส้นทาง/โครงการเหมือนไฟล์ สำเนา27 โซนวิภา
+  const routeBuckets = new Map();
+  if (rows.length === 0) {
+    routeBuckets.set('สำเนา_1', []);
+  } else {
+    for (const r of rows) {
+      const key = (r.route || r.site_name || '').trim() || 'ทั่วไป';
+      if (!routeBuckets.has(key)) routeBuckets.set(key, []);
+      routeBuckets.get(key).push(r);
+    }
+  }
+
+  let tabIndex = 1;
+  for (const [bucketKey, bucketRows] of routeBuckets.entries()) {
+    const singleAoa = [];
+    const singleMerges = [];
+    const tabProject =
+      (bucketRows.find((x) => x.site_name)?.site_name || '').trim() || projectTitle;
+    appendZone6WheelBlocksToAoa(singleAoa, singleMerges, bucketRows, tabProject);
+    const wsTab = window.XLSX.utils.aoa_to_sheet(singleAoa);
+    wsTab['!merges'] = singleMerges;
+    wsTab['!cols'] = defaultCols;
+    const sheetName = sanitizeExcelSheetName(
+      `${tabIndex}_${bucketKey}`,
+      `สำเนา_${tabIndex}`
+    );
+    window.XLSX.utils.book_append_sheet(workbook, wsTab, sheetName);
+    tabIndex += 1;
+  }
+
+  // รวมสำเนาทุกสายในหน้าเดียว
   const zoneAoa = [];
   const zoneMerges = [];
   appendZone6WheelBlocksToAoa(zoneAoa, zoneMerges, rows, projectTitle);
   const wsZone = window.XLSX.utils.aoa_to_sheet(zoneAoa);
   wsZone['!merges'] = zoneMerges;
   wsZone['!cols'] = defaultCols;
-  window.XLSX.utils.book_append_sheet(workbook, wsZone, 'สำเนา_บันทึกรถ6ล้อ');
+  window.XLSX.utils.book_append_sheet(workbook, wsZone, 'รวมสำเนาทุกสาย');
 
   appendHistorySheet(workbook, rows);
   return workbook;
 }
 
-// 2. สร้างไฟล์แบบ "ใบเบิก" (ใบเบิกผลงานผู้รับเหมา + ใบบันทึกการปฏิบัติงานรถ 6 ล้อ แผ่นที่ 1..N)
+// 2. สร้างไฟล์แบบ "ใบเบิก" (Sheet 1: ใบเบิก + Sheet 2..N: แผ่นที่ 1, แผ่นที่ 2... แผ่นละ 30 แถว)
 function buildBillingOnlyWorkbook(rows, existingPricesMap = new Map()) {
   const { issueDateBE, startDateBE, endDateBE, periodLabel, projectTitle, defaultCols } =
     getWorkbookMetaFromRows(rows);
   const workbook = window.XLSX.utils.book_new();
 
-  // Sheet 1: รวมใบเบิก + ใบบันทึกการปฏิบัติงานรถ 6 ล้อ ในหน้าเดียว
+  // Sheet 1: ใบเบิก (ใบเบิกผลงานผู้รับเหมา)
+  const billAoa = [];
+  const billMerges = [];
+  const billFormulas = [];
+  appendBillingSectionToAoa(
+    billAoa,
+    billMerges,
+    billFormulas,
+    rows,
+    projectTitle,
+    periodLabel,
+    issueDateBE,
+    existingPricesMap
+  );
+  const wsBill = window.XLSX.utils.aoa_to_sheet(billAoa);
+  applyFormulasToWorksheet(wsBill, billFormulas);
+  wsBill['!merges'] = billMerges;
+  wsBill['!cols'] = defaultCols;
+  window.XLSX.utils.book_append_sheet(workbook, wsBill, 'ใบเบิก');
+
+  // Sheet 2..N: แผ่นที่ 1, แผ่นที่ 2, แผ่นที่ 3... (แยกแผ่นละ 30 แถวตามเส้นทาง)
+  const routeBuckets = new Map();
+  if (rows.length === 0) {
+    routeBuckets.set('__empty__', []);
+  } else {
+    for (const r of rows) {
+      const key = (r.route || '').trim() || '__default__';
+      if (!routeBuckets.has(key)) routeBuckets.set(key, []);
+      routeBuckets.get(key).push(r);
+    }
+  }
+
+  let pageNo = 1;
+  for (const [, bucketRows] of routeBuckets.entries()) {
+    const pageCount = Math.max(1, Math.ceil(bucketRows.length / 30));
+    for (let p = 0; p < pageCount; p++) {
+      const slice30 = bucketRows.slice(p * 30, (p + 1) * 30);
+      const pageAoa = [];
+      const pageMerges = [];
+      appendOperationPagesToAoa(
+        pageAoa,
+        pageMerges,
+        slice30,
+        projectTitle,
+        startDateBE,
+        endDateBE
+      );
+      if (pageAoa[1]) {
+        pageAoa[1][10] = pageNo; // Set แผ่นที่ X
+      }
+      // Adjust sequence numbers for multi-page routes (31..60, 61..90)
+      if (p > 0) {
+        for (let i = 0; i < 30; i++) {
+          if (pageAoa[6 + i]) {
+            pageAoa[6 + i][0] = p * 30 + i + 1;
+          }
+        }
+      }
+      const wsPage = window.XLSX.utils.aoa_to_sheet(pageAoa);
+      wsPage['!merges'] = pageMerges;
+      wsPage['!cols'] = defaultCols;
+      window.XLSX.utils.book_append_sheet(workbook, wsPage, `แผ่นที่ ${pageNo}`);
+      pageNo += 1;
+    }
+  }
+
+  // Sheet รวมใบเบิก + ใบบันทึกทุกแผ่นในหน้าเดียว
   const combinedBillingAoa = [];
   const combinedBillingMerges = [];
   const combinedBillingFormulas = [];
@@ -2767,39 +2927,36 @@ function buildBillingOnlyWorkbook(rows, existingPricesMap = new Map()) {
   applyFormulasToWorksheet(wsCombinedBilling, combinedBillingFormulas);
   wsCombinedBilling['!merges'] = combinedBillingMerges;
   wsCombinedBilling['!cols'] = defaultCols;
-  window.XLSX.utils.book_append_sheet(workbook, wsCombinedBilling, 'ใบเบิกและใบบันทึก');
-
-  // Sheet 2: แยกเฉพาะ ใบเบิกผลงานผู้รับเหมา
-  const billAoa = [];
-  const billMerges = [];
-  const billFormulas = [];
-  appendBillingSectionToAoa(
-    billAoa,
-    billMerges,
-    billFormulas,
-    rows,
-    projectTitle,
-    periodLabel,
-    issueDateBE,
-    existingPricesMap
-  );
-  const wsBill = window.XLSX.utils.aoa_to_sheet(billAoa);
-  applyFormulasToWorksheet(wsBill, billFormulas);
-  wsBill['!merges'] = billMerges;
-  wsBill['!cols'] = defaultCols;
-  window.XLSX.utils.book_append_sheet(workbook, wsBill, 'ใบเบิกผู้รับเหมา');
-
-  // Sheet 3: แยกเฉพาะ ใบบันทึกการปฏิบัติงานรถ 6 ล้อ (แผ่นที่ 1..N)
-  const opAoa = [];
-  const opMerges = [];
-  appendOperationPagesToAoa(opAoa, opMerges, rows, projectTitle, startDateBE, endDateBE);
-  const wsOp = window.XLSX.utils.aoa_to_sheet(opAoa);
-  wsOp['!merges'] = opMerges;
-  wsOp['!cols'] = defaultCols;
-  window.XLSX.utils.book_append_sheet(workbook, wsOp, 'ใบบันทึกปฏิบัติงานรถ6ล้อ');
+  window.XLSX.utils.book_append_sheet(workbook, wsCombinedBilling, 'รวมใบเบิกและใบบันทึก');
 
   appendHistorySheet(workbook, rows);
   return workbook;
+}
+
+// บันทึกแยกเฉพาะไฟล์สำเนา
+async function saveCopyExcelFile() {
+  if (typeof window.XLSX === 'undefined') {
+    showToast('ไม่พบไลบรารี SheetJS (XLSX)', 'error');
+    return;
+  }
+  if (state.linkedCopyHandle) {
+    await writeWorkbookIntoHandleByType('copy', state.linkedCopyHandle, false);
+  } else {
+    openExcelLinkModalByType('copy');
+  }
+}
+
+// บันทึกแยกเฉพาะไฟล์ใบเบิก
+async function saveBillingExcelFile() {
+  if (typeof window.XLSX === 'undefined') {
+    showToast('ไม่พบไลบรารี SheetJS (XLSX)', 'error');
+    return;
+  }
+  if (state.linkedBillingHandle) {
+    await writeWorkbookIntoHandleByType('billing', state.linkedBillingHandle, false);
+  } else {
+    openExcelLinkModalByType('billing');
+  }
 }
 
 async function writeWorkbookIntoHandleByType(type, handle, silentToast = false) {
@@ -4241,10 +4398,16 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('btn-cancel-edit')?.addEventListener('click', exitEditModeAndResetForm);
   document.getElementById('btn-cancel-edit-top')?.addEventListener('click', exitEditModeAndResetForm);
 
-  // 11. Table Filters & Excel/CSV Export
+  // 11. Table Filters & Excel Export
+  const filterSiteSelect = document.getElementById('filter-site');
   const filterDateInput = document.getElementById('filter-date');
   const filterSearchInput = document.getElementById('filter-search');
   const btnClearSearch = document.getElementById('btn-clear-search');
+
+  filterSiteSelect?.addEventListener('change', () => {
+    state.filterSite = filterSiteSelect.value;
+    renderLogsTable();
+  });
 
   filterDateInput?.addEventListener('input', () => {
     state.filterDate = filterDateInput.value;
@@ -4285,6 +4448,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   document.getElementById('btn-export-excel')?.addEventListener('click', exportLogsToExcel);
+  document.getElementById('btn-save-copy-excel')?.addEventListener('click', saveCopyExcelFile);
+  document.getElementById('btn-save-billing-excel')?.addEventListener('click', saveBillingExcelFile);
   document.getElementById('btn-link-copy-excel')?.addEventListener('click', () => {
     openExcelLinkModalByType('copy');
   });

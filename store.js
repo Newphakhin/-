@@ -955,7 +955,7 @@ async function updateSite(id, { name, active }) {
       const allLogs = await listLogs();
       for (const log of allLogs) {
         if ((log.site_name || '') === existing.name) {
-          await updateLog(log.worker_name, { site_name: newName });
+          await updateLog(log.log_id || log.worker_name, { site_name: newName });
           cascadedLogsCount += 1;
         }
       }
@@ -1058,25 +1058,47 @@ function normalizePassengerCount(val) {
   return num;
 }
 
-function encodeExtraFieldsToGpsStatus(passenger_count, site_name) {
+function encodeExtraFieldsToGpsStatus(passenger_count, site_name, note) {
   const cleanSite = String(site_name || '').trim();
-  if (passenger_count === null && !cleanSite) {
+  const cleanNote = String(note || '').trim();
+  if (passenger_count === null && !cleanSite && !cleanNote) {
     return '';
   }
   return JSON.stringify({
     passenger_count,
-    site_name: cleanSite
+    site_name: cleanSite,
+    note: cleanNote
   });
+}
+
+function splitWorkerLogKey(rawKey) {
+  const str = String(rawKey || '');
+  const sepIdx = str.indexOf('__#');
+  if (sepIdx === -1) {
+    return {
+      log_id: str,
+      worker_name: str,
+      suffix: ''
+    };
+  }
+  return {
+    log_id: str,
+    worker_name: str.slice(0, sepIdx),
+    suffix: str.slice(sepIdx)
+  };
 }
 
 function withResolvedPassengerCount(row) {
   if (!row) return row;
+  const { log_id, worker_name } = splitWorkerLogKey(row.worker_name);
   let count =
     row.passenger_count !== undefined && row.passenger_count !== null
       ? normalizePassengerCount(row.passenger_count)
       : null;
   let siteName =
     row.site_name !== undefined && row.site_name !== null ? String(row.site_name).trim() : '';
+  let noteText =
+    row.note !== undefined && row.note !== null ? String(row.note).trim() : '';
 
   if (row.gps_status) {
     try {
@@ -1088,6 +1110,9 @@ function withResolvedPassengerCount(row) {
         if (!siteName && parsed.site_name) {
           siteName = String(parsed.site_name).trim();
         }
+        if (!noteText && parsed.note) {
+          noteText = String(parsed.note).trim();
+        }
       }
     } catch {
       // ignore non-JSON gps_status
@@ -1096,8 +1121,11 @@ function withResolvedPassengerCount(row) {
 
   return {
     ...row,
+    log_id,
+    worker_name,
     site_name: siteName,
-    passenger_count: count
+    passenger_count: count,
+    note: noteText
   };
 }
 
@@ -1148,6 +1176,7 @@ async function listLogs(dateFilter = '', searchFilter = '') {
         r.route || '',
         r.vehicle_plate || '',
         r.passenger_count !== null && r.passenger_count !== undefined ? `${r.passenger_count} คน` : '',
+        r.note || '',
         r.departure_time || '',
         r.arrival_time || ''
       ]
@@ -1168,28 +1197,17 @@ async function createLog(payload) {
     route,
     departure_time,
     arrival_time,
-    vehicle_plate
+    vehicle_plate,
+    note
   } = payload;
+  const cleanWorkerName = String(worker_name || '').trim();
   const cleanSiteName = String(site_name || '').trim();
+  const cleanNote = String(note || '').trim();
   const passenger_count = normalizePassengerCount(payload.passenger_count);
-  const encodedExtra = encodeExtraFieldsToGpsStatus(passenger_count, cleanSiteName);
+  const encodedExtra = encodeExtraFieldsToGpsStatus(passenger_count, cleanSiteName, cleanNote);
+  const uniqueLogKey = `${cleanWorkerName}__#${Date.now()}_${Math.floor(Math.random() * 10000)}`;
 
   if (isSupabaseConfigured && supabase) {
-    const { data: existing } = await supabase
-      .from('travel_logs')
-      .select('*')
-      .eq('worker_name', worker_name)
-      .maybeSingle();
-    if (existing) {
-      const err = new Error(
-        `คนงาน "${worker_name}" มีข้อมูลการเดินทางในระบบแล้ว ห้ามบันทึกซ้ำ กรุณากดปุ่ม "แก้ไข" แทน`
-      );
-      err.status = 409;
-      err.code = 'DUPLICATE_WORKER_PK';
-      err.existing = withResolvedPassengerCount(existing);
-      throw err;
-    }
-
     const quota = await getQuotaStatus();
     if (quota.isFull) {
       const err = new Error(
@@ -1202,7 +1220,7 @@ async function createLog(payload) {
     }
 
     const insertRow = {
-      worker_name,
+      worker_name: uniqueLogKey,
       travel_date: travel_date || '',
       route: route || '',
       departure_time: departure_time || '',
@@ -1238,19 +1256,6 @@ async function createLog(payload) {
     };
   }
 
-  const existing = db
-    .prepare('SELECT * FROM travel_logs WHERE worker_name = ?')
-    .get(worker_name);
-  if (existing) {
-    const err = new Error(
-      `คนงาน "${worker_name}" มีข้อมูลการเดินทางในระบบแล้ว ห้ามบันทึกซ้ำ กรุณากดปุ่ม "แก้ไข" แทน`
-    );
-    err.status = 409;
-    err.code = 'DUPLICATE_WORKER_PK';
-    err.existing = withResolvedPassengerCount(existing);
-    throw err;
-  }
-
   const quota = await getQuotaStatus();
   if (quota.isFull) {
     const err = new Error(
@@ -1266,7 +1271,7 @@ async function createLog(payload) {
     `INSERT INTO travel_logs (worker_name, site_name, travel_date, route, departure_time, arrival_time, vehicle_plate, passenger_count, gps_status, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))`
   ).run(
-    worker_name,
+    uniqueLogKey,
     cleanSiteName,
     travel_date || '',
     route || '',
@@ -1278,24 +1283,31 @@ async function createLog(payload) {
   );
 
   syncJsonFallbackFile();
-  const created = db.prepare('SELECT * FROM travel_logs WHERE worker_name = ?').get(worker_name);
+  const created = db.prepare('SELECT * FROM travel_logs WHERE worker_name = ?').get(uniqueLogKey);
   return { ...withResolvedPassengerCount(created), storageQuota: await getQuotaStatus() };
 }
 
-async function updateLog(worker_name, updates) {
+async function updateLog(log_id, updates) {
   if (isSupabaseConfigured && supabase) {
     const { data: existing } = await supabase
       .from('travel_logs')
       .select('*')
-      .eq('worker_name', worker_name)
+      .eq('worker_name', log_id)
       .maybeSingle();
     if (!existing) {
-      const err = new Error(`ไม่พบข้อมูลการเดินทางของ "${worker_name}"`);
+      const err = new Error(`ไม่พบข้อมูลการเดินทางที่ต้องการแก้ไข`);
       err.status = 404;
       throw err;
     }
 
     const resolvedExisting = withResolvedPassengerCount(existing);
+    const { suffix } = splitWorkerLogKey(existing.worker_name);
+    const nextWorkerName =
+      updates.worker_name !== undefined && String(updates.worker_name).trim()
+        ? String(updates.worker_name).trim()
+        : resolvedExisting.worker_name;
+    const nextLogKey = suffix ? `${nextWorkerName}${suffix}` : existing.worker_name;
+
     const nextPassengerCount =
       updates.passenger_count !== undefined
         ? normalizePassengerCount(updates.passenger_count)
@@ -1304,9 +1316,14 @@ async function updateLog(worker_name, updates) {
       updates.site_name !== undefined
         ? String(updates.site_name || '').trim()
         : resolvedExisting.site_name || '';
-    const encodedExtra = encodeExtraFieldsToGpsStatus(nextPassengerCount, nextSiteName);
+    const nextNote =
+      updates.note !== undefined
+        ? String(updates.note || '').trim()
+        : resolvedExisting.note || '';
+    const encodedExtra = encodeExtraFieldsToGpsStatus(nextPassengerCount, nextSiteName, nextNote);
 
     const nextRow = {
+      worker_name: nextLogKey,
       travel_date:
         updates.travel_date !== undefined ? updates.travel_date : existing.travel_date || '',
       route: updates.route !== undefined ? updates.route : existing.route || '',
@@ -1326,7 +1343,7 @@ async function updateLog(worker_name, updates) {
     let { data: updated, error } = await supabase
       .from('travel_logs')
       .update(nextRow)
-      .eq('worker_name', worker_name)
+      .eq('worker_name', log_id)
       .select('*')
       .single();
 
@@ -1335,7 +1352,7 @@ async function updateLog(worker_name, updates) {
       const retry = await supabase
         .from('travel_logs')
         .update(fallbackRow)
-        .eq('worker_name', worker_name)
+        .eq('worker_name', log_id)
         .select('*')
         .single();
       updated = retry.data;
@@ -1352,18 +1369,29 @@ async function updateLog(worker_name, updates) {
 
   const existing = db
     .prepare('SELECT * FROM travel_logs WHERE worker_name = ?')
-    .get(worker_name);
+    .get(log_id);
   if (!existing) {
-    const err = new Error(`ไม่พบข้อมูลการเดินทางของ "${worker_name}"`);
+    const err = new Error(`ไม่พบข้อมูลการเดินทางที่ต้องการแก้ไข`);
     err.status = 404;
     throw err;
   }
 
   const resolvedExisting = withResolvedPassengerCount(existing);
+  const { suffix } = splitWorkerLogKey(existing.worker_name);
+  const nextWorkerName =
+    updates.worker_name !== undefined && String(updates.worker_name).trim()
+      ? String(updates.worker_name).trim()
+      : resolvedExisting.worker_name;
+  const nextLogKey = suffix ? `${nextWorkerName}${suffix}` : existing.worker_name;
+
   const site_name =
     updates.site_name !== undefined
       ? String(updates.site_name || '').trim()
       : resolvedExisting.site_name || '';
+  const note =
+    updates.note !== undefined
+      ? String(updates.note || '').trim()
+      : resolvedExisting.note || '';
   const travel_date =
     updates.travel_date !== undefined ? updates.travel_date : existing.travel_date;
   const route = updates.route !== undefined ? updates.route : existing.route;
@@ -1377,13 +1405,14 @@ async function updateLog(worker_name, updates) {
     updates.passenger_count !== undefined
       ? normalizePassengerCount(updates.passenger_count)
       : resolvedExisting.passenger_count;
-  const gps_status = encodeExtraFieldsToGpsStatus(passenger_count, site_name);
+  const gps_status = encodeExtraFieldsToGpsStatus(passenger_count, site_name, note);
 
   db.prepare(
     `UPDATE travel_logs
-     SET site_name = ?, travel_date = ?, route = ?, departure_time = ?, arrival_time = ?, vehicle_plate = ?, passenger_count = ?, gps_status = ?, updated_at = datetime('now', 'localtime')
+     SET worker_name = ?, site_name = ?, travel_date = ?, route = ?, departure_time = ?, arrival_time = ?, vehicle_plate = ?, passenger_count = ?, gps_status = ?, updated_at = datetime('now', 'localtime')
      WHERE worker_name = ?`
   ).run(
+    nextLogKey,
     site_name,
     travel_date,
     route,
@@ -1392,44 +1421,44 @@ async function updateLog(worker_name, updates) {
     vehicle_plate,
     passenger_count,
     gps_status,
-    worker_name
+    log_id
   );
 
   syncJsonFallbackFile();
-  const updated = db.prepare('SELECT * FROM travel_logs WHERE worker_name = ?').get(worker_name);
+  const updated = db.prepare('SELECT * FROM travel_logs WHERE worker_name = ?').get(nextLogKey);
   return { ...withResolvedPassengerCount(updated), storageQuota: await getQuotaStatus() };
 }
 
-async function deleteLog(worker_name) {
+async function deleteLog(log_id) {
   if (isSupabaseConfigured && supabase) {
     const { data: existing } = await supabase
       .from('travel_logs')
       .select('*')
-      .eq('worker_name', worker_name)
+      .eq('worker_name', log_id)
       .maybeSingle();
     if (!existing) {
-      const err = new Error(`ไม่พบข้อมูลการเดินทางของ "${worker_name}"`);
+      const err = new Error(`ไม่พบข้อมูลการเดินทางที่ต้องการลบ`);
       err.status = 404;
       throw err;
     }
 
-    const { error } = await supabase.from('travel_logs').delete().eq('worker_name', worker_name);
+    const { error } = await supabase.from('travel_logs').delete().eq('worker_name', log_id);
     if (error) throw new Error(error.message);
-    return { deleted: existing, storageQuota: await getQuotaStatus() };
+    return { deleted: withResolvedPassengerCount(existing), storageQuota: await getQuotaStatus() };
   }
 
   const existing = db
     .prepare('SELECT * FROM travel_logs WHERE worker_name = ?')
-    .get(worker_name);
+    .get(log_id);
   if (!existing) {
-    const err = new Error(`ไม่พบข้อมูลการเดินทางของ "${worker_name}"`);
+    const err = new Error(`ไม่พบข้อมูลการเดินทางที่ต้องการลบ`);
     err.status = 404;
     throw err;
   }
 
-  db.prepare('DELETE FROM travel_logs WHERE worker_name = ?').run(worker_name);
+  db.prepare('DELETE FROM travel_logs WHERE worker_name = ?').run(log_id);
   syncJsonFallbackFile();
-  return { deleted: existing, storageQuota: await getQuotaStatus() };
+  return { deleted: withResolvedPassengerCount(existing), storageQuota: await getQuotaStatus() };
 }
 
 async function clearOldLogs(mode = 'all') {
