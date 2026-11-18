@@ -283,12 +283,13 @@ async function updateWorker(id, { name, default_route, active }, userRole) {
 
     let cascadedLogsCount = 0;
     if (newName !== existing.name) {
-      const { data: logUpdated } = await supabase
-        .from('travel_logs')
-        .update({ worker_name: newName, updated_at: new Date().toISOString() })
-        .eq('worker_name', existing.name)
-        .select('worker_name');
-      cascadedLogsCount = (logUpdated || []).length;
+      const allLogs = await listLogs();
+      for (const log of allLogs) {
+        if ((log.worker_name || '') === existing.name) {
+          await updateLog(log.log_id || log.worker_name, { worker_name: newName });
+          cascadedLogsCount += 1;
+        }
+      }
     }
 
     return {
@@ -343,12 +344,18 @@ async function updateWorker(id, { name, default_route, active }, userRole) {
       id
     );
     if (newName !== existing.name) {
-      const res = db
-        .prepare(
-          "UPDATE travel_logs SET worker_name = ?, updated_at = datetime('now', 'localtime') WHERE worker_name = ?"
-        )
-        .run(newName, existing.name);
-      cascadedLogsCount = Number(res.changes || 0);
+      const matchingLogs = db
+        .prepare("SELECT worker_name FROM travel_logs WHERE worker_name = ? OR worker_name LIKE ?")
+        .all(existing.name, `${existing.name}__#%`);
+      const updStmt = db.prepare(
+        "UPDATE travel_logs SET worker_name = ?, updated_at = datetime('now', 'localtime') WHERE worker_name = ?"
+      );
+      for (const m of matchingLogs) {
+        const { suffix } = splitWorkerLogKey(m.worker_name);
+        const nextKey = suffix ? `${newName}${suffix}` : newName;
+        updStmt.run(nextKey, m.worker_name);
+        cascadedLogsCount += 1;
+      }
     }
     db.exec('COMMIT');
   } catch (e) {
@@ -1141,6 +1148,10 @@ function isMissingExtraColumnError(error) {
 }
 
 async function listLogs(dateFilter = '', searchFilter = '') {
+  if (dateFilter && typeof dateFilter === 'object') {
+    searchFilter = dateFilter.search || '';
+    dateFilter = dateFilter.date || '';
+  }
   let rows = [];
   if (isSupabaseConfigured && supabase) {
     const { data, error } = await supabase

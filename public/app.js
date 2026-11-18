@@ -2650,6 +2650,48 @@ function applyFormulasToWorksheet(ws, formulas) {
 }
 
 // Parse existing history & unit prices from an existing Excel workbook buffer
+function normalizeExcelCellDateToISO(val) {
+  const s = String(val || '').trim();
+  if (!s) return '';
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+  const m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
+  if (m) {
+    let p1 = Number(m[1]);
+    let p2 = Number(m[2]);
+    let y = Number(m[3]);
+    const isThaiShortYear = y >= 60 && y <= 99;
+    if (y >= 2400) {
+      y -= 543;
+    } else if (y < 100) {
+      y = isThaiShortYear ? 2500 + y - 543 : 2000 + y;
+    }
+    let day = p1;
+    let month = p2;
+    if (month > 12 && day <= 12) {
+      day = p2;
+      month = p1;
+    }
+    return `${y}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  }
+  return s;
+}
+
+function normalizeExcelCellTime(val) {
+  if (val === '' || val === null || val === undefined) return '';
+  if (typeof val === 'number' && val >= 0 && val < 1) {
+    const totalMins = Math.round(val * 24 * 60);
+    const hh = String(Math.floor(totalMins / 60) % 24).padStart(2, '0');
+    const mm = String(totalMins % 60).padStart(2, '0');
+    return `${hh}:${mm}`;
+  }
+  const s = String(val).trim();
+  const m = s.match(/^(\d{1,2}):(\d{2})(?::\d{2})?/);
+  if (m) {
+    return `${String(Number(m[1])).padStart(2, '0')}:${m[2]}`;
+  }
+  return s;
+}
+
 function extractExistingDataFromWorkbook(existingWorkbook) {
   const existingRows = [];
   const existingPricesMap = new Map();
@@ -2692,6 +2734,121 @@ function extractExistingDataFromWorkbook(existingWorkbook) {
               ? Number(item.passenger_count)
               : null,
           note: String(item.note || '')
+        });
+      }
+    }
+    return { existingRows, existingPricesMap };
+  }
+
+  // 3. Fallback: Parse native สำเนา or ใบบันทึก sheets when linking a pre-existing Excel file without _CKP_HISTORY
+  for (const sheetName of existingWorkbook.SheetNames) {
+    if (
+      sheetName === '_CKP_HISTORY' ||
+      sheetName === 'รวมสำเนาทุกสาย' ||
+      sheetName === 'รวมใบเบิกและใบบันทึก' ||
+      sheetName === 'ใบเบิก'
+    ) {
+      continue;
+    }
+    const ws = existingWorkbook.Sheets[sheetName];
+    if (!ws) continue;
+    const rows2d = window.XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: false });
+    if (!rows2d || rows2d.length < 5) continue;
+
+    let siteName = '';
+    let mode = ''; // 'copy' | 'operation'
+    let dataStartIndex = -1;
+
+    for (let idx = 0; idx < Math.min(rows2d.length, 12); idx++) {
+      const r = rows2d[idx] || [];
+      const c0 = String(r[0] || '').trim();
+      const c1 = String(r[1] || '').trim();
+      const c3 = String(r[3] || '').trim();
+      const c5 = String(r[5] || '').trim();
+
+      if (c0.startsWith('โครงการ')) {
+        siteName = c0.replace(/^โครงการ\s*/i, '').trim();
+      } else if (c0.includes('สถานที่ปฏิบัติงานโครงการ') && c3) {
+        siteName = c3;
+      }
+
+      if (c0 === 'ลำดับ' && c1.includes('วัน') && c5.includes('จำนวนคน')) {
+        mode = 'copy';
+        dataStartIndex = idx + 1;
+        break;
+      }
+      if (c0 === 'ลำดับ' && c1.includes('ว/ด/ป')) {
+        mode = 'operation';
+        dataStartIndex = idx + 2; // skip 2-row header
+        break;
+      }
+    }
+
+    if (!mode || dataStartIndex < 0) continue;
+
+    let lastDateISO = '';
+    for (let idx = dataStartIndex; idx < rows2d.length; idx++) {
+      const r = rows2d[idx] || [];
+      const rawDate = String(r[1] || '').trim();
+      if (rawDate) {
+        lastDateISO = normalizeExcelCellDateToISO(rawDate);
+      }
+
+      if (mode === 'copy') {
+        const plateOrDriver = String(r[2] || '').trim();
+        const fromStr = String(r[3] || '').trim();
+        const depTime = normalizeExcelCellTime(r[4]);
+        const rawPax = String(r[5] || '').trim();
+        const col6 = String(r[6] || '').trim();
+        const noteStr = String(r[7] || '').trim();
+
+        // In สำเนา, summary rows at the bottom have empty plate (col 2) and empty from (col 3)
+        if (!plateOrDriver && !fromStr) continue;
+
+        const isCol6Time = /^\d{1,2}:\d{2}/.test(col6);
+        const arrTime = isCol6Time ? normalizeExcelCellTime(col6) : '';
+        const routeStr =
+          !isCol6Time && col6 && col6 !== fromStr ? `${fromStr} - ${col6}` : fromStr;
+        const paxNum =
+          rawPax !== '' && !Number.isNaN(Number(rawPax)) ? Number(rawPax) : null;
+
+        existingRows.push({
+          worker_name: plateOrDriver,
+          site_name: siteName,
+          travel_date: lastDateISO,
+          route: routeStr,
+          departure_time: depTime,
+          arrival_time: arrTime,
+          vehicle_plate: plateOrDriver,
+          passenger_count: paxNum,
+          note: noteStr
+        });
+      } else if (mode === 'operation') {
+        const plate = String(r[2] || '').trim();
+        const fromStr = String(r[3] || '').trim();
+        const depTime = normalizeExcelCellTime(r[4]);
+        const toStr = String(r[5] || '').trim();
+        const arrTime = normalizeExcelCellTime(r[8]);
+        const rawPax = String(r[9] || '').trim();
+        const noteStr = String(r[11] || '').trim();
+
+        if (!plate && !fromStr && !toStr) continue;
+
+        const routeStr =
+          toStr && toStr !== fromStr ? `${fromStr} - ${toStr}` : fromStr || toStr;
+        const paxNum =
+          rawPax !== '' && !Number.isNaN(Number(rawPax)) ? Number(rawPax) : null;
+
+        existingRows.push({
+          worker_name: noteStr || plate,
+          site_name: siteName,
+          travel_date: lastDateISO,
+          route: routeStr,
+          departure_time: depTime,
+          arrival_time: arrTime,
+          vehicle_plate: plate,
+          passenger_count: paxNum,
+          note: noteStr
         });
       }
     }
