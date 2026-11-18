@@ -2501,7 +2501,7 @@ function appendOperationPagesToAoa(
 
           const { from, to } = getDirectionalRouteParts(
             r.route,
-            r.departure_time,
+            r.departure_time || r.arrival_time,
             r.site_name || firstRowSite
           );
           const pax =
@@ -2619,9 +2619,10 @@ function appendZone6WheelBlocksToAoa(aoa, merges, rows, defaultProjectTitle, for
       const displayDate = dateBE !== prevDateStr ? dateBE : '';
       if (dateBE) prevDateStr = dateBE;
 
+      const tripTime = r.departure_time || r.arrival_time;
       const { from } = getDirectionalRouteParts(
         r.route,
-        r.departure_time,
+        tripTime,
         r.site_name || blockProject
       );
       const pax =
@@ -2649,7 +2650,7 @@ function appendZone6WheelBlocksToAoa(aoa, merges, rows, defaultProjectTitle, for
           displayDate,
           driverOrPlate,
           from,
-          formatExcelTimeDisplay(r.departure_time),
+          formatExcelTimeDisplay(tripTime),
           pax,
           '',
           remarkText
