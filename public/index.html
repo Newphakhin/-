@@ -3,7 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>ระบบจัดการบันทึกข้อมูลการเดินทางของคนงาน | Worker Dispatch &amp; Travel Log System</title>
+  <title>ระบบจัดการบันทึกข้อมูลการเดินทางพนักงาน บริษัท จักรพงษ์ ขนส่ง (2003) จำกัด</title>
+  <link rel="icon" type="image/jpeg" href="/logo.jpg" />
 
   <!-- Google Fonts: Prompt -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -55,76 +56,96 @@
   </div>
 
   <!-- ===================================================================== -->
-  <!-- 1. LOGIN SCREEN                                                       -->
+  <!-- 1. LOGIN SCREEN (CKP TRANSPORT THEME)                                 -->
   <!-- ===================================================================== -->
-  <section id="login-screen" class="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 relative overflow-hidden">
-    <div class="absolute -top-32 -left-32 w-96 h-96 rounded-full bg-indigo-500/15 blur-3xl pointer-events-none"></div>
-    <div class="absolute -bottom-32 -right-32 w-96 h-96 rounded-full bg-sky-500/15 blur-3xl pointer-events-none"></div>
+  <section id="login-screen" class="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-zinc-950 via-neutral-900 to-zinc-950 relative overflow-hidden">
+    <div class="absolute -top-32 -left-32 w-96 h-96 rounded-full bg-amber-500/10 blur-3xl pointer-events-none"></div>
+    <div class="absolute -bottom-32 -right-32 w-96 h-96 rounded-full bg-white/5 blur-3xl pointer-events-none"></div>
 
-    <div class="w-full max-w-4xl grid grid-cols-1 lg:grid-cols-12 bg-white/95 backdrop-blur-xl rounded-3xl shadow-2xl overflow-hidden border border-white/20">
+    <div class="w-full max-w-4xl grid grid-cols-1 lg:grid-cols-12 bg-white rounded-3xl shadow-2xl overflow-hidden border border-zinc-800/40">
       
-      <!-- Left Column: System Branding & Cloud Features -->
-      <div class="lg:col-span-5 bg-gradient-to-br from-indigo-700 via-indigo-800 to-slate-900 text-white p-6 sm:p-8 flex flex-col justify-between relative">
+      <!-- Left Column: CKP Transport Corporate Branding -->
+      <div class="lg:col-span-5 bg-gradient-to-br from-zinc-950 via-neutral-900 to-zinc-900 text-white p-6 sm:p-8 flex flex-col justify-between relative border-b lg:border-b-0 lg:border-r border-zinc-800">
         <div>
-          <div class="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-white/15 backdrop-blur-sm text-indigo-100 text-xs font-medium mb-5 border border-white/10">
-            <i class="fa-solid fa-truck-fast text-amber-300"></i>
-            <span>Supabase Cloud Dispatch System</span>
+          <div class="flex items-center gap-3.5 mb-6">
+            <img
+              src="/logo.jpg"
+              alt="CKP Transport Logo"
+              class="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl object-contain bg-white p-1.5 shadow-xl border-2 border-amber-400/80 shrink-0"
+            />
+            <div>
+              <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-amber-400/15 text-amber-300 text-[11px] font-semibold border border-amber-400/30 mb-1">
+                <i class="fa-solid fa-truck-fast"></i>
+                <span>CKP TRANSPORT</span>
+              </span>
+              <p class="text-xs text-zinc-300 font-medium">CHAKRAPONG TRANSPORT (2003)</p>
+            </div>
           </div>
 
-          <h1 class="text-2xl sm:text-3xl font-bold leading-snug tracking-tight mb-3">
-            ระบบจัดการบันทึกข้อมูลการเดินทางของคนงาน
+          <h1 class="text-xl sm:text-2xl font-bold leading-snug tracking-tight mb-2 text-white">
+            ระบบจัดการบันทึกข้อมูลการเดินทางพนักงาน
           </h1>
-          <p class="text-indigo-200 text-sm leading-relaxed">
-            Worker Dispatch &amp; Travel Log System — ระบบคลาวด์ออนไลน์ เปิดใช้งานได้ทั้งบนมือถือและคอมพิวเตอร์ทุกที่
+          <p class="text-amber-400 font-semibold text-sm sm:text-base mb-3">
+            บริษัท จักรพงษ์ ขนส่ง (2003) จำกัด
+          </p>
+          <p class="text-zinc-400 text-xs leading-relaxed">
+            ระบบบริหารจัดการคิวเดินรถ เส้นทางที่หมาย เวลาเดินทาง จำนวนผู้โดยสาร และทะเบียนรถแบบออนไลน์ครบวงจร
           </p>
 
-          <div class="mt-6 space-y-3.5 text-xs text-indigo-100/90">
+          <div class="mt-6 space-y-3.5 text-xs text-zinc-300">
             <div class="flex items-start gap-3">
-              <div class="w-7 h-7 rounded-lg bg-white/10 flex items-center justify-center shrink-0 mt-0.5">
-                <i class="fa-solid fa-cloud-arrow-up text-sky-300"></i>
+              <div class="w-7 h-7 rounded-lg bg-white/10 flex items-center justify-center shrink-0 mt-0.5 border border-white/10">
+                <i class="fa-solid fa-cloud-arrow-up text-amber-400"></i>
               </div>
               <div>
-                <p class="font-semibold text-white">ฐานข้อมูลคลาวด์ Supabase &amp; โควต้าพื้นที่</p>
-                <p class="text-indigo-200/80">รองรับ Supabase PostgreSQL + แจ้งเตือนเมื่อข้อมูลใกล้เต็ม/เต็ม</p>
+                <p class="font-semibold text-white">ฐานข้อมูลคลาวด์ออนไลน์เรียลไทม์</p>
+                <p class="text-zinc-400">จัดเก็บข้อมูลปลอดภัยบนคลาวด์ พร้อมระบบตรวจสอบโควต้าพื้นที่</p>
               </div>
             </div>
             <div class="flex items-start gap-3">
-              <div class="w-7 h-7 rounded-lg bg-white/10 flex items-center justify-center shrink-0 mt-0.5">
-                <i class="fa-solid fa-route text-emerald-300"></i>
+              <div class="w-7 h-7 rounded-lg bg-white/10 flex items-center justify-center shrink-0 mt-0.5 border border-white/10">
+                <i class="fa-solid fa-route text-emerald-400"></i>
               </div>
               <div>
-                <p class="font-semibold text-white">Auto-fill ไซต์งานประจำ &amp; Combo Box</p>
-                <p class="text-indigo-200/80">เลือกจากรายการหรือพิมพ์เอง พร้อมตั้งค่าไซต์ประจำและจัดการหลังบ้านได้ทันที</p>
+                <p class="font-semibold text-white">Auto-fill ไซต์งานประจำ &amp; จัดการข้อมูลหลัก</p>
+                <p class="text-zinc-400">เลือกพนักงาน เส้นทาง ทะเบียนรถ และระบุจำนวนคนโดยสารได้สะดวก</p>
               </div>
             </div>
             <div class="flex items-start gap-3">
-              <div class="w-7 h-7 rounded-lg bg-white/10 flex items-center justify-center shrink-0 mt-0.5">
-                <i class="fa-solid fa-mobile-screen-button text-amber-300"></i>
+              <div class="w-7 h-7 rounded-lg bg-white/10 flex items-center justify-center shrink-0 mt-0.5 border border-white/10">
+                <i class="fa-solid fa-file-excel text-sky-400"></i>
               </div>
               <div>
-                <p class="font-semibold text-white">Mobile-First Responsive &amp; Export Excel/CSV</p>
-                <p class="text-indigo-200/80">แสดงผลเป็นการ์ดบนมือถือ ตารางบนคอมพิวเตอร์ พร้อมส่งออก Excel (.xlsx) และ CSV</p>
+                <p class="font-semibold text-white">รองรับมือถือ &amp; ส่งออกไฟล์ Excel (.xlsx)</p>
+                <p class="text-zinc-400">ใช้งานได้ทุกที่ทั้งบนสมาร์ตโฟนและคอมพิวเตอร์ พร้อมรายงาน Excel/CSV</p>
               </div>
             </div>
           </div>
         </div>
 
-        <div class="mt-6 pt-4 border-t border-white/15 flex items-center justify-between text-xs text-indigo-200">
-          <span><i class="fa-solid fa-shield-halved mr-1.5"></i>Role-Based Access Control</span>
-          <span class="font-mono bg-white/10 px-2 py-0.5 rounded">v2.0 Cloud</span>
+        <div class="mt-6 pt-4 border-t border-white/10 flex items-center justify-between text-xs text-zinc-400">
+          <span><i class="fa-solid fa-shield-halved text-amber-400 mr-1.5"></i>CKP Security Access</span>
+          <span class="font-mono bg-white/10 text-zinc-200 px-2 py-0.5 rounded">CKP 2003</span>
         </div>
       </div>
 
-      <!-- Right Column: Login Form (No Quick Demo Buttons) -->
-      <div class="lg:col-span-7 p-6 sm:p-10 flex flex-col justify-center">
-        <div class="mb-6">
-          <h2 class="text-xl sm:text-2xl font-bold text-slate-900 flex items-center gap-2.5">
-            <i class="fa-solid fa-right-to-bracket text-indigo-600"></i>
-            <span>เข้าสู่ระบบปฏิบัติงาน</span>
-          </h2>
-          <p class="text-sm text-slate-500 mt-1">
-            กรุณากรอกชื่อผู้ใช้งานและรหัสผ่านเพื่อเข้าสู่ระบบ
-          </p>
+      <!-- Right Column: Login Form -->
+      <div class="lg:col-span-7 p-6 sm:p-10 flex flex-col justify-center bg-white">
+        <div class="mb-6 flex items-center gap-3.5">
+          <img
+            src="/logo.jpg"
+            alt="CKP Logo"
+            class="w-12 h-12 rounded-xl object-contain border border-zinc-200 p-1 shadow-sm lg:hidden"
+          />
+          <div>
+            <h2 class="text-xl sm:text-2xl font-bold text-zinc-900 flex items-center gap-2.5">
+              <i class="fa-solid fa-right-to-bracket text-amber-500"></i>
+              <span>เข้าสู่ระบบปฏิบัติงาน</span>
+            </h2>
+            <p class="text-xs sm:text-sm text-zinc-500 mt-1">
+              บริษัท จักรพงษ์ ขนส่ง (2003) จำกัด — กรุณากรอกชื่อผู้ใช้งานและรหัสผ่าน
+            </p>
+          </div>
         </div>
 
         <!-- Login Error Alert -->
@@ -136,11 +157,11 @@
         <!-- Login Form -->
         <form id="login-form" class="space-y-4" novalidate>
           <div>
-            <label for="login-username" class="block text-sm font-medium text-slate-700 mb-1">
+            <label for="login-username" class="block text-sm font-medium text-zinc-700 mb-1">
               ชื่อผู้ใช้งาน (Username)
             </label>
             <div class="relative">
-              <span class="absolute inset-y-0 left-0 pl-3.5 flex items-center text-slate-400 pointer-events-none">
+              <span class="absolute inset-y-0 left-0 pl-3.5 flex items-center text-zinc-400 pointer-events-none">
                 <i class="fa-solid fa-user"></i>
               </span>
               <input
@@ -150,17 +171,17 @@
                 autocomplete="username"
                 placeholder="กรอกชื่อผู้ใช้งาน"
                 required
-                class="w-full min-h-[44px] pl-10 pr-4 py-2.5 rounded-xl border border-slate-300 bg-slate-50/60 focus:bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 transition"
+                class="w-full min-h-[44px] pl-10 pr-4 py-2.5 rounded-xl border border-zinc-300 bg-zinc-50/60 focus:bg-white text-zinc-900 text-sm focus:outline-none focus:ring-2 focus:ring-zinc-900 focus:border-zinc-900 transition"
               />
             </div>
           </div>
 
           <div>
-            <label for="login-password" class="block text-sm font-medium text-slate-700 mb-1">
+            <label for="login-password" class="block text-sm font-medium text-zinc-700 mb-1">
               รหัสผ่าน (Password)
             </label>
             <div class="relative">
-              <span class="absolute inset-y-0 left-0 pl-3.5 flex items-center text-slate-400 pointer-events-none">
+              <span class="absolute inset-y-0 left-0 pl-3.5 flex items-center text-zinc-400 pointer-events-none">
                 <i class="fa-solid fa-lock"></i>
               </span>
               <input
@@ -170,13 +191,13 @@
                 autocomplete="current-password"
                 placeholder="กรอกรหัสผ่าน"
                 required
-                class="w-full min-h-[44px] pl-10 pr-12 py-2.5 rounded-xl border border-slate-300 bg-slate-50/60 focus:bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 transition"
+                class="w-full min-h-[44px] pl-10 pr-12 py-2.5 rounded-xl border border-zinc-300 bg-zinc-50/60 focus:bg-white text-zinc-900 text-sm focus:outline-none focus:ring-2 focus:ring-zinc-900 focus:border-zinc-900 transition"
               />
               <button
                 type="button"
                 id="toggle-password-btn"
                 title="แสดง/ซ่อนรหัสผ่าน"
-                class="absolute inset-y-0 right-0 px-3.5 flex items-center text-slate-400 hover:text-indigo-600 focus:outline-none transition cursor-pointer min-h-[44px]"
+                class="absolute inset-y-0 right-0 px-3.5 flex items-center text-zinc-400 hover:text-zinc-900 focus:outline-none transition cursor-pointer min-h-[44px]"
               >
                 <i id="toggle-password-icon" class="fa-solid fa-eye"></i>
               </button>
@@ -186,9 +207,9 @@
           <button
             type="submit"
             id="btn-login-submit"
-            class="w-full min-h-[46px] py-3 px-5 rounded-xl bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white font-semibold text-sm shadow-lg shadow-indigo-600/25 flex items-center justify-center gap-2 transition cursor-pointer"
+            class="w-full min-h-[46px] py-3 px-5 rounded-xl bg-zinc-900 hover:bg-zinc-800 active:bg-black text-white font-semibold text-sm shadow-lg shadow-zinc-900/25 flex items-center justify-center gap-2 transition cursor-pointer border border-amber-400/20"
           >
-            <i class="fa-solid fa-unlock-keyhole"></i>
+            <i class="fa-solid fa-unlock-keyhole text-amber-400"></i>
             <span>เข้าสู่ระบบ (Sign In)</span>
           </button>
         </form>
@@ -221,30 +242,32 @@
       <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div class="flex flex-wrap items-center justify-between py-2.5 gap-3">
           
-          <!-- App Brand -->
+          <!-- App Brand (CKP Transport) -->
           <div class="flex items-center gap-3">
-            <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-600 to-indigo-800 text-white flex items-center justify-center shadow-md shadow-indigo-600/20 shrink-0">
-              <i class="fa-solid fa-truck-fast text-lg"></i>
-            </div>
+            <img
+              src="/logo.jpg"
+              alt="CKP Transport Logo"
+              class="w-11 h-11 rounded-xl object-contain bg-white border border-zinc-200 shadow-sm p-0.5 shrink-0"
+            />
             <div>
-              <h1 class="text-sm sm:text-lg font-bold text-slate-900 leading-tight">
-                ระบบจัดการบันทึกข้อมูลการเดินทางของคนงาน
+              <h1 class="text-sm sm:text-base lg:text-lg font-bold text-zinc-900 leading-tight">
+                ระบบจัดการบันทึกข้อมูลการเดินทางพนักงาน
               </h1>
-              <p class="text-[11px] text-slate-500 hidden sm:block">
-                Worker Dispatch &amp; Travel Log System
+              <p class="text-[11px] sm:text-xs font-semibold text-amber-600">
+                บริษัท จักรพงษ์ ขนส่ง (2003) จำกัด <span class="text-slate-400 font-normal hidden md:inline">• CKP TRANSPORT</span>
               </p>
             </div>
           </div>
 
           <!-- Desktop Navigation Tabs & User Controls -->
           <div class="flex flex-wrap items-center gap-2 sm:gap-3">
-            <nav class="hidden md:flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200/80">
+            <nav class="hidden md:flex items-center bg-zinc-100 p-1 rounded-xl border border-zinc-200/80">
               <button
                 type="button"
                 id="nav-tab-front"
-                class="min-h-[40px] px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold transition flex items-center gap-1.5 bg-indigo-600 text-white shadow-sm cursor-pointer"
+                class="min-h-[40px] px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold transition flex items-center gap-1.5 bg-zinc-900 text-white shadow-sm cursor-pointer"
               >
-                <i class="fa-solid fa-clipboard-list"></i>
+                <i class="fa-solid fa-clipboard-list text-amber-400"></i>
                 <span>หน้าบันทึกข้อมูล</span>
               </button>
 
@@ -252,9 +275,9 @@
               <button
                 type="button"
                 id="nav-tab-back"
-                class="hidden min-h-[40px] px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold transition items-center gap-1.5 text-slate-600 hover:text-slate-900 cursor-pointer"
+                class="hidden min-h-[40px] px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold transition items-center gap-1.5 text-zinc-600 hover:text-zinc-900 cursor-pointer"
               >
-                <i class="fa-solid fa-sliders"></i>
+                <i class="fa-solid fa-sliders text-amber-500"></i>
                 <span>ระบบหลังบ้าน (Dropdown)</span>
               </button>
             </nav>
@@ -359,15 +382,15 @@
           <!-- Form Card Header -->
           <div id="form-header-bar" class="px-5 sm:px-6 py-4 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
             <div class="flex items-center gap-2.5">
-              <div id="form-mode-icon" class="w-8 h-8 rounded-lg bg-indigo-600 text-white flex items-center justify-center text-sm shrink-0">
+              <div id="form-mode-icon" class="w-8 h-8 rounded-lg bg-zinc-900 text-amber-400 flex items-center justify-center text-sm shrink-0">
                 <i class="fa-solid fa-plus"></i>
               </div>
               <div>
-                <h2 id="form-mode-title" class="text-base font-bold text-slate-900">
-                  บันทึกข้อมูลการเดินทางของคนงาน
+                <h2 id="form-mode-title" class="text-base font-bold text-zinc-900">
+                  บันทึกข้อมูลการเดินทางพนักงาน
                 </h2>
                 <p id="form-mode-subtitle" class="text-xs text-slate-500">
-                  บังคับเลือกเฉพาะ "ชื่อคนงาน (PK)" ส่วนช่องอื่นสามารถเว้นว่างได้ (มีระบบแจ้งเตือนตรวจสอบก่อนบันทึก)
+                  บังคับเลือกเฉพาะ "ชื่อพนักงาน/คนงาน (PK)" ส่วนช่องอื่นสามารถเว้นว่างได้ (มีระบบแจ้งเตือนตรวจสอบก่อนบันทึก)
                 </p>
               </div>
             </div>
@@ -597,9 +620,9 @@
                 <button
                   type="submit"
                   id="btn-submit-log"
-                  class="flex-1 sm:flex-initial min-h-[44px] px-6 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white text-sm font-semibold shadow-md shadow-indigo-600/20 flex items-center justify-center gap-2 transition cursor-pointer"
+                  class="flex-1 sm:flex-initial min-h-[44px] px-6 py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 active:bg-black text-white text-sm font-semibold shadow-md shadow-zinc-900/20 flex items-center justify-center gap-2 transition cursor-pointer"
                 >
-                  <i id="btn-submit-icon" class="fa-solid fa-floppy-disk"></i>
+                  <i id="btn-submit-icon" class="fa-solid fa-floppy-disk text-amber-400"></i>
                   <span id="btn-submit-text">บันทึกข้อมูลการเดินทาง</span>
                 </button>
               </div>
@@ -796,24 +819,31 @@
       <div id="view-back-office" class="hidden space-y-6">
 
         <!-- Back-Office Banner -->
-        <div class="bg-gradient-to-r from-indigo-900 via-indigo-800 to-slate-900 rounded-2xl p-5 sm:p-6 text-white shadow-md flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-          <div class="space-y-1">
-            <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/15 text-amber-300 text-xs font-semibold">
-              <i class="fa-solid fa-user-shield"></i>
-              <span>Back-Office Management (เฉพาะผู้ดูแลระบบ Admin)</span>
+        <div class="bg-gradient-to-r from-zinc-950 via-neutral-900 to-zinc-900 rounded-2xl p-5 sm:p-6 text-white shadow-md flex flex-col md:flex-row md:items-center md:justify-between gap-4 border border-zinc-800">
+          <div class="flex items-start sm:items-center gap-4">
+            <img
+              src="/logo.jpg"
+              alt="CKP Logo"
+              class="w-14 h-14 rounded-2xl object-contain bg-white p-1 border-2 border-amber-400/70 shrink-0 hidden sm:block"
+            />
+            <div class="space-y-1">
+              <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/10 text-amber-300 text-xs font-semibold border border-amber-400/20">
+                <i class="fa-solid fa-user-shield"></i>
+                <span>CKP TRANSPORT — ระบบหลังบ้าน (เฉพาะแอดมิน)</span>
+              </div>
+              <h2 class="text-lg sm:text-xl font-bold">
+                จัดการตัวเลือก Dropdown &amp; โควต้าพื้นที่เก็บข้อมูล
+              </h2>
+              <p class="text-xs sm:text-sm text-zinc-300">
+                แก้ไขข้อมูลพนักงาน, เส้นทาง หรือทะเบียนรถ จะอัปเดตเชื่อมโยง (Cascade Update) ไปยัง <code>travel_logs</code> และ <code>default_route</code> อัตโนมัติ
+              </p>
             </div>
-            <h2 class="text-lg sm:text-xl font-bold">
-              จัดการตัวเลือก Dropdown &amp; โควต้าพื้นที่เก็บข้อมูล
-            </h2>
-            <p class="text-xs sm:text-sm text-indigo-100/90">
-              แก้ไขข้อมูลคนงาน, เส้นทาง หรือทะเบียนรถ จะอัปเดตเชื่อมโยง (Cascade Update) ไปยัง <code>travel_logs</code> และ <code>default_route</code> อัตโนมัติ
-            </p>
           </div>
 
           <button
             type="button"
             id="btn-back-to-front"
-            class="min-h-[44px] self-start md:self-center px-4 py-2.5 rounded-xl bg-white text-indigo-900 hover:bg-indigo-50 text-xs sm:text-sm font-bold shadow-sm flex items-center gap-2 shrink-0 transition cursor-pointer"
+            class="min-h-[44px] self-start md:self-center px-4 py-2.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-zinc-950 text-xs sm:text-sm font-bold shadow-sm flex items-center gap-2 shrink-0 transition cursor-pointer"
           >
             <i class="fa-solid fa-arrow-left"></i>
             <span>กลับหน้าบันทึกข้อมูลหลัก</span>
@@ -1035,13 +1065,16 @@
     </nav>
 
     <!-- Footer -->
-    <footer class="bg-white border-t border-slate-200 py-4 mt-8">
-      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between text-xs text-slate-500 gap-2">
-        <div>
-          <strong>Worker Dispatch &amp; Travel Log System v2.0</strong> — Supabase PostgreSQL Cloud
+    <footer class="bg-zinc-950 text-zinc-400 border-t border-zinc-800 py-4 mt-8">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between text-xs gap-2">
+        <div class="flex items-center gap-2.5">
+          <img src="/logo.jpg" alt="CKP" class="w-6 h-6 rounded object-contain bg-white p-0.5" />
+          <span>
+            <strong class="text-white">ระบบจัดการบันทึกข้อมูลการเดินทางพนักงาน</strong> — บริษัท จักรพงษ์ ขนส่ง (2003) จำกัด (CKP TRANSPORT)
+          </span>
         </div>
-        <div class="flex items-center gap-3">
-          <span><i class="fa-solid fa-circle text-[8px] text-emerald-500 mr-1"></i>พร้อมใช้งานบนมือถือและคอมพิวเตอร์</span>
+        <div class="flex items-center gap-3 text-zinc-300">
+          <span><i class="fa-solid fa-circle text-[8px] text-emerald-400 mr-1"></i>พร้อมใช้งานบนมือถือและคอมพิวเตอร์</span>
         </div>
       </div>
     </footer>

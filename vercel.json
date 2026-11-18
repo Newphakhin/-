@@ -16,6 +16,10 @@
       "dest": "/server.js"
     },
     {
+      "src": "/logo.jpg",
+      "dest": "/public/logo.jpg"
+    },
+    {
       "src": "/styles.css",
       "dest": "/public/styles.css"
     },

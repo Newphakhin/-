@@ -641,7 +641,7 @@ function renderAuthView() {
     fullNameEl.textContent = '';
     fullNameEl.classList.add('hidden');
     roleBadgeEl.className =
-      'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-indigo-100 text-indigo-800 border border-indigo-200';
+      'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-zinc-900 text-amber-400 border border-zinc-800 shadow-sm';
     roleBadgeEl.innerHTML = '<i class="fa-solid fa-user-shield text-[11px]"></i> แอดมิน';
 
     navTabBack.classList.remove('hidden');
@@ -687,13 +687,13 @@ function switchView(viewName) {
     viewBack.classList.add('hidden');
 
     tabFront.className =
-      'min-h-[40px] px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold transition flex items-center gap-1.5 bg-indigo-600 text-white shadow-sm cursor-pointer';
+      'min-h-[40px] px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold transition flex items-center gap-1.5 bg-zinc-900 text-white shadow-sm cursor-pointer';
     tabBack.className =
       state.user?.role === 'admin'
-        ? 'flex min-h-[40px] px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold transition items-center gap-1.5 text-slate-600 hover:text-slate-900 cursor-pointer'
+        ? 'flex min-h-[40px] px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold transition items-center gap-1.5 text-zinc-600 hover:text-zinc-900 cursor-pointer'
         : 'hidden';
 
-    if (mobForm) mobForm.className = 'flex-1 min-h-[46px] flex flex-col items-center justify-center rounded-xl text-indigo-600 font-semibold text-[11px] gap-0.5 cursor-pointer';
+    if (mobForm) mobForm.className = 'flex-1 min-h-[46px] flex flex-col items-center justify-center rounded-xl text-zinc-900 font-semibold text-[11px] gap-0.5 cursor-pointer';
     if (mobTable) mobTable.className = 'flex-1 min-h-[46px] flex flex-col items-center justify-center rounded-xl text-slate-600 font-medium text-[11px] gap-0.5 cursor-pointer';
     if (mobBack && state.user?.role === 'admin') {
       mobBack.className = 'flex flex-1 min-h-[46px] flex-col items-center justify-center rounded-xl text-slate-600 font-medium text-[11px] gap-0.5 cursor-pointer';
@@ -703,13 +703,13 @@ function switchView(viewName) {
     viewBack.classList.remove('hidden');
 
     tabFront.className =
-      'min-h-[40px] px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold transition flex items-center gap-1.5 text-slate-600 hover:text-slate-900 cursor-pointer';
+      'min-h-[40px] px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold transition flex items-center gap-1.5 text-zinc-600 hover:text-zinc-900 cursor-pointer';
     tabBack.className =
-      'flex min-h-[40px] px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold transition items-center gap-1.5 bg-indigo-600 text-white shadow-sm cursor-pointer';
+      'flex min-h-[40px] px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold transition items-center gap-1.5 bg-zinc-900 text-white shadow-sm cursor-pointer';
 
     if (mobForm) mobForm.className = 'flex-1 min-h-[46px] flex flex-col items-center justify-center rounded-xl text-slate-600 font-medium text-[11px] gap-0.5 cursor-pointer';
     if (mobTable) mobTable.className = 'flex-1 min-h-[46px] flex flex-col items-center justify-center rounded-xl text-slate-600 font-medium text-[11px] gap-0.5 cursor-pointer';
-    if (mobBack) mobBack.className = 'flex flex-1 min-h-[46px] flex-col items-center justify-center rounded-xl text-indigo-600 font-semibold text-[11px] gap-0.5 cursor-pointer';
+    if (mobBack) mobBack.className = 'flex flex-1 min-h-[46px] flex-col items-center justify-center rounded-xl text-zinc-900 font-semibold text-[11px] gap-0.5 cursor-pointer';
 
     loadBackOfficeData();
   }
@@ -1215,9 +1215,9 @@ function exitEditModeAndResetForm() {
   formHeaderBar.className =
     'px-5 sm:px-6 py-4 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3';
   modeIcon.className =
-    'w-8 h-8 rounded-lg bg-indigo-600 text-white flex items-center justify-center text-sm shrink-0';
+    'w-8 h-8 rounded-lg bg-zinc-900 text-amber-400 flex items-center justify-center text-sm shrink-0';
   modeIcon.innerHTML = '<i class="fa-solid fa-plus"></i>';
-  modeTitle.textContent = 'บันทึกข้อมูลการเดินทางของคนงาน';
+  modeTitle.textContent = 'บันทึกข้อมูลการเดินทางพนักงาน';
 
   editBadgeGroup.classList.add('hidden');
   editBadgeGroup.classList.remove('flex');
@@ -1226,8 +1226,8 @@ function exitEditModeAndResetForm() {
   btnCancelEdit.classList.remove('flex');
 
   btnSubmit.className =
-    'flex-1 sm:flex-initial min-h-[44px] px-6 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white text-sm font-semibold shadow-md shadow-indigo-600/20 flex items-center justify-center gap-2 transition cursor-pointer';
-  btnSubmitIcon.className = 'fa-solid fa-floppy-disk';
+    'flex-1 sm:flex-initial min-h-[44px] px-6 py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 active:bg-black text-white text-sm font-semibold shadow-md shadow-zinc-900/20 flex items-center justify-center gap-2 transition cursor-pointer';
+  btnSubmitIcon.className = 'fa-solid fa-floppy-disk text-amber-400';
   btnSubmitText.textContent = 'บันทึกข้อมูลการเดินทาง';
 
   updateDateAndDurationPreview();
