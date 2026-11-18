@@ -404,7 +404,7 @@ function renderStorageQuotaUI(triggerFullModal = false) {
               แจ้งเตือนระดับที่ 1 (Warning): พื้นที่เก็บข้อมูลใกล้เต็ม (${q.currentCount}/${q.maxLimit} รายการ — ${pct}%)
             </h4>
             <p class="text-xs text-amber-800 mt-0.5">
-              ความจุข้อมูลเกิน 80% แล้ว แนะนำให้กดส่งออกไฟล์ CSV / Excel เพื่อสำรองข้อมูลไว้ล่วงหน้าก่อนที่พื้นที่เก็บข้อมูลจะเต็ม
+              ความจุข้อมูลเกิน 80% แล้ว แนะนำให้กดส่งออกแบบฟอร์มไฟล์ Excel เพื่อสำรองข้อมูลไว้ล่วงหน้าก่อนที่พื้นที่เก็บข้อมูลจะเต็ม
             </p>
           </div>
         </div>
@@ -412,27 +412,16 @@ function renderStorageQuotaUI(triggerFullModal = false) {
           <button
             type="button"
             id="banner-warn-export-excel"
-            class="min-h-[40px] px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+            class="min-h-[40px] px-4 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
           >
             <i class="fa-solid fa-file-excel"></i>
-            <span>สำรองไฟล์ Excel</span>
-          </button>
-          <button
-            type="button"
-            id="banner-warn-export-csv"
-            class="min-h-[40px] px-3.5 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
-          >
-            <i class="fa-solid fa-file-csv"></i>
-            <span>ส่งออกไฟล์ CSV</span>
+            <span>ส่งออกแบบฟอร์ม Excel (ครบทั้ง 2 แบบฟอร์ม)</span>
           </button>
         </div>
       `;
       warningBanner
         .querySelector('#banner-warn-export-excel')
         ?.addEventListener('click', exportLogsToExcel);
-      warningBanner
-        .querySelector('#banner-warn-export-csv')
-        ?.addEventListener('click', exportLogsToCSV);
     }
   } else {
     if (progressBar) progressBar.className = 'h-full bg-indigo-600 rounded-full transition-all duration-300';
@@ -483,20 +472,11 @@ function showStorageFullEmergencyModal(customMessage = '') {
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
           <button
             type="button"
-            id="modal-full-export-csv"
-            class="min-h-[44px] px-3.5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center justify-center gap-2 shadow-sm transition cursor-pointer"
-          >
-            <i class="fa-solid fa-file-csv text-base"></i>
-            <span>ส่งออก CSV สำรองข้อมูลทันที</span>
-          </button>
-
-          <button
-            type="button"
             id="modal-full-export-excel"
-            class="min-h-[44px] px-3.5 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold flex items-center justify-center gap-2 shadow-sm transition cursor-pointer"
+            class="sm:col-span-2 min-h-[44px] px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center justify-center gap-2 shadow-sm transition cursor-pointer"
           >
             <i class="fa-solid fa-file-excel text-base"></i>
-            <span>ส่งออก Excel (.xlsx) ทันที</span>
+            <span>ส่งออกแบบฟอร์ม Excel (ครบทั้ง 2 แบบฟอร์ม) ทันที</span>
           </button>
 
           ${
@@ -538,9 +518,6 @@ function showStorageFullEmergencyModal(customMessage = '') {
   `);
 
   document.getElementById('modal-full-close')?.addEventListener('click', closeCustomModal);
-  document.getElementById('modal-full-export-csv')?.addEventListener('click', () => {
-    exportLogsToCSV();
-  });
   document.getElementById('modal-full-export-excel')?.addEventListener('click', () => {
     exportLogsToExcel();
   });
@@ -1942,134 +1919,409 @@ function confirmDeleteTravelLog(workerName) {
   });
 }
 
-// Export 1: Native Microsoft Excel (.xlsx)
-function exportLogsToExcel() {
-  const rows = getFilteredLogs();
-  if (rows.length === 0) {
-    showToast('ไม่มีรายการข้อมูลให้ส่งออกไฟล์ Excel', 'warning');
-    return;
-  }
-
-  const dateSuffix = state.filterDate || getTodayISO();
-  const filename = `worker_travel_logs_${dateSuffix}.xlsx`;
-
-  const excelData = rows.map((r, idx) => {
-    const dur = calculateTravelDuration(r.departure_time, r.arrival_time);
-    return {
-      'ลำดับ': idx + 1,
-      'ชื่อคนงาน (PK)': r.worker_name || '',
-      'วันที่หมายที่ต้องไป (YYYY-MM-DD)': r.travel_date || '',
-      'วันที่หมายที่ต้องไป (ไทย)': formatThaiDate(r.travel_date, false),
-      'เส้นทาง / ที่หมาย': r.route || '',
-      'เวลาขับรถ': r.departure_time || '-',
-      'เวลาที่ต้องไปถึงไซต์งาน': r.arrival_time || '-',
-      'ระยะเวลาเดินทาง': dur.text,
-      'ทะเบียนรถ': r.vehicle_plate || '-',
-      'จำนวนคนโดยสาร (คน)':
-        r.passenger_count !== null && r.passenger_count !== undefined ? r.passenger_count : '-',
-      'อัปเดตล่าสุด': r.updated_at || ''
-    };
-  });
-
-  if (typeof window.XLSX !== 'undefined') {
-    const worksheet = window.XLSX.utils.json_to_sheet(excelData);
-    worksheet['!cols'] = [
-      { wch: 8 },
-      { wch: 24 },
-      { wch: 24 },
-      { wch: 20 },
-      { wch: 34 },
-      { wch: 14 },
-      { wch: 20 },
-      { wch: 22 },
-      { wch: 18 },
-      { wch: 20 },
-      { wch: 20 }
-    ];
-    const workbook = window.XLSX.utils.book_new();
-    window.XLSX.utils.book_append_sheet(workbook, worksheet, 'บันทึกการเดินทาง');
-    window.XLSX.writeFile(workbook, filename);
-
-    showToast(
-      `ส่งออกไฟล์ Excel (.xlsx) สำเร็จ (${rows.length} รายการ)`,
-      'success',
-      `ดาวน์โหลดไฟล์ ${filename} เรียบร้อยแล้ว`
-    );
-    return;
-  }
-
-  exportLogsToCSV();
+// Format YYYY-MM-DD into short Thai Buddhist date (e.g. 18/11/2569)
+function formatShortThaiDateBE(isoDate) {
+  if (!isoDate) return '';
+  const m = String(isoDate).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return String(isoDate);
+  const yearBE = Number(m[1]) + 543;
+  const month = Number(m[2]);
+  const day = Number(m[3]);
+  return `${day}/${month}/${yearBE}`;
 }
 
-// Export 2: CSV with UTF-8 BOM (\uFEFF)
-function exportLogsToCSV() {
-  const rows = getFilteredLogs();
-  if (rows.length === 0) {
-    showToast('ไม่มีรายการข้อมูลให้ส่งออกไฟล์ CSV', 'warning');
+// Split route string into { from, to } (e.g. "แคมป์พระราม9 - ไลฟ์รัชดา")
+function splitRouteParts(routeStr) {
+  const raw = String(routeStr || '').trim();
+  if (!raw) return { from: '', to: '' };
+  const parts = raw.split(/\s*(?:-|->|→|ถึง)\s*/).filter(Boolean);
+  if (parts.length >= 2) {
+    return {
+      from: parts[0],
+      to: parts.slice(1).join(' - ')
+    };
+  }
+  return { from: raw, to: raw };
+}
+
+// Build Sheet 1: บันทึกรายการรถ 6 ล้อ รับ-ส่งคนงาน (Template 1: สำเนา27 โซนวิภา)
+function buildTemplate1ZoneSheet(rows, projectTitle) {
+  const aoa = [
+    ['บริษัท จักรพงษ์ ขนส่ง (2003) จำกัด', '', '', '', '', '', '', ''],
+    ['บันทึกรายการรถ 6 ล้อ รับ-ส่งคนงาน', '', '', '', '', '', '', ''],
+    [`โครงการ  ${projectTitle}`, '', '', '', '', '', '', ''],
+    ['', '', '', '', '', '', '', ''],
+    ['ลำดับ', 'วัน เดือน ปี', 'ทะเบียนรถ', 'จาก', 'เวลา', 'จำนวนคน', 'ถึง', 'หมายเหตุ']
+  ];
+
+  const totalLines = Math.max(30, rows.length);
+  for (let i = 0; i < totalLines; i++) {
+    const r = rows[i];
+    if (r) {
+      const { from, to } = splitRouteParts(r.route);
+      const depTime = r.departure_time ? String(r.departure_time).replace(':', '.') : '';
+      const arrTime = r.arrival_time ? String(r.arrival_time).replace(':', '.') : '';
+      const pax =
+        r.passenger_count !== null && r.passenger_count !== undefined && r.passenger_count !== ''
+          ? Number(r.passenger_count)
+          : '';
+      const plateOrDriver =
+        r.vehicle_plate && r.worker_name
+          ? `${r.vehicle_plate} (${r.worker_name})`
+          : r.vehicle_plate || r.worker_name || '';
+      aoa.push([
+        i + 1,
+        formatShortThaiDateBE(r.travel_date),
+        plateOrDriver,
+        from,
+        depTime,
+        pax,
+        arrTime || to,
+        to && arrTime ? to : r.worker_name || ''
+      ]);
+    } else {
+      aoa.push([i + 1, '', '', '', '', '', '', '']);
+    }
+  }
+
+  const ws = window.XLSX.utils.aoa_to_sheet(aoa);
+  ws['!merges'] = [
+    { s: { r: 0, c: 0 }, e: { r: 0, c: 7 } }, // A1:H1
+    { s: { r: 1, c: 0 }, e: { r: 1, c: 7 } }, // A2:H2
+    { s: { r: 2, c: 0 }, e: { r: 2, c: 7 } }  // A3:H3
+  ];
+  ws['!cols'] = [
+    { wch: 8 },  // A: ลำดับ
+    { wch: 15 }, // B: วัน เดือน ปี
+    { wch: 24 }, // C: ทะเบียนรถ
+    { wch: 24 }, // D: จาก
+    { wch: 12 }, // E: เวลา
+    { wch: 12 }, // F: จำนวนคน
+    { wch: 18 }, // G: ถึง
+    { wch: 24 }  // H: หมายเหตุ
+  ];
+  return ws;
+}
+
+// Build Sheet 2: ใบเบิกผลงานผู้รับเหมา (Template 2A: ใบเบิกไลฟ์รัชดา-พระราม9 Sheet 1)
+function buildTemplate2BillingSheet(rows, projectTitle, periodLabel, issueDateBE) {
+  const routeGroupsMap = new Map();
+  for (const r of rows) {
+    const routeName = (r.route || '').trim() || 'ไม่ระบุเส้นทาง';
+    if (!routeGroupsMap.has(routeName)) {
+      routeGroupsMap.set(routeName, {
+        route: routeName,
+        trips: 0,
+        totalPassengers: 0,
+        plates: new Set()
+      });
+    }
+    const g = routeGroupsMap.get(routeName);
+    g.trips += 1;
+    if (r.passenger_count !== null && r.passenger_count !== undefined && r.passenger_count !== '') {
+      g.totalPassengers += Number(r.passenger_count) || 0;
+    }
+    if (r.vehicle_plate) {
+      g.plates.add(r.vehicle_plate);
+    }
+  }
+
+  const routeGroups = Array.from(routeGroupsMap.values());
+  const detailSlotCount = Math.max(21, routeGroups.length);
+
+  const aoa = [
+    ['ใบเบิกผลงานผู้รับเหมา', '', '', '', '', '', '', '', '', ''],
+    ['ผู้รับเหมาชุด', '', 'บริษัท จักรพงษ์ ขนส่ง ( 2003 ) จำกัด', '', '', '', '', 'วันที่', '', issueDateBE],
+    ['โครงการ', '', projectTitle, '', '', '', '', 'ประจำงวด', '', periodLabel],
+    ['', '', '', '', '', '', '', '', '', ''],
+    ['ลำดับ', 'รายละเอียดงาน', '', '', 'ปริมาณงาน', '', '', 'จำนวนเงิน', '', 'หมายเหตุ'],
+    ['', '', '', '', 'จำนวน', 'หน่วย', 'ราคา/หน่วย', '', '', ''],
+    ['', 'ค่ารถรับ - ส่ง', '', '', '', '', '', '', '', '']
+  ];
+
+  const merges = [
+    { s: { r: 0, c: 0 }, e: { r: 0, c: 9 } }, // A1:J1
+    { s: { r: 1, c: 0 }, e: { r: 1, c: 1 } }, // A2:B2
+    { s: { r: 1, c: 2 }, e: { r: 1, c: 5 } }, // C2:F2
+    { s: { r: 1, c: 7 }, e: { r: 1, c: 8 } }, // H2:I2
+    { s: { r: 2, c: 0 }, e: { r: 2, c: 1 } }, // A3:B3
+    { s: { r: 2, c: 2 }, e: { r: 2, c: 5 } }, // C3:F3
+    { s: { r: 2, c: 7 }, e: { r: 2, c: 8 } }, // H3:I3
+    { s: { r: 4, c: 0 }, e: { r: 5, c: 0 } }, // A5:A6 ลำดับ
+    { s: { r: 4, c: 1 }, e: { r: 5, c: 3 } }, // B5:D6 รายละเอียดงาน
+    { s: { r: 4, c: 4 }, e: { r: 4, c: 6 } }, // E5:G5 ปริมาณงาน
+    { s: { r: 4, c: 7 }, e: { r: 5, c: 8 } }, // H5:I6 จำนวนเงิน
+    { s: { r: 4, c: 9 }, e: { r: 5, c: 9 } }, // J5:J6 หมายเหตุ
+    { s: { r: 6, c: 7 }, e: { r: 6, c: 8 } }  // H7:I7
+  ];
+
+  for (let i = 0; i < detailSlotCount; i++) {
+    const rowIndex0 = 7 + i; // 0-based row (Excel row 8+)
+    const g = routeGroups[i];
+    merges.push({ s: { r: rowIndex0, c: 7 }, e: { r: rowIndex0, c: 8 } }); // H{row}:I{row}
+
+    if (g) {
+      const noteParts = [];
+      if (g.totalPassengers > 0) noteParts.push(`รวม ${g.totalPassengers} คน`);
+      if (g.plates.size > 0) noteParts.push(`รถ ${Array.from(g.plates).join(', ')}`);
+      aoa.push([
+        i + 1,
+        g.route,
+        '',
+        '',
+        g.trips,
+        'เที่ยว',
+        '',
+        0,
+        '',
+        noteParts.join(' | ')
+      ]);
+    } else {
+      aoa.push(['', '', '', '', '', '', '', '', '', '']);
+    }
+  }
+
+  const totalRowIndex0 = 7 + detailSlotCount; // Excel row 29 when detailSlotCount=21
+  const lastDetailExcelRow = 7 + detailSlotCount;
+  aoa.push(['', 'รวม', '', '', rows.length, 'เที่ยว', '', 0, '', '']);
+  merges.push(
+    { s: { r: totalRowIndex0, c: 1 }, e: { r: totalRowIndex0, c: 3 } }, // B29:D29
+    { s: { r: totalRowIndex0, c: 7 }, e: { r: totalRowIndex0, c: 8 } }  // H29:I29
+  );
+
+  aoa.push(['', '', '', '', '', '', '', '', '', '']);
+  aoa.push(['', '', '', '', '', '', '', '', '', '']);
+  aoa.push(['', '', '', '', 'ผู้ตรวจรับ / Checked by', '', '', '', '', '']);
+  aoa.push(['', '', '', '', 'วันที่ / Date', '', '', '', '', '']);
+
+  const ws = window.XLSX.utils.aoa_to_sheet(aoa);
+
+  // Add Excel formulas for amount (H = E * G) and total row
+  for (let i = 0; i < detailSlotCount; i++) {
+    const excelRow = 8 + i;
+    const cellRef = `H${excelRow}`;
+    if (routeGroups[i]) {
+      ws[cellRef] = { t: 'n', f: `SUM(E${excelRow}*G${excelRow})`, v: 0 };
+    }
+  }
+  const totalExcelRow = totalRowIndex0 + 1;
+  ws[`E${totalExcelRow}`] = { t: 'n', f: `SUM(E8:E${lastDetailExcelRow})`, v: rows.length };
+  ws[`H${totalExcelRow}`] = { t: 'n', f: `SUM(H7:I${lastDetailExcelRow})`, v: 0 };
+
+  ws['!merges'] = merges;
+  ws['!cols'] = [
+    { wch: 8 },  // A: ลำดับ
+    { wch: 18 }, // B: รายละเอียดงาน
+    { wch: 14 }, // C
+    { wch: 14 }, // D
+    { wch: 10 }, // E: จำนวน
+    { wch: 10 }, // F: หน่วย
+    { wch: 12 }, // G: ราคา/หน่วย
+    { wch: 12 }, // H: จำนวนเงิน
+    { wch: 6 },  // I
+    { wch: 24 }  // J: หมายเหตุ
+  ];
+  return ws;
+}
+
+// Build Sheet 3: ใบบันทึกการปฏิบัติงานรถ 6 ล้อ รับ - ส่งพนักงาน (Template 2B: ใบเบิกไลฟ์รัชดา-พระราม9 Sheet 2+)
+function buildTemplate2OperationSheet(rows, projectTitle, startDateBE, endDateBE, sheetPageNo = 1) {
+  const aoa = [
+    ['ใบบันทึกการปฏิบัติงานรถ 6 ล้อ รับ - ส่งพนักงาน', '', '', '', '', '', '', '', '', '', '', ''],
+    ['', '', '', '', '', '', '', '', '', 'แผ่นที่', sheetPageNo, ''],
+    [
+      'สถานที่ปฏิบัติงานโครงการ :-',
+      '',
+      '',
+      projectTitle,
+      '',
+      'ระหว่างวันที่',
+      '',
+      startDateBE,
+      '',
+      'ถึงวันที่ ',
+      endDateBE,
+      ''
+    ],
+    ['', '', '', '', '', '', '', '', '', '', '', ''],
+    [
+      'ลำดับ',
+      'ว/ด/ป',
+      'ทะเบียนรถ',
+      'จาก',
+      'เวลา',
+      'ถึง',
+      '',
+      '',
+      'เวลา',
+      'จำนวน',
+      'ลงชื่อผู้ตรวจ',
+      'หมายเหตุ'
+    ],
+    ['', '', '', '', '( น. )', '', '', '', '( น. )', '(คน)', 'แคมป์ Boss /รปภ.', '']
+  ];
+
+  const merges = [
+    { s: { r: 0, c: 0 }, e: { r: 0, c: 10 } }, // A1:K1
+    { s: { r: 1, c: 10 }, e: { r: 1, c: 11 } }, // K2:L2
+    { s: { r: 2, c: 3 }, e: { r: 2, c: 4 } },  // D3:E3
+    { s: { r: 2, c: 5 }, e: { r: 2, c: 6 } },  // F3:G3
+    { s: { r: 2, c: 7 }, e: { r: 2, c: 8 } },  // H3:I3
+    { s: { r: 2, c: 10 }, e: { r: 2, c: 11 } }, // K3:L3
+    { s: { r: 4, c: 0 }, e: { r: 5, c: 0 } },  // A5:A6 ลำดับ
+    { s: { r: 4, c: 1 }, e: { r: 5, c: 1 } },  // B5:B6 ว/ด/ป
+    { s: { r: 4, c: 2 }, e: { r: 5, c: 2 } },  // C5:C6 ทะเบียนรถ
+    { s: { r: 4, c: 3 }, e: { r: 5, c: 3 } },  // D5:D6 จาก
+    { s: { r: 4, c: 5 }, e: { r: 5, c: 7 } },  // F5:H6 ถึง
+    { s: { r: 4, c: 11 }, e: { r: 5, c: 11 } } // L5:L6 หมายเหตุ
+  ];
+
+  const totalLines = Math.max(30, rows.length);
+  for (let i = 0; i < totalLines; i++) {
+    const r = rows[i];
+    const rowIdx0 = 6 + i; // Excel row 7+
+    merges.push({ s: { r: rowIdx0, c: 5 }, e: { r: rowIdx0, c: 7 } }); // F{row}:H{row}
+
+    if (r) {
+      const { from, to } = splitRouteParts(r.route);
+      const depTime = r.departure_time ? String(r.departure_time).replace(':', '.') : '';
+      const arrTime = r.arrival_time ? String(r.arrival_time).replace(':', '.') : '';
+      const pax =
+        r.passenger_count !== null && r.passenger_count !== undefined && r.passenger_count !== ''
+          ? Number(r.passenger_count)
+          : '';
+      aoa.push([
+        i + 1,
+        formatShortThaiDateBE(r.travel_date),
+        r.vehicle_plate || '',
+        from,
+        depTime,
+        to,
+        '',
+        '',
+        arrTime,
+        pax,
+        r.worker_name || '',
+        ''
+      ]);
+    } else {
+      aoa.push([i + 1, '', '', '', '', '', '', '', '', '', '', '']);
+    }
+  }
+
+  const footerRow1Idx0 = 6 + totalLines;
+  const footerRow2Idx0 = 7 + totalLines;
+  aoa.push([
+    '',
+    '',
+    '',
+    '',
+    '',
+    '',
+    '',
+    'ผู้ตรวจ / Checked by',
+    '',
+    '',
+    '...........................................',
+    ''
+  ]);
+  aoa.push([
+    '',
+    '',
+    '',
+    '',
+    '',
+    '',
+    '',
+    'วันที่ / Date',
+    '',
+    '',
+    '............/............../..............',
+    ''
+  ]);
+  merges.push(
+    { s: { r: footerRow1Idx0, c: 10 }, e: { r: footerRow1Idx0, c: 11 } }, // K37:L37
+    { s: { r: footerRow2Idx0, c: 10 }, e: { r: footerRow2Idx0, c: 11 } }  // K38:L38
+  );
+
+  const ws = window.XLSX.utils.aoa_to_sheet(aoa);
+  ws['!merges'] = merges;
+  ws['!cols'] = [
+    { wch: 7 },  // A: ลำดับ
+    { wch: 13 }, // B: ว/ด/ป
+    { wch: 14 }, // C: ทะเบียนรถ
+    { wch: 18 }, // D: จาก
+    { wch: 10 }, // E: เวลา (น.)
+    { wch: 10 }, // F: ถึง (part 1)
+    { wch: 8 },  // G: ถึง (part 2)
+    { wch: 10 }, // H: ถึง (part 3)
+    { wch: 10 }, // I: เวลา (น.)
+    { wch: 10 }, // J: จำนวน (คน)
+    { wch: 20 }, // K: ลงชื่อผู้ตรวจ
+    { wch: 14 }  // L: หมายเหตุ
+  ];
+  return ws;
+}
+
+// Unified Single-Button Export: Generates both CKP Excel Forms in one workbook (.xlsx)
+function exportLogsToExcel() {
+  const rows = [...getFilteredLogs()].sort((a, b) => {
+    const d1 = a.travel_date || '';
+    const d2 = b.travel_date || '';
+    if (d1 !== d2) return d1.localeCompare(d2);
+    return String(a.departure_time || '').localeCompare(String(b.departure_time || ''));
+  });
+
+  if (typeof window.XLSX === 'undefined') {
+    showToast('ไม่พบไลบรารี SheetJS (XLSX) สำหรับสร้างไฟล์ Excel', 'error');
     return;
   }
 
-  const headers = [
-    'ลำดับ',
-    'ชื่อคนงาน (PK)',
-    'วันที่หมายที่ต้องไป (YYYY-MM-DD)',
-    'วันที่หมายที่ต้องไป (ไทย)',
-    'เส้นทาง / ที่หมาย',
-    'เวลาขับรถ',
-    'เวลาที่ต้องไปถึงไซต์งาน',
-    'ระยะเวลาเดินทาง',
-    'ทะเบียนรถ',
-    'จำนวนคนโดยสาร (คน)',
-    'อัปเดตล่าสุด'
-  ];
+  const todayISO = getTodayISO();
+  const dateSuffix = state.filterDate || todayISO;
+  const issueDateBE = formatShortThaiDateBE(todayISO);
 
-  const escapeCsvCell = (val) => {
-    const str = String(val ?? '');
-    if (str.includes(',') || str.includes('"') || str.includes('\n')) {
-      return `"${str.replace(/"/g, '""')}"`;
-    }
-    return str;
-  };
+  const validDates = rows
+    .map((r) => r.travel_date)
+    .filter(Boolean)
+    .sort();
+  const startDateBE = validDates.length > 0 ? formatShortThaiDateBE(validDates[0]) : issueDateBE;
+  const endDateBE =
+    validDates.length > 0 ? formatShortThaiDateBE(validDates[validDates.length - 1]) : issueDateBE;
+  const periodLabel =
+    startDateBE === endDateBE ? startDateBE : `${startDateBE} - ${endDateBE}`;
 
-  const csvLines = [
-    headers.map(escapeCsvCell).join(','),
-    ...rows.map((r, idx) => {
-      const dur = calculateTravelDuration(r.departure_time, r.arrival_time);
-      return [
-        idx + 1,
-        r.worker_name || '',
-        r.travel_date || '',
-        formatThaiDate(r.travel_date, false),
-        r.route || '',
-        r.departure_time || '',
-        r.arrival_time || '',
-        dur.text,
-        r.vehicle_plate || '',
-        r.passenger_count !== null && r.passenger_count !== undefined ? r.passenger_count : '',
-        r.updated_at || ''
-      ]
-        .map(escapeCsvCell)
-        .join(',');
-    })
-  ];
+  const uniqueRoutes = Array.from(
+    new Set(rows.map((r) => (r.route || '').trim()).filter(Boolean))
+  );
+  const projectTitle =
+    uniqueRoutes.length === 1
+      ? uniqueRoutes[0]
+      : uniqueRoutes.length > 1
+      ? uniqueRoutes.slice(0, 2).join(', ') + (uniqueRoutes.length > 2 ? ` (+${uniqueRoutes.length - 2})` : '')
+      : 'รวมทุกโครงการ';
 
-  const csvContent = '\uFEFF' + csvLines.join('\r\n');
-  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
+  const workbook = window.XLSX.utils.book_new();
 
-  const link = document.createElement('a');
-  const dateSuffix = state.filterDate || getTodayISO();
-  link.href = url;
-  link.setAttribute('download', `worker_travel_logs_${dateSuffix}.csv`);
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
+  // 1. แบบฟอร์มที่ 1: บันทึกรายการรถ 6 ล้อ รับ-ส่งคนงาน (ตามตัวอย่าง สำเนา27 โซนวิภา)
+  const wsForm1 = buildTemplate1ZoneSheet(rows, projectTitle);
+  window.XLSX.utils.book_append_sheet(workbook, wsForm1, '1_บันทึกรายการรถ6ล้อ');
+
+  // 2. แบบฟอร์มที่ 2 (ส่วนใบเบิก): ใบเบิกผลงานผู้รับเหมา (ตามตัวอย่าง ใบเบิกไลฟ์รัชดา-พระราม9 แผ่นที่ 1)
+  const wsForm2A = buildTemplate2BillingSheet(rows, projectTitle, periodLabel, issueDateBE);
+  window.XLSX.utils.book_append_sheet(workbook, wsForm2A, '2_ใบเบิกผลงานผู้รับเหมา');
+
+  // 3. แบบฟอร์มที่ 2 (ส่วนใบบันทึก): ใบบันทึกการปฏิบัติงานรถ 6 ล้อ (ตามตัวอย่าง ใบเบิกไลฟ์รัชดา-พระราม9 แผ่นที่ 2)
+  const wsForm2B = buildTemplate2OperationSheet(rows, projectTitle, startDateBE, endDateBE, 1);
+  window.XLSX.utils.book_append_sheet(workbook, wsForm2B, '3_ใบบันทึกปฏิบัติงานรถ6ล้อ');
+
+  const filename = `CKP_แบบฟอร์มบันทึกและใบเบิก_${dateSuffix}.xlsx`;
+  window.XLSX.writeFile(workbook, filename);
 
   showToast(
-    `ส่งออกไฟล์ CSV สำเร็จ (${rows.length} รายการ)`,
+    `ส่งออกครบทั้ง 2 แบบฟอร์มสำเร็จ (${rows.length} รายการ)`,
     'success',
-    'เข้ารหัส UTF-8 with BOM รองรับ Microsoft Excel และแอปสเปรดชีตบนมือถือ'
+    `ดาวน์โหลดไฟล์ ${filename} (ประกอบด้วย 1.บันทึกรายการรถ6ล้อ, 2.ใบเบิกผลงานผู้รับเหมา, 3.ใบบันทึกปฏิบัติงานรถ6ล้อ)`
   );
 }
 
@@ -2980,7 +3232,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   document.getElementById('btn-export-excel')?.addEventListener('click', exportLogsToExcel);
-  document.getElementById('btn-export-csv')?.addEventListener('click', exportLogsToCSV);
 
   // 12. Back-Office: Storage Quota Settings Form
   document.getElementById('form-gps-settings')?.addEventListener('submit', async (e) => {
