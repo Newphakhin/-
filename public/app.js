@@ -12,9 +12,11 @@ const state = {
 
   // Data from Backend
   activeWorkers: [],
+  activeSites: [],
   activeRoutes: [],
   activeVehicles: [],
   allWorkers: [],
+  allSites: [],
   allRoutes: [],
   allVehicles: [],
   logs: [],
@@ -700,10 +702,12 @@ async function loadAllData() {
   try {
     const requests = [
       apiFetch('/api/master/workers?active=1'),
+      apiFetch('/api/master/sites?active=1'),
       apiFetch('/api/master/routes?active=1'),
       apiFetch('/api/master/vehicles?active=1'),
       apiFetch('/api/logs'),
       apiFetch('/api/master/workers'),
+      apiFetch('/api/master/sites'),
       apiFetch('/api/master/routes'),
       apiFetch('/api/master/vehicles'),
       apiFetch('/api/storage-status')
@@ -715,10 +719,12 @@ async function loadAllData() {
 
     const [
       workersRes,
+      sitesRes,
       routesRes,
       vehiclesRes,
       logsRes,
       allWorkersRes,
+      allSitesRes,
       allRoutesRes,
       allVehiclesRes,
       quotaRes,
@@ -726,10 +732,12 @@ async function loadAllData() {
     ] = await Promise.all(requests);
 
     if (workersRes.ok) state.activeWorkers = workersRes.data || [];
+    if (sitesRes.ok) state.activeSites = sitesRes.data || [];
     if (routesRes.ok) state.activeRoutes = routesRes.data || [];
     if (vehiclesRes.ok) state.activeVehicles = vehiclesRes.data || [];
     if (logsRes.ok) state.logs = logsRes.data || [];
     if (allWorkersRes.ok) state.allWorkers = allWorkersRes.data || [];
+    if (allSitesRes.ok) state.allSites = allSitesRes.data || [];
     if (allRoutesRes.ok) state.allRoutes = allRoutesRes.data || [];
     if (allVehiclesRes.ok) state.allVehicles = allVehiclesRes.data || [];
     if (quotaRes.ok && quotaRes.data) state.storageQuota = quotaRes.data;
@@ -739,6 +747,7 @@ async function loadAllData() {
     }
 
     renderWorkerDropdown();
+    renderSiteDropdown();
     renderVehicleDropdown();
     renderRouteComboboxMenu();
     renderSharedRoutesDatalist();
@@ -814,6 +823,26 @@ function renderWorkerDropdown() {
 
   select.innerHTML = html;
   select.disabled = Boolean(state.editingWorkerName);
+}
+
+function renderSiteDropdown() {
+  const select = document.getElementById('form-site');
+  if (!select) return;
+
+  const currentVal = select.value;
+  let html = '<option value="">-- เลือกไซต์งาน / โครงการ --</option>';
+
+  const listToRender = [...state.activeSites];
+  if (currentVal && !listToRender.some((s) => s.name === currentVal)) {
+    listToRender.unshift({ id: 0, name: currentVal, active: false });
+  }
+
+  for (const s of listToRender) {
+    const isSelected = s.name === currentVal ? 'selected' : '';
+    html += `<option value="${escapeHtml(s.name)}" ${isSelected}>${escapeHtml(s.name)}</option>`;
+  }
+
+  select.innerHTML = html;
 }
 
 function renderVehicleDropdown() {
@@ -1114,6 +1143,14 @@ function enterEditMode(workerName) {
   document.getElementById('form-departure').value = log.departure_time || '';
   document.getElementById('form-arrival').value = log.arrival_time || '';
 
+  renderSiteDropdown();
+  const siteEl = document.getElementById('form-site');
+  if (siteEl) {
+    siteEl.value = log.site_name || '';
+    renderSiteDropdown();
+    siteEl.value = log.site_name || '';
+  }
+
   renderVehicleDropdown();
   document.getElementById('form-vehicle').value = log.vehicle_plate || '';
   const passengersEl = document.getElementById('form-passengers');
@@ -1170,6 +1207,9 @@ function exitEditModeAndResetForm() {
   workerSelect.disabled = false;
 
   document.getElementById('form-date').value = getTodayISO();
+  const siteEl = document.getElementById('form-site');
+  if (siteEl) siteEl.value = '';
+  renderSiteDropdown();
   document.getElementById('form-route').value = '';
   document.getElementById('form-departure').value = '';
   document.getElementById('form-arrival').value = '';
@@ -1379,6 +1419,7 @@ async function handleTravelLogSubmit(e) {
     document.getElementById('form-worker')?.value ||
     ''
   ).trim();
+  const site_name = (document.getElementById('form-site')?.value || '').trim();
   const travel_date = (document.getElementById('form-date')?.value || '').trim();
   const route = (document.getElementById('form-route')?.value || '').trim();
   const departure_time = (document.getElementById('form-departure')?.value || '').trim();
@@ -1422,6 +1463,7 @@ async function handleTravelLogSubmit(e) {
 
   const payload = {
     worker_name,
+    site_name,
     travel_date,
     route,
     departure_time,
@@ -1441,6 +1483,7 @@ async function handleTravelLogSubmit(e) {
 
   // Check incomplete optional fields
   const missingFields = [];
+  if (!site_name) missingFields.push('ไซต์งาน / โครงการ (หัวตาราง)');
   if (!travel_date) missingFields.push('วันที่หมายที่ต้องไป');
   if (!route) missingFields.push('เส้นทาง / ที่หมาย');
   if (!departure_time) missingFields.push('เวลาขับรถ (ออกเดินทาง)');
@@ -1474,6 +1517,7 @@ function getFilteredLogs() {
       const gpsObj = parseGpsStatus(row.gps_status);
       const haystack = [
         row.worker_name || '',
+        row.site_name || '',
         row.travel_date || '',
         thaiDateShort,
         thaiDateFull,
@@ -1595,7 +1639,7 @@ function renderLogsTable() {
         </div>
       </div>
     `;
-    tbody.innerHTML = `<tr><td colspan="8">${emptyHtml}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="9">${emptyHtml}</td></tr>`;
     if (mobileCards) mobileCards.innerHTML = emptyHtml;
     return;
   }
@@ -1637,6 +1681,17 @@ function renderLogsTable() {
                 }
               </div>
             </div>
+          </td>
+
+          <td class="py-3.5 px-4 whitespace-nowrap">
+            ${
+              row.site_name
+                ? `<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-50 text-amber-900 border border-amber-200 text-xs font-semibold">
+                    <i class="fa-solid fa-building-user text-amber-600 text-[11px]"></i>
+                    <span>${escapeHtml(row.site_name)}</span>
+                  </span>`
+                : '<span class="text-xs text-slate-400 italic">ไม่ได้ระบุ</span>'
+            }
           </td>
 
           <td class="py-3.5 px-4 whitespace-nowrap">
@@ -1784,6 +1839,12 @@ function renderLogsTable() {
             </div>
 
             <div class="p-2.5 rounded-xl bg-slate-50 border border-slate-100 space-y-1.5 text-xs">
+              <div class="flex items-start justify-between gap-2">
+                <span class="text-slate-500 shrink-0">ไซต์งาน/โครงการ:</span>
+                <span class="font-semibold text-amber-800 text-right">
+                  ${escapeHtml(row.site_name || '-')}
+                </span>
+              </div>
               <div class="flex items-start justify-between gap-2">
                 <span class="text-slate-500 shrink-0">เส้นทาง/ที่หมาย:</span>
                 <span class="font-semibold text-slate-800 text-right">
@@ -2291,11 +2352,21 @@ function exportLogsToExcel() {
   const periodLabel =
     startDateBE === endDateBE ? startDateBE : `${startDateBE} - ${endDateBE}`;
 
+  const uniqueSites = Array.from(
+    new Set(rows.map((r) => (r.site_name || '').trim()).filter(Boolean))
+  );
+  const selectedFormSite = (document.getElementById('form-site')?.value || '').trim();
   const uniqueRoutes = Array.from(
     new Set(rows.map((r) => (r.route || '').trim()).filter(Boolean))
   );
   const projectTitle =
-    uniqueRoutes.length === 1
+    uniqueSites.length === 1
+      ? uniqueSites[0]
+      : uniqueSites.length > 1
+      ? uniqueSites.join(', ')
+      : selectedFormSite
+      ? selectedFormSite
+      : uniqueRoutes.length === 1
       ? uniqueRoutes[0]
       : uniqueRoutes.length > 1
       ? uniqueRoutes.slice(0, 2).join(', ') + (uniqueRoutes.length > 2 ? ` (+${uniqueRoutes.length - 2})` : '')
@@ -2447,6 +2518,92 @@ function renderBackOfficeLists() {
         const id = Number(btn.getAttribute('data-worker-delete'));
         const item = state.allWorkers.find((x) => x.id === id);
         if (item) confirmDeleteMasterItem('workers', item.id, item.name);
+      });
+    });
+  }
+
+  // 1B. Sites (ไซต์งาน / โครงการ หัวตาราง)
+  const sitesListEl = document.getElementById('master-sites-list');
+  const badgeSites = document.getElementById('badge-count-sites');
+  if (badgeSites) badgeSites.textContent = `${state.allSites.length} ไซต์งาน`;
+
+  if (sitesListEl) {
+    sitesListEl.innerHTML = state.allSites
+      .map((s) => {
+        const logsUsingCount = state.logs.filter((l) => (l.site_name || '') === s.name).length;
+        return `
+        <div class="p-3.5 hover:bg-slate-50 flex items-center justify-between gap-2 transition">
+          <div class="min-w-0 flex-1">
+            <div class="flex items-center gap-2">
+              <span class="font-semibold text-sm ${
+                s.active ? 'text-slate-900' : 'text-slate-400 line-through'
+              } truncate">${escapeHtml(s.name)}</span>
+              <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold ${
+                s.active ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-600'
+              }">
+                ${s.active ? 'เปิดใช้งาน' : 'ปิดใช้งาน'}
+              </span>
+            </div>
+            <p class="text-[11px] text-slate-500 mt-0.5">
+              บันทึกในไซต์งานนี้: <strong>${logsUsingCount} รายการ</strong>
+            </p>
+          </div>
+
+          <div class="flex items-center gap-1.5 shrink-0">
+            <button
+              type="button"
+              data-site-toggle="${s.id}"
+              class="px-2 py-1 rounded-lg border text-xs font-semibold transition cursor-pointer ${
+                s.active
+                  ? 'bg-emerald-50 border-emerald-300 text-emerald-700 hover:bg-emerald-100'
+                  : 'bg-slate-100 border-slate-300 text-slate-500 hover:bg-slate-200'
+              }"
+            >
+              <i class="fa-solid ${s.active ? 'fa-toggle-on text-sm' : 'fa-toggle-off text-sm'}"></i>
+            </button>
+
+            <button
+              type="button"
+              data-site-edit="${s.id}"
+              class="p-1.5 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 text-xs transition cursor-pointer"
+            >
+              <i class="fa-solid fa-pen"></i>
+            </button>
+
+            <button
+              type="button"
+              data-site-delete="${s.id}"
+              class="p-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs transition cursor-pointer"
+            >
+              <i class="fa-solid fa-trash"></i>
+            </button>
+          </div>
+        </div>
+      `;
+      })
+      .join('');
+
+    sitesListEl.querySelectorAll('[data-site-toggle]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const id = Number(btn.getAttribute('data-site-toggle'));
+        const item = state.allSites.find((x) => x.id === id);
+        if (item) toggleMasterItemActive('sites', item);
+      });
+    });
+
+    sitesListEl.querySelectorAll('[data-site-edit]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const id = Number(btn.getAttribute('data-site-edit'));
+        const item = state.allSites.find((x) => x.id === id);
+        if (item) openEditSiteModal(item);
+      });
+    });
+
+    sitesListEl.querySelectorAll('[data-site-delete]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const id = Number(btn.getAttribute('data-site-delete'));
+        const item = state.allSites.find((x) => x.id === id);
+        if (item) confirmDeleteMasterItem('sites', item.id, item.name);
       });
     });
   }
@@ -2729,6 +2886,74 @@ function openEditWorkerModal(worker) {
   });
 }
 
+function openEditSiteModal(siteItem) {
+  openCustomModal(`
+    <form id="modal-form-edit-site" class="p-6 space-y-4">
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-xl bg-sky-100 text-sky-700 flex items-center justify-center">
+          <i class="fa-solid fa-building-user"></i>
+        </div>
+        <div>
+          <h3 class="text-base font-bold text-slate-900">แก้ไขชื่อไซต์งาน / โครงการ (หัวตาราง)</h3>
+          <p class="text-xs text-slate-500">อัปเดตเชื่อมโยงไปยังตาราง <code>travel_logs</code> อัตโนมัติ</p>
+        </div>
+      </div>
+
+      <div>
+        <label class="block text-xs font-semibold text-slate-700 mb-1">ชื่อไซต์งาน / โครงการ *</label>
+        <input
+          type="text"
+          id="modal-edit-site-name"
+          value="${escapeHtml(siteItem.name)}"
+          required
+          class="w-full min-h-[42px] px-3.5 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-sky-600"
+        />
+      </div>
+
+      <div class="pt-3 border-t border-slate-100 flex justify-end gap-2">
+        <button
+          type="button"
+          id="modal-btn-cancel"
+          class="min-h-[42px] px-4 py-2 rounded-xl border border-slate-300 bg-white text-slate-700 text-xs sm:text-sm font-medium cursor-pointer"
+        >
+          ยกเลิก
+        </button>
+        <button
+          type="submit"
+          class="min-h-[42px] px-5 py-2 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs sm:text-sm font-semibold cursor-pointer"
+        >
+          บันทึกการแก้ไข
+        </button>
+      </div>
+    </form>
+  `);
+
+  document.getElementById('modal-btn-cancel')?.addEventListener('click', closeCustomModal);
+  document.getElementById('modal-form-edit-site')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const name = document.getElementById('modal-edit-site-name').value.trim();
+    if (!name) return;
+
+    const res = await apiFetch(`/api/master/sites/${siteItem.id}`, {
+      method: 'PUT',
+      body: JSON.stringify({ name })
+    });
+
+    if (!res.ok) {
+      showToast(res.data?.error || 'ไม่สามารถแก้ไขไซต์งานได้', 'error');
+      return;
+    }
+
+    closeCustomModal();
+    showToast(
+      `อัปเดตไซต์งาน "${name}" สำเร็จ`,
+      'success',
+      `อัปเดตเชื่อมโยงบันทึกเดินทาง ${res.data?.cascadedLogsCount || 0} รายการ`
+    );
+    await loadAllData();
+  });
+}
+
 function openEditRouteModal(routeItem) {
   openCustomModal(`
     <form id="modal-form-edit-route" class="p-6 space-y-4">
@@ -2872,6 +3097,7 @@ function openEditVehicleModal(vehicleItem) {
 function confirmDeleteMasterItem(type, id, label) {
   const typeLabelMap = {
     workers: 'รายชื่อคนงาน',
+    sites: 'ไซต์งาน / โครงการ',
     routes: 'เส้นทาง / ที่หมาย',
     vehicles: 'ทะเบียนรถ'
   };
@@ -3280,6 +3506,27 @@ document.addEventListener('DOMContentLoaded', async () => {
     nameInput.value = '';
     routeInputEl.value = '';
     showToast(`เพิ่มคนงาน "${name}" สำเร็จ`, 'success');
+    await loadAllData();
+  });
+
+  document.getElementById('form-add-site')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const nameInput = document.getElementById('new-site-name');
+    const name = nameInput.value.trim();
+    if (!name) return;
+
+    const res = await apiFetch('/api/master/sites', {
+      method: 'POST',
+      body: JSON.stringify({ name, active: 1 })
+    });
+
+    if (!res.ok) {
+      showToast(res.data?.error || 'ไม่สามารถเพิ่มไซต์งานได้', 'error');
+      return;
+    }
+
+    nameInput.value = '';
+    showToast(`เพิ่มไซต์งาน/โครงการ "${name}" สำเร็จ`, 'success');
     await loadAllData();
   });
 

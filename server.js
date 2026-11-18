@@ -423,6 +423,69 @@ app.delete('/api/master/vehicles/:id', requireAuth, requireAdmin, async (req, re
 });
 
 // ============================================================================
+// 5B. Master Sites APIs (/api/master/sites - ไซต์งาน / โครงการ หัวตาราง)
+// ============================================================================
+
+app.get('/api/master/sites', async (req, res) => {
+  try {
+    const activeOnly = req.query.active === '1' || req.query.active === 'true';
+    return res.json(await store.listSites(activeOnly));
+  } catch (err) {
+    console.error('GET /api/master/sites error:', err);
+    return res.status(500).json({ error: 'ไม่สามารถดึงรายการไซต์งาน/โครงการได้' });
+  }
+});
+
+app.post('/api/master/sites', requireAuth, async (req, res) => {
+  try {
+    const name = String(req.body.name || '').trim();
+    const active = req.body.active === undefined ? true : Boolean(req.body.active);
+    if (!name) {
+      return res.status(400).json({ error: 'กรุณาระบุชื่อไซต์งาน/โครงการ' });
+    }
+    const created = await store.createSite({
+      name,
+      active,
+      reactivateIfInactive: Boolean(req.body.reactivateIfInactive)
+    });
+    return res.status(created.reactivated ? 200 : 201).json(created);
+  } catch (err) {
+    return res
+      .status(err.status || 500)
+      .json({ error: err.message || 'เกิดข้อผิดพลาดในการเพิ่มไซต์งาน/โครงการ' });
+  }
+});
+
+app.put('/api/master/sites/:id', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const name = req.body.name !== undefined ? String(req.body.name).trim() : undefined;
+    const active = req.body.active !== undefined ? Boolean(req.body.active) : undefined;
+    if (name !== undefined && !name) {
+      return res.status(400).json({ error: 'ชื่อไซต์งาน/โครงการห้ามเว้นว่าง' });
+    }
+    const updated = await store.updateSite(id, { name, active });
+    return res.json(updated);
+  } catch (err) {
+    return res
+      .status(err.status || 500)
+      .json({ error: err.message || 'เกิดข้อผิดพลาดในการแก้ไขไซต์งาน/โครงการ' });
+  }
+});
+
+app.delete('/api/master/sites/:id', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const deleted = await store.deleteSite(id);
+    return res.json({ message: 'ลบไซต์งาน/โครงการสำเร็จ', deleted });
+  } catch (err) {
+    return res
+      .status(err.status || 500)
+      .json({ error: err.message || 'ไม่สามารถลบไซต์งาน/โครงการได้' });
+  }
+});
+
+// ============================================================================
 // 6. Travel Logs APIs (/api/logs)
 // ============================================================================
 
@@ -440,6 +503,7 @@ app.get('/api/logs', async (req, res) => {
 app.post('/api/logs', requireAuth, async (req, res) => {
   try {
     const worker_name = String(req.body.worker_name || '').trim();
+    const site_name = String(req.body.site_name || '').trim();
     const travel_date = String(req.body.travel_date || '').trim();
     const route = String(req.body.route || '').trim();
     const departure_time = String(req.body.departure_time || '').trim();
@@ -453,6 +517,7 @@ app.post('/api/logs', requireAuth, async (req, res) => {
 
     const created = await store.createLog({
       worker_name,
+      site_name,
       travel_date,
       route,
       departure_time,
@@ -476,6 +541,8 @@ app.put('/api/logs/:worker_name', requireAuth, async (req, res) => {
   try {
     const worker_name = decodeURIComponent(req.params.worker_name || '').trim();
     const updates = {};
+    if (req.body.site_name !== undefined)
+      updates.site_name = String(req.body.site_name).trim();
     if (req.body.travel_date !== undefined)
       updates.travel_date = String(req.body.travel_date).trim();
     if (req.body.route !== undefined) updates.route = String(req.body.route).trim();

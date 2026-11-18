@@ -833,6 +833,219 @@ async function deleteVehicle(id) {
 }
 
 // ============================================================================
+// MASTER SITES (ไซต์งาน / โครงการ - หัวตาราง เช่น ไลฟ์รัชดา-พระราม9)
+// ============================================================================
+
+async function getSupabaseSitesArray() {
+  const { data, error } = await supabase
+    .from('system_settings')
+    .select('value')
+    .eq('key', 'master_sites_json')
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!data || !data.value) return [];
+  try {
+    const parsed = JSON.parse(data.value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+async function saveSupabaseSitesArray(sitesArray) {
+  const { error } = await supabase
+    .from('system_settings')
+    .upsert([{ key: 'master_sites_json', value: JSON.stringify(sitesArray) }], {
+      onConflict: 'key'
+    });
+  if (error) throw new Error(error.message);
+}
+
+async function listSites(activeOnly = false) {
+  if (isSupabaseConfigured && supabase) {
+    const sites = await getSupabaseSitesArray();
+    const mapped = sites.map((s) => ({
+      id: Number(s.id),
+      name: String(s.name || ''),
+      active: Boolean(s.active)
+    }));
+    return activeOnly ? mapped.filter((s) => s.active) : mapped;
+  }
+
+  const sql = activeOnly
+    ? 'SELECT id, name, active FROM master_sites WHERE active = 1 ORDER BY id ASC'
+    : 'SELECT id, name, active FROM master_sites ORDER BY id ASC';
+  return db
+    .prepare(sql)
+    .all()
+    .map((r) => ({ id: r.id, name: r.name, active: Boolean(r.active) }));
+}
+
+async function createSite({ name, active, reactivateIfInactive }) {
+  if (isSupabaseConfigured && supabase) {
+    const sites = await getSupabaseSitesArray();
+    const existing = sites.find((s) => String(s.name).toLowerCase() === name.toLowerCase());
+    if (existing) {
+      if (!existing.active && reactivateIfInactive) {
+        existing.active = true;
+        await saveSupabaseSitesArray(sites);
+        return { id: existing.id, name: existing.name, active: true, reactivated: true };
+      }
+      const err = new Error(`ไซต์งาน/โครงการ "${name}" มีอยู่ในระบบแล้ว`);
+      err.status = 409;
+      throw err;
+    }
+    const nextId = sites.reduce((max, s) => Math.max(max, Number(s.id) || 0), 0) + 1;
+    const newItem = { id: nextId, name, active: Boolean(active) };
+    sites.push(newItem);
+    await saveSupabaseSitesArray(sites);
+    return newItem;
+  }
+
+  const existing = db.prepare('SELECT id, name, active FROM master_sites WHERE name = ?').get(name);
+  if (existing) {
+    if (!existing.active && reactivateIfInactive) {
+      db.prepare('UPDATE master_sites SET active = 1 WHERE id = ?').run(existing.id);
+      syncJsonFallbackFile();
+      return { id: existing.id, name: existing.name, active: true, reactivated: true };
+    }
+    const err = new Error(`ไซต์งาน/โครงการ "${name}" มีอยู่ในระบบแล้ว`);
+    err.status = 409;
+    throw err;
+  }
+  const result = db
+    .prepare('INSERT INTO master_sites (name, active) VALUES (?, ?)')
+    .run(name, active ? 1 : 0);
+  syncJsonFallbackFile();
+  const created = db
+    .prepare('SELECT id, name, active FROM master_sites WHERE id = ?')
+    .get(result.lastInsertRowid);
+  return { id: created.id, name: created.name, active: Boolean(created.active) };
+}
+
+async function updateSite(id, { name, active }) {
+  if (isSupabaseConfigured && supabase) {
+    const sites = await getSupabaseSitesArray();
+    const idx = sites.findIndex((s) => Number(s.id) === Number(id));
+    if (idx === -1) {
+      const err = new Error('ไม่พบไซต์งาน/โครงการที่ต้องการแก้ไข');
+      err.status = 404;
+      throw err;
+    }
+    const existing = sites[idx];
+    const newName = name !== undefined ? name : existing.name;
+    const newActive = active !== undefined ? Boolean(active) : Boolean(existing.active);
+
+    if (newName !== existing.name) {
+      const dup = sites.find(
+        (s) => Number(s.id) !== Number(id) && String(s.name).toLowerCase() === newName.toLowerCase()
+      );
+      if (dup) {
+        const err = new Error(`ไซต์งาน/โครงการ "${newName}" มีอยู่ในระบบแล้ว`);
+        err.status = 409;
+        throw err;
+      }
+    }
+
+    sites[idx] = { id: Number(existing.id), name: newName, active: newActive };
+    await saveSupabaseSitesArray(sites);
+
+    let cascadedLogsCount = 0;
+    if (newName !== existing.name) {
+      const allLogs = await listLogs();
+      for (const log of allLogs) {
+        if ((log.site_name || '') === existing.name) {
+          await updateLog(log.worker_name, { site_name: newName });
+          cascadedLogsCount += 1;
+        }
+      }
+    }
+
+    return {
+      id: Number(existing.id),
+      name: newName,
+      active: newActive,
+      cascadedLogsCount
+    };
+  }
+
+  const existing = db.prepare('SELECT id, name, active FROM master_sites WHERE id = ?').get(id);
+  if (!existing) {
+    const err = new Error('ไม่พบไซต์งาน/โครงการที่ต้องการแก้ไข');
+    err.status = 404;
+    throw err;
+  }
+  const newName = name !== undefined ? name : existing.name;
+  const newActive = active !== undefined ? (active ? 1 : 0) : existing.active ? 1 : 0;
+
+  if (newName !== existing.name) {
+    const dup = db
+      .prepare('SELECT id FROM master_sites WHERE name = ? AND id != ?')
+      .get(newName, id);
+    if (dup) {
+      const err = new Error(`ไซต์งาน/โครงการ "${newName}" มีอยู่ในระบบแล้ว`);
+      err.status = 409;
+      throw err;
+    }
+  }
+
+  let cascadedLogsCount = 0;
+  db.exec('BEGIN');
+  try {
+    db.prepare('UPDATE master_sites SET name = ?, active = ? WHERE id = ?').run(
+      newName,
+      newActive,
+      id
+    );
+    if (newName !== existing.name) {
+      const logRes = db
+        .prepare(
+          "UPDATE travel_logs SET site_name = ?, updated_at = datetime('now', 'localtime') WHERE site_name = ?"
+        )
+        .run(newName, existing.name);
+      cascadedLogsCount = Number(logRes.changes || 0);
+    }
+    db.exec('COMMIT');
+  } catch (e) {
+    db.exec('ROLLBACK');
+    throw e;
+  }
+  syncJsonFallbackFile();
+  const updated = db.prepare('SELECT id, name, active FROM master_sites WHERE id = ?').get(id);
+  return {
+    id: updated.id,
+    name: updated.name,
+    active: Boolean(updated.active),
+    cascadedLogsCount
+  };
+}
+
+async function deleteSite(id) {
+  if (isSupabaseConfigured && supabase) {
+    const sites = await getSupabaseSitesArray();
+    const idx = sites.findIndex((s) => Number(s.id) === Number(id));
+    if (idx === -1) {
+      const err = new Error('ไม่พบไซต์งาน/โครงการที่ต้องการลบ');
+      err.status = 404;
+      throw err;
+    }
+    const [deleted] = sites.splice(idx, 1);
+    await saveSupabaseSitesArray(sites);
+    return deleted;
+  }
+
+  const existing = db.prepare('SELECT id, name FROM master_sites WHERE id = ?').get(id);
+  if (!existing) {
+    const err = new Error('ไม่พบไซต์งาน/โครงการที่ต้องการลบ');
+    err.status = 404;
+    throw err;
+  }
+  db.prepare('DELETE FROM master_sites WHERE id = ?').run(id);
+  syncJsonFallbackFile();
+  return existing;
+}
+
+// ============================================================================
 // TRAVEL LOGS
 // ============================================================================
 
@@ -845,17 +1058,36 @@ function normalizePassengerCount(val) {
   return num;
 }
 
+function encodeExtraFieldsToGpsStatus(passenger_count, site_name) {
+  const cleanSite = String(site_name || '').trim();
+  if (passenger_count === null && !cleanSite) {
+    return '';
+  }
+  return JSON.stringify({
+    passenger_count,
+    site_name: cleanSite
+  });
+}
+
 function withResolvedPassengerCount(row) {
   if (!row) return row;
-  let count = row.passenger_count !== undefined && row.passenger_count !== null
-    ? normalizePassengerCount(row.passenger_count)
-    : null;
+  let count =
+    row.passenger_count !== undefined && row.passenger_count !== null
+      ? normalizePassengerCount(row.passenger_count)
+      : null;
+  let siteName =
+    row.site_name !== undefined && row.site_name !== null ? String(row.site_name).trim() : '';
 
-  if (count === null && row.gps_status) {
+  if (row.gps_status) {
     try {
       const parsed = JSON.parse(row.gps_status);
-      if (parsed && parsed.passenger_count !== undefined && parsed.passenger_count !== null) {
-        count = normalizePassengerCount(parsed.passenger_count);
+      if (parsed && typeof parsed === 'object') {
+        if (count === null && parsed.passenger_count !== undefined && parsed.passenger_count !== null) {
+          count = normalizePassengerCount(parsed.passenger_count);
+        }
+        if (!siteName && parsed.site_name) {
+          siteName = String(parsed.site_name).trim();
+        }
       }
     } catch {
       // ignore non-JSON gps_status
@@ -864,17 +1096,19 @@ function withResolvedPassengerCount(row) {
 
   return {
     ...row,
+    site_name: siteName,
     passenger_count: count
   };
 }
 
-function isMissingPassengerColumnError(error) {
+function isMissingExtraColumnError(error) {
   if (!error) return false;
   const msg = String(error.message || '').toLowerCase();
   return (
     error.code === 'PGRST204' ||
     error.code === '42703' ||
-    msg.includes('passenger_count')
+    msg.includes('passenger_count') ||
+    msg.includes('site_name')
   );
 }
 
@@ -892,7 +1126,7 @@ async function listLogs(dateFilter = '', searchFilter = '') {
   } else {
     rows = db
       .prepare(
-        `SELECT worker_name, travel_date, route, departure_time, arrival_time, vehicle_plate, passenger_count, gps_status, updated_at
+        `SELECT worker_name, site_name, travel_date, route, departure_time, arrival_time, vehicle_plate, passenger_count, gps_status, updated_at
          FROM travel_logs
          ORDER BY travel_date DESC, departure_time ASC, worker_name ASC`
       )
@@ -909,6 +1143,7 @@ async function listLogs(dateFilter = '', searchFilter = '') {
     rows = rows.filter((r) => {
       const combined = [
         r.worker_name || '',
+        r.site_name || '',
         r.travel_date || '',
         r.route || '',
         r.vehicle_plate || '',
@@ -928,14 +1163,16 @@ async function listLogs(dateFilter = '', searchFilter = '') {
 async function createLog(payload) {
   const {
     worker_name,
+    site_name,
     travel_date,
     route,
     departure_time,
     arrival_time,
-    vehicle_plate,
-    gps_status
+    vehicle_plate
   } = payload;
+  const cleanSiteName = String(site_name || '').trim();
   const passenger_count = normalizePassengerCount(payload.passenger_count);
+  const encodedExtra = encodeExtraFieldsToGpsStatus(passenger_count, cleanSiteName);
 
   if (isSupabaseConfigured && supabase) {
     const { data: existing } = await supabase
@@ -972,7 +1209,7 @@ async function createLog(payload) {
       arrival_time: arrival_time || '',
       vehicle_plate: vehicle_plate || '',
       passenger_count,
-      gps_status: passenger_count !== null ? JSON.stringify({ passenger_count }) : gps_status || '',
+      gps_status: encodedExtra,
       updated_at: new Date().toISOString()
     };
 
@@ -982,7 +1219,7 @@ async function createLog(payload) {
       .select('*')
       .single();
 
-    if (error && isMissingPassengerColumnError(error)) {
+    if (error && isMissingExtraColumnError(error)) {
       const { passenger_count: _omit, ...fallbackRow } = insertRow;
       const retry = await supabase
         .from('travel_logs')
@@ -1026,17 +1263,18 @@ async function createLog(payload) {
   }
 
   db.prepare(
-    `INSERT INTO travel_logs (worker_name, travel_date, route, departure_time, arrival_time, vehicle_plate, passenger_count, gps_status, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))`
+    `INSERT INTO travel_logs (worker_name, site_name, travel_date, route, departure_time, arrival_time, vehicle_plate, passenger_count, gps_status, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))`
   ).run(
     worker_name,
+    cleanSiteName,
     travel_date || '',
     route || '',
     departure_time || '',
     arrival_time || '',
     vehicle_plate || '',
     passenger_count,
-    gps_status || ''
+    encodedExtra
   );
 
   syncJsonFallbackFile();
@@ -1062,6 +1300,11 @@ async function updateLog(worker_name, updates) {
       updates.passenger_count !== undefined
         ? normalizePassengerCount(updates.passenger_count)
         : resolvedExisting.passenger_count;
+    const nextSiteName =
+      updates.site_name !== undefined
+        ? String(updates.site_name || '').trim()
+        : resolvedExisting.site_name || '';
+    const encodedExtra = encodeExtraFieldsToGpsStatus(nextPassengerCount, nextSiteName);
 
     const nextRow = {
       travel_date:
@@ -1076,10 +1319,7 @@ async function updateLog(worker_name, updates) {
       vehicle_plate:
         updates.vehicle_plate !== undefined ? updates.vehicle_plate : existing.vehicle_plate || '',
       passenger_count: nextPassengerCount,
-      gps_status:
-        nextPassengerCount !== null
-          ? JSON.stringify({ passenger_count: nextPassengerCount })
-          : '',
+      gps_status: encodedExtra,
       updated_at: new Date().toISOString()
     };
 
@@ -1090,7 +1330,7 @@ async function updateLog(worker_name, updates) {
       .select('*')
       .single();
 
-    if (error && isMissingPassengerColumnError(error)) {
+    if (error && isMissingExtraColumnError(error)) {
       const { passenger_count: _omit, ...fallbackRow } = nextRow;
       const retry = await supabase
         .from('travel_logs')
@@ -1119,6 +1359,11 @@ async function updateLog(worker_name, updates) {
     throw err;
   }
 
+  const resolvedExisting = withResolvedPassengerCount(existing);
+  const site_name =
+    updates.site_name !== undefined
+      ? String(updates.site_name || '').trim()
+      : resolvedExisting.site_name || '';
   const travel_date =
     updates.travel_date !== undefined ? updates.travel_date : existing.travel_date;
   const route = updates.route !== undefined ? updates.route : existing.route;
@@ -1131,15 +1376,15 @@ async function updateLog(worker_name, updates) {
   const passenger_count =
     updates.passenger_count !== undefined
       ? normalizePassengerCount(updates.passenger_count)
-      : normalizePassengerCount(existing.passenger_count);
-  const gps_status =
-    updates.gps_status !== undefined ? updates.gps_status : existing.gps_status || '';
+      : resolvedExisting.passenger_count;
+  const gps_status = encodeExtraFieldsToGpsStatus(passenger_count, site_name);
 
   db.prepare(
     `UPDATE travel_logs
-     SET travel_date = ?, route = ?, departure_time = ?, arrival_time = ?, vehicle_plate = ?, passenger_count = ?, gps_status = ?, updated_at = datetime('now', 'localtime')
+     SET site_name = ?, travel_date = ?, route = ?, departure_time = ?, arrival_time = ?, vehicle_plate = ?, passenger_count = ?, gps_status = ?, updated_at = datetime('now', 'localtime')
      WHERE worker_name = ?`
   ).run(
+    site_name,
     travel_date,
     route,
     departure_time,
@@ -1283,6 +1528,10 @@ module.exports = {
   createVehicle,
   updateVehicle,
   deleteVehicle,
+  listSites,
+  createSite,
+  updateSite,
+  deleteSite,
   listLogs,
   createLog,
   updateLog,

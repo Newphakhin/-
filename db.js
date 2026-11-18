@@ -81,8 +81,15 @@ function createSchema() {
       active BOOLEAN DEFAULT 1
     );
 
+    CREATE TABLE IF NOT EXISTS master_sites (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT UNIQUE NOT NULL,
+      active BOOLEAN DEFAULT 1
+    );
+
     CREATE TABLE IF NOT EXISTS travel_logs (
       worker_name TEXT PRIMARY KEY,
+      site_name TEXT DEFAULT '',
       travel_date TEXT,
       route TEXT,
       departure_time TEXT,
@@ -106,6 +113,9 @@ function createSchema() {
   }
   if (!columns.some((c) => c.name === 'passenger_count')) {
     db.exec('ALTER TABLE travel_logs ADD COLUMN passenger_count INTEGER DEFAULT NULL;');
+  }
+  if (!columns.some((c) => c.name === 'site_name')) {
+    db.exec("ALTER TABLE travel_logs ADD COLUMN site_name TEXT DEFAULT '';");
   }
 }
 

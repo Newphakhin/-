@@ -416,7 +416,7 @@
             <div class="grid grid-cols-1 md:grid-cols-12 gap-5">
               
               <!-- 1. ชื่อคนงาน (PK) [บังคับเลือก] -->
-              <div class="md:col-span-5">
+              <div class="md:col-span-6 lg:col-span-3">
                 <label for="form-worker" class="block text-sm font-semibold text-slate-700 mb-1.5">
                   <i class="fa-solid fa-id-badge text-indigo-600 mr-1"></i>
                   ชื่อคนงาน (PK) <span class="text-rose-600 font-bold">* [บังคับเลือก]</span>
@@ -433,8 +433,25 @@
                 </p>
               </div>
 
-              <!-- 2. วันที่หมายที่ต้องไป -->
-              <div class="md:col-span-3">
+              <!-- 2. ไซต์งาน / โครงการ (หัวตาราง Dropdown) -->
+              <div class="md:col-span-6 lg:col-span-3">
+                <label for="form-site" class="block text-sm font-semibold text-slate-700 mb-1.5">
+                  <i class="fa-solid fa-building-user text-amber-500 mr-1"></i>
+                  ไซต์งาน / โครงการ (หัวตาราง)
+                </label>
+                <select
+                  id="form-site"
+                  class="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 transition"
+                >
+                  <option value="">-- เลือกไซต์งาน / โครงการ --</option>
+                </select>
+                <p class="mt-1.5 text-[11px] text-slate-500">
+                  เช่น ไลฟ์รัชดา-พระราม9, โซนวิภา (แสดงเป็นหัวตารางใบเบิก)
+                </p>
+              </div>
+
+              <!-- 3. วันที่หมายที่ต้องไป -->
+              <div class="md:col-span-6 lg:col-span-3">
                 <label for="form-date" class="block text-sm font-semibold text-slate-700 mb-1.5">
                   <i class="fa-regular fa-calendar-days text-indigo-600 mr-1"></i>
                   วันที่หมายที่ต้องไป
@@ -447,8 +464,8 @@
                 <p id="form-date-thai-preview" class="mt-1.5 text-[11px] text-indigo-600 font-medium"></p>
               </div>
 
-              <!-- 6. ทะเบียนรถ -->
-              <div class="md:col-span-4">
+              <!-- 4. ทะเบียนรถ -->
+              <div class="md:col-span-6 lg:col-span-3">
                 <label for="form-vehicle" class="block text-sm font-semibold text-slate-700 mb-1.5">
                   <i class="fa-solid fa-truck-front text-indigo-600 mr-1"></i>
                   ทะเบียนรถ
@@ -779,6 +796,7 @@
               <thead>
                 <tr class="bg-slate-100/80 border-b border-slate-200 text-slate-600 text-xs font-semibold uppercase tracking-wider">
                   <th class="py-3.5 px-4">ชื่อคนงาน (PK)</th>
+                  <th class="py-3.5 px-4">ไซต์งาน / โครงการ</th>
                   <th class="py-3.5 px-4">วันที่หมายที่ต้องไป</th>
                   <th class="py-3.5 px-4">เส้นทาง / ที่หมาย</th>
                   <th class="py-3.5 px-3 text-center">เวลาขับรถ - ถึงไซต์</th>
@@ -824,7 +842,7 @@
                 จัดการตัวเลือก Dropdown &amp; โควต้าพื้นที่เก็บข้อมูล
               </h2>
               <p class="text-xs sm:text-sm text-zinc-300">
-                แก้ไขข้อมูลพนักงาน, เส้นทาง หรือทะเบียนรถ จะอัปเดตเชื่อมโยง (Cascade Update) ไปยัง <code>travel_logs</code> และ <code>default_route</code> อัตโนมัติ
+                แก้ไขข้อมูลพนักงาน, ไซต์งาน, เส้นทาง หรือทะเบียนรถ จะอัปเดตเชื่อมโยง (Cascade Update) ไปยัง <code>travel_logs</code> อัตโนมัติ
               </p>
             </div>
           </div>
@@ -886,8 +904,8 @@
           </form>
         </section>
 
-        <!-- PARTS 1, 2, 3: 3 Master Data Management Columns -->
-        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <!-- PARTS 1, 2, 3, 4: 4 Master Data Management Columns -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
 
           <!-- 1. จัดการรายชื่อคนงาน (/api/master/workers) -->
           <div class="bg-white rounded-2xl border border-slate-200 shadow-sm flex flex-col overflow-hidden">
@@ -936,7 +954,47 @@
             <div id="master-workers-list" class="divide-y divide-slate-100 max-h-[460px] overflow-y-auto flex-1"></div>
           </div>
 
-          <!-- 2. จัดการเส้นทาง / ที่หมาย (/api/master/routes) -->
+          <!-- 2. จัดการไซต์งาน / โครงการ (หัวตาราง) (/api/master/sites) -->
+          <div class="bg-white rounded-2xl border border-slate-200 shadow-sm flex flex-col overflow-hidden">
+            <div class="p-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+              <div class="flex items-center gap-2.5">
+                <div class="w-9 h-9 rounded-xl bg-sky-100 text-sky-700 flex items-center justify-center">
+                  <i class="fa-solid fa-building-user"></i>
+                </div>
+                <div>
+                  <h3 class="text-sm font-bold text-slate-900">2. จัดการไซต์งาน / โครงการ (หัวตาราง)</h3>
+                  <p class="text-[11px] text-slate-500">API: <code>/api/master/sites</code></p>
+                </div>
+              </div>
+              <span id="badge-count-sites" class="px-2.5 py-0.5 rounded-full bg-sky-50 text-sky-700 text-xs font-bold">0</span>
+            </div>
+
+            <form id="form-add-site" class="p-4 bg-sky-50/40 border-b border-slate-200 space-y-2.5">
+              <p class="text-xs font-semibold text-slate-700">
+                <i class="fa-solid fa-circle-plus text-sky-600 mr-1"></i>เพิ่มไซต์งาน / โครงการใหม่ (แสดงเป็นหัวตารางใบเบิก)
+              </p>
+              <div class="flex gap-2">
+                <input
+                  type="text"
+                  id="new-site-name"
+                  placeholder="เช่น ไลฟ์รัชดา-พระราม9, โซนวิภา *"
+                  required
+                  class="flex-1 min-h-[42px] px-3 py-2 rounded-xl border border-slate-300 bg-white text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-sky-600"
+                />
+                <button
+                  type="submit"
+                  class="min-h-[42px] px-3.5 py-2 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs font-semibold shrink-0 flex items-center gap-1 transition cursor-pointer"
+                >
+                  <i class="fa-solid fa-plus"></i>
+                  <span>เพิ่ม</span>
+                </button>
+              </div>
+            </form>
+
+            <div id="master-sites-list" class="divide-y divide-slate-100 max-h-[460px] overflow-y-auto flex-1"></div>
+          </div>
+
+          <!-- 3. จัดการเส้นทาง / ที่หมาย (/api/master/routes) -->
           <div class="bg-white rounded-2xl border border-slate-200 shadow-sm flex flex-col overflow-hidden">
             <div class="p-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
               <div class="flex items-center gap-2.5">
@@ -944,7 +1002,7 @@
                   <i class="fa-solid fa-map-location-dot"></i>
                 </div>
                 <div>
-                  <h3 class="text-sm font-bold text-slate-900">2. จัดการเส้นทาง / ที่หมาย</h3>
+                  <h3 class="text-sm font-bold text-slate-900">3. จัดการเส้นทาง / ที่หมาย (จาก - ถึง)</h3>
                   <p class="text-[11px] text-slate-500">API: <code>/api/master/routes</code></p>
                 </div>
               </div>
@@ -953,13 +1011,13 @@
 
             <form id="form-add-route" class="p-4 bg-emerald-50/40 border-b border-slate-200 space-y-2.5">
               <p class="text-xs font-semibold text-slate-700">
-                <i class="fa-solid fa-circle-plus text-emerald-600 mr-1"></i>เพิ่มเส้นทาง / ไซต์งานใหม่
+                <i class="fa-solid fa-circle-plus text-emerald-600 mr-1"></i>เพิ่มเส้นทางรับ-ส่งใหม่
               </p>
               <div class="flex gap-2">
                 <input
                   type="text"
                   id="new-route-name"
-                  placeholder="ชื่อเส้นทาง หรือ ไซต์งานที่หมาย *"
+                  placeholder="เช่น แคมป์พระราม9 - ไลฟ์รัชดา *"
                   required
                   class="flex-1 min-h-[42px] px-3 py-2 rounded-xl border border-slate-300 bg-white text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-emerald-600"
                 />
@@ -976,7 +1034,7 @@
             <div id="master-routes-list" class="divide-y divide-slate-100 max-h-[460px] overflow-y-auto flex-1"></div>
           </div>
 
-          <!-- 3. จัดการทะเบียนรถ (/api/master/vehicles) -->
+          <!-- 4. จัดการทะเบียนรถ (/api/master/vehicles) -->
           <div class="bg-white rounded-2xl border border-slate-200 shadow-sm flex flex-col overflow-hidden">
             <div class="p-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
               <div class="flex items-center gap-2.5">
@@ -984,7 +1042,7 @@
                   <i class="fa-solid fa-truck-pickup"></i>
                 </div>
                 <div>
-                  <h3 class="text-sm font-bold text-slate-900">3. จัดการทะเบียนรถ</h3>
+                  <h3 class="text-sm font-bold text-slate-900">4. จัดการทะเบียนรถ</h3>
                   <p class="text-[11px] text-slate-500">API: <code>/api/master/vehicles</code></p>
                 </div>
               </div>
