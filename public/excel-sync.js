@@ -1057,7 +1057,9 @@
         maxPageNo += 1;
         pageIndexForRoute += 1;
 
-        const baseTabName = sanitizeSheetName(bucketKey, `แผ่นที่ ${maxPageNo}`);
+        const rawTabBase =
+          matchedSheets.length > 0 ? stripSheetPageSuffix(matchedSheets[0].name) : bucketKey;
+        const baseTabName = sanitizeSheetName(rawTabBase, `แผ่นที่ ${maxPageNo}`);
         const desiredTabName =
           pageIndexForRoute === 1 ? baseTabName : `${baseTabName.slice(0, 24)} (${pageIndexForRoute})`;
 
