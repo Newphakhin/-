@@ -3297,7 +3297,15 @@ async function ensureExcelLibrariesLoaded() {
   }
   try {
     await excelLibLoadPromise;
-    return typeof window.ExcelJS !== 'undefined' && Boolean(window.CkpExcelSync);
+    const loaded = typeof window.ExcelJS !== 'undefined' && Boolean(window.CkpExcelSync);
+    if (!loaded) {
+      excelLibLoadPromise = null;
+      showToast(
+        'ไม่สามารถเริ่มต้นตัวอ่าน/เขียนไฟล์ Excel ได้ กรุณากด Ctrl+F5 รีเฟรชหน้าเว็บ',
+        'error'
+      );
+    }
+    return loaded;
   } catch (err) {
     excelLibLoadPromise = null;
     showToast(err?.message || 'ไม่สามารถโหลดไลบรารี Excel ได้ กรุณากด Ctrl+F5', 'error');

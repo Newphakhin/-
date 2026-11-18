@@ -16,6 +16,14 @@
       "dest": "/server.js"
     },
     {
+      "src": "/vendor/(.*)",
+      "dest": "/public/vendor/$1"
+    },
+    {
+      "src": "/excel-sync.js",
+      "dest": "/public/excel-sync.js"
+    },
+    {
       "src": "/logo.jpg",
       "dest": "/public/logo.jpg"
     },
