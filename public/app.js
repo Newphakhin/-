@@ -2040,17 +2040,47 @@ function splitRouteParts(routeStr, fallbackSite = '') {
   const raw = String(routeStr || '').trim();
   const site = String(fallbackSite || '').trim();
   if (!raw) return { from: site, to: site };
+  // Prefer splitting on spaced separator (" - ", " -> ", " ถึง ") first so names like "ไลฟ์รัชดา-พระราม9" stay intact
+  const spacedParts = raw.split(/\s+(?:-|->|→|ถึง)\s*|\s*(?:-|->|→|ถึง)\s+/).filter(Boolean);
+  if (spacedParts.length >= 2) {
+    return {
+      from: spacedParts[0].trim(),
+      to: spacedParts.slice(1).join(' - ').trim()
+    };
+  }
   const parts = raw.split(/\s*(?:-|->|→|ถึง)\s*/).filter(Boolean);
   if (parts.length >= 2) {
     return {
-      from: parts[0],
-      to: parts.slice(1).join('-')
+      from: parts[0].trim(),
+      to: parts.slice(1).join('-').trim()
     };
   }
   return {
     from: raw,
     to: site || raw
   };
+}
+
+// Get directional { from, to } based on departure time (เช้า < 12:00 = แคมป์ -> โครงการ, บ่าย/เย็น >= 12:00 = โครงการ -> แคมป์)
+function getDirectionalRouteParts(routeStr, departureTimeStr, fallbackSite = '') {
+  const { from, to } = splitRouteParts(routeStr, fallbackSite);
+  if (!from || !to || from === to) return { from, to };
+  const m = String(departureTimeStr || '').trim().match(/^(\d{1,2}):(\d{2})/);
+  if (m) {
+    const hour = Number(m[1]);
+    if (hour >= 12) {
+      return { from: to, to: from };
+    }
+  }
+  return { from, to };
+}
+
+function formatExcelTimeDisplay(timeStr) {
+  const s = String(timeStr || '').trim();
+  if (!s) return '';
+  const m = s.match(/^0?(\d{1,2}):(\d{2})/);
+  if (m) return `${m[1]}:${m[2]}`;
+  return s;
 }
 
 // ============================================================================
@@ -2300,6 +2330,7 @@ function appendBillingSectionToAoa(
   const firstDetailExcelRow = startR + 8; // 1-based Excel row 8
   const minDetailRows = Math.max(21, routeGroups.length * 2);
   let itemIdx = 0;
+  let totalBillingAmount = 0;
 
   for (let slot = 0; slot < minDetailRows; slot++) {
     const r0 = aoa.length;
@@ -2319,6 +2350,7 @@ function appendBillingSectionToAoa(
         unitPrice !== '' && !Number.isNaN(Number(unitPrice))
           ? g.trips * Number(unitPrice)
           : 0;
+      totalBillingAmount += calcAmount;
 
       aoa.push(
         pad12([
@@ -2347,7 +2379,7 @@ function appendBillingSectionToAoa(
   const lastDetailExcelRow = aoa.length;
   const totalR0 = aoa.length;
   const totalExcelRow = totalR0 + 1;
-  aoa.push(pad12(['', 'รวม', '', '', '', '', '', 0, '', '']));
+  aoa.push(pad12(['', 'รวม', '', '', '', '', '', totalBillingAmount, '', '']));
   merges.push(
     { s: { r: totalR0, c: 1 }, e: { r: totalR0, c: 3 } }, // B29:D29
     { s: { r: totalR0, c: 7 }, e: { r: totalR0, c: 8 } }  // H29:I29
@@ -2355,7 +2387,7 @@ function appendBillingSectionToAoa(
   formulas.push({
     cell: `H${totalExcelRow}`,
     f: `SUM(H${firstDetailExcelRow}:I${lastDetailExcelRow})`,
-    v: 0
+    v: totalBillingAmount
   });
 
   aoa.push(pad12([]));
@@ -2467,28 +2499,29 @@ function appendOperationPagesToAoa(
           const displayDate = dateBE !== prevDateStr ? dateBE : '';
           if (dateBE) prevDateStr = dateBE;
 
-          const { from, to } = splitRouteParts(r.route, r.site_name || firstRowSite);
+          const { from, to } = getDirectionalRouteParts(
+            r.route,
+            r.departure_time,
+            r.site_name || firstRowSite
+          );
           const pax =
             r.passenger_count !== null &&
             r.passenger_count !== undefined &&
             r.passenger_count !== ''
               ? Number(r.passenger_count)
               : '';
-          const remarkText = r.note
-            ? r.worker_name
-              ? `${r.note} (${r.worker_name})`
-              : r.note
-            : r.worker_name || '';
+          // ช่อง L (หมายเหตุ): ใส่เฉพาะหมายเหตุที่กรอกจริงๆ เท่านั้น ตามต้นฉบับ
+          const remarkText = String(r.note || '').trim();
           aoa.push([
             seqNo,
             displayDate,
-            r.vehicle_plate || '',
+            r.vehicle_plate || r.worker_name || '',
             from,
-            r.departure_time || '',
+            formatExcelTimeDisplay(r.departure_time),
             to,
             '',
             '',
-            r.arrival_time || '',
+            formatExcelTimeDisplay(r.arrival_time),
             pax,
             '',
             remarkText
@@ -2539,7 +2572,7 @@ function appendOperationPagesToAoa(
 }
 
 // Section 3: บริษัท จักรพงษ์ ขนส่ง (2003) จำกัด - บันทึกรายการรถ 6 ล้อ รับ-ส่งคนงาน + สรุปจำนวนเที่ยวคนขับ/ทะเบียนรถท้ายตาราง
-function appendZone6WheelBlocksToAoa(aoa, merges, rows, defaultProjectTitle) {
+function appendZone6WheelBlocksToAoa(aoa, merges, rows, defaultProjectTitle, formulas = []) {
   const pad12 = (arr) => {
     const copy = [...arr];
     while (copy.length < 12) copy.push('');
@@ -2551,7 +2584,7 @@ function appendZone6WheelBlocksToAoa(aoa, merges, rows, defaultProjectTitle) {
     routeBuckets.set('__empty__', []);
   } else {
     for (const r of rows) {
-      const key = (r.site_name || r.route || '').trim() || '__default__';
+      const key = (r.route || r.site_name || '').trim() || '__default__';
       if (!routeBuckets.has(key)) routeBuckets.set(key, []);
       routeBuckets.get(key).push(r);
     }
@@ -2578,6 +2611,7 @@ function appendZone6WheelBlocksToAoa(aoa, merges, rows, defaultProjectTitle) {
 
     let prevDateStr = '';
     const tallyMap = new Map();
+    const firstRowRefMap = new Map();
 
     for (let i = 0; i < bucketRows.length; i++) {
       const r = bucketRows[i];
@@ -2585,35 +2619,39 @@ function appendZone6WheelBlocksToAoa(aoa, merges, rows, defaultProjectTitle) {
       const displayDate = dateBE !== prevDateStr ? dateBE : '';
       if (dateBE) prevDateStr = dateBE;
 
-      const { from, to } = splitRouteParts(r.route, r.site_name || blockProject);
+      const { from } = getDirectionalRouteParts(
+        r.route,
+        r.departure_time,
+        r.site_name || blockProject
+      );
       const pax =
         r.passenger_count !== null &&
         r.passenger_count !== undefined &&
         r.passenger_count !== ''
           ? Number(r.passenger_count)
           : '';
-      const driverOrPlate = r.worker_name || r.vehicle_plate || '';
+      // ช่อง C ของไฟล์สำเนา: ใช้ชื่อคนขับ (หรือทะเบียนรถถ้าไม่มีชื่อ) ให้ตรงกับสูตร COUNTIF(C:C,...) ด้านล่าง 100%
+      const driverOrPlate = (r.worker_name || r.vehicle_plate || '').trim();
+      const currentExcelRow = aoa.length + 1;
       if (driverOrPlate) {
         tallyMap.set(driverOrPlate, (tallyMap.get(driverOrPlate) || 0) + 1);
+        if (!firstRowRefMap.has(driverOrPlate)) {
+          firstRowRefMap.set(driverOrPlate, currentExcelRow);
+        }
       }
 
-      const remarkText = r.note
-        ? r.worker_name && r.vehicle_plate
-          ? `${r.note} (${r.worker_name})`
-          : r.note
-        : r.worker_name && r.vehicle_plate
-        ? r.worker_name
-        : '';
+      // ช่อง H (หมายเหตุ): ใส่เฉพาะหมายเหตุจริงๆ เท่านั้น และช่อง G (ถึง) ในแถวข้อมูลเว้นว่างตามต้นฉบับสำเนา
+      const remarkText = String(r.note || '').trim();
 
       aoa.push(
         pad12([
           i + 1,
           displayDate,
-          r.vehicle_plate || r.worker_name || '',
+          driverOrPlate,
           from,
-          r.departure_time ? `${r.departure_time}:00`.slice(0, 8) : '',
+          formatExcelTimeDisplay(r.departure_time),
           pax,
-          r.arrival_time || to || '',
+          '',
           remarkText
         ])
       );
@@ -2625,18 +2663,33 @@ function appendZone6WheelBlocksToAoa(aoa, merges, rows, defaultProjectTitle) {
 
     let seqCursor = bucketRows.length + 3;
     let totalTally = 0;
+    const firstSummaryExcelRow = aoa.length + 1;
     for (const [personOrPlate, count] of tallyMap.entries()) {
       totalTally += count;
+      const sumExcelRow = aoa.length + 1;
+      const refRow = firstRowRefMap.get(personOrPlate) || sumExcelRow;
       aoa.push(pad12([seqCursor, '', '', '', '', personOrPlate, count, '']));
+      formulas.push({
+        cell: `G${sumExcelRow}`,
+        f: `COUNTIF(C:C,C${refRow})`,
+        v: count
+      });
       seqCursor += 1;
     }
+    const lastSummaryExcelRow = aoa.length;
     if (tallyMap.size > 0) {
+      const totalExcelRow = aoa.length + 1;
       aoa.push(pad12([seqCursor, '', '', '', '', '', totalTally, '']));
+      formulas.push({
+        cell: `G${totalExcelRow}`,
+        f: `SUM(G${firstSummaryExcelRow}:G${lastSummaryExcelRow})`,
+        v: totalTally
+      });
       seqCursor += 1;
     }
 
-    // Pad up to at least 45 numbered rows as in template
-    while (seqCursor <= Math.max(45, bucketRows.length + tallyMap.size + 10)) {
+    // Pad up to at least 70 numbered rows as in template
+    while (seqCursor <= Math.max(70, bucketRows.length + tallyMap.size + 15)) {
       aoa.push(pad12([seqCursor]));
       seqCursor += 1;
     }
@@ -2651,6 +2704,25 @@ function applyFormulasToWorksheet(ws, formulas) {
 
 // Parse existing history & unit prices from an existing Excel workbook buffer
 function normalizeExcelCellDateToISO(val) {
+  if (val === '' || val === null || val === undefined) return '';
+  const numVal = Number(val);
+  // Handle Excel serial date numbers (including Thai Buddhist year serials like 244357 = 1/8/2569)
+  if (!Number.isNaN(numVal) && numVal > 30000 && numVal < 300000 && /^\d+(\.\d+)?$/.test(String(val).trim())) {
+    const d = new Date(Math.round((numVal - 25569) * 86400 * 1000));
+    let y = d.getUTCFullYear();
+    let month = d.getUTCMonth() + 1;
+    let day = d.getUTCDate();
+    if (y >= 2400) {
+      y -= 543;
+      // In Thai BE Excel sheets entered on M/D/Y locale, serial 244357 has month=day(1..12) and day=month(1..12)
+      const swappedDay = month;
+      const swappedMonth = day;
+      day = swappedDay;
+      month = swappedMonth;
+    }
+    return `${y}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  }
+
   const s = String(val || '').trim();
   if (!s) return '';
   if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
@@ -2678,8 +2750,9 @@ function normalizeExcelCellDateToISO(val) {
 
 function normalizeExcelCellTime(val) {
   if (val === '' || val === null || val === undefined) return '';
-  if (typeof val === 'number' && val >= 0 && val < 1) {
-    const totalMins = Math.round(val * 24 * 60);
+  const numVal = Number(val);
+  if (!Number.isNaN(numVal) && numVal >= 0 && numVal < 1 && String(val).trim() !== '') {
+    const totalMins = Math.round(numVal * 24 * 60);
     const hh = String(Math.floor(totalMins / 60) % 24).padStart(2, '0');
     const mm = String(totalMins % 60).padStart(2, '0');
     return `${hh}:${mm}`;
@@ -2752,8 +2825,13 @@ function extractExistingDataFromWorkbook(existingWorkbook) {
     }
     const ws = existingWorkbook.Sheets[sheetName];
     if (!ws) continue;
-    const rows2d = window.XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: false });
+    const rows2d = window.XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
     if (!rows2d || rows2d.length < 5) continue;
+
+    const cleanSheetRoute = sheetName
+      .replace(/^\d+_/, '')
+      .replace(/\s*\(\d+\)\s*$/, '')
+      .trim();
 
     let siteName = '';
     let mode = ''; // 'copy' | 'operation'
@@ -2789,8 +2867,8 @@ function extractExistingDataFromWorkbook(existingWorkbook) {
     let lastDateISO = '';
     for (let idx = dataStartIndex; idx < rows2d.length; idx++) {
       const r = rows2d[idx] || [];
-      const rawDate = String(r[1] || '').trim();
-      if (rawDate) {
+      const rawDate = r[1];
+      if (rawDate !== '' && rawDate !== null && rawDate !== undefined) {
         lastDateISO = normalizeExcelCellDateToISO(rawDate);
       }
 
@@ -2807,8 +2885,7 @@ function extractExistingDataFromWorkbook(existingWorkbook) {
 
         const isCol6Time = /^\d{1,2}:\d{2}/.test(col6);
         const arrTime = isCol6Time ? normalizeExcelCellTime(col6) : '';
-        const routeStr =
-          !isCol6Time && col6 && col6 !== fromStr ? `${fromStr} - ${col6}` : fromStr;
+        const routeStr = cleanSheetRoute || fromStr;
         const paxNum =
           rawPax !== '' && !Number.isNaN(Number(rawPax)) ? Number(rawPax) : null;
 
@@ -2835,12 +2912,16 @@ function extractExistingDataFromWorkbook(existingWorkbook) {
         if (!plate && !fromStr && !toStr) continue;
 
         const routeStr =
-          toStr && toStr !== fromStr ? `${fromStr} - ${toStr}` : fromStr || toStr;
+          cleanSheetRoute && !cleanSheetRoute.startsWith('แผ่นที่')
+            ? cleanSheetRoute
+            : toStr && toStr !== fromStr
+            ? `${fromStr} - ${toStr}`
+            : fromStr || toStr;
         const paxNum =
           rawPax !== '' && !Number.isNaN(Number(rawPax)) ? Number(rawPax) : null;
 
         existingRows.push({
-          worker_name: noteStr || plate,
+          worker_name: plate,
           site_name: siteName,
           travel_date: lastDateISO,
           route: routeStr,
@@ -2960,15 +3041,28 @@ function sanitizeExcelSheetName(rawName, fallbackName) {
   return (cleaned || fallbackName).slice(0, 28);
 }
 
-// 1. สร้างไฟล์แบบ "สำเนา" (แยก Sheet ตามสาย/โครงการ + สรุปจำนวนเที่ยวคนขับ/ทะเบียนรถท้ายตาราง)
+function getUniqueSheetName(workbook, desiredName) {
+  const base = sanitizeExcelSheetName(desiredName, 'Sheet');
+  if (!workbook.SheetNames.includes(base)) return base;
+  let counter = 2;
+  while (counter < 200) {
+    const suffix = ` (${counter})`;
+    const candidate = `${base.slice(0, 31 - suffix.length)}${suffix}`;
+    if (!workbook.SheetNames.includes(candidate)) return candidate;
+    counter += 1;
+  }
+  return `${base.slice(0, 24)}_${Date.now() % 1000}`;
+}
+
+// 1. สร้างไฟล์แบบ "สำเนา" (แยก Sheet ตามสายรถเหมือนไฟล์ สำเนา27 โซนวิภา + สูตร COUNTIF สรุปจำนวนเที่ยวท้ายตาราง)
 function buildCopyOnlyWorkbook(rows) {
   const { projectTitle, defaultCols } = getWorkbookMetaFromRows(rows);
   const workbook = window.XLSX.utils.book_new();
 
-  // แยก Sheet ตามเส้นทาง/โครงการเหมือนไฟล์ สำเนา27 โซนวิภา
+  // แยก Sheet ตามเส้นทาง/โครงการเหมือนไฟล์ สำเนา27 โซนวิภา (ตั้งชื่อแท็บตามสายรถตรงๆ)
   const routeBuckets = new Map();
   if (rows.length === 0) {
-    routeBuckets.set('สำเนา_1', []);
+    routeBuckets.set('สำเนา', []);
   } else {
     for (const r of rows) {
       const key = (r.route || r.site_name || '').trim() || 'ทั่วไป';
@@ -2981,15 +3075,23 @@ function buildCopyOnlyWorkbook(rows) {
   for (const [bucketKey, bucketRows] of routeBuckets.entries()) {
     const singleAoa = [];
     const singleMerges = [];
+    const singleFormulas = [];
     const tabProject =
       (bucketRows.find((x) => x.site_name)?.site_name || '').trim() || projectTitle;
-    appendZone6WheelBlocksToAoa(singleAoa, singleMerges, bucketRows, tabProject);
+    appendZone6WheelBlocksToAoa(
+      singleAoa,
+      singleMerges,
+      bucketRows,
+      tabProject,
+      singleFormulas
+    );
     const wsTab = window.XLSX.utils.aoa_to_sheet(singleAoa);
+    applyFormulasToWorksheet(wsTab, singleFormulas);
     wsTab['!merges'] = singleMerges;
     wsTab['!cols'] = defaultCols;
-    const sheetName = sanitizeExcelSheetName(
-      `${tabIndex}_${bucketKey}`,
-      `สำเนา_${tabIndex}`
+    const sheetName = getUniqueSheetName(
+      workbook,
+      sanitizeExcelSheetName(bucketKey, `สำเนา_${tabIndex}`)
     );
     window.XLSX.utils.book_append_sheet(workbook, wsTab, sheetName);
     tabIndex += 1;
@@ -2998,8 +3100,10 @@ function buildCopyOnlyWorkbook(rows) {
   // รวมสำเนาทุกสายในหน้าเดียว
   const zoneAoa = [];
   const zoneMerges = [];
-  appendZone6WheelBlocksToAoa(zoneAoa, zoneMerges, rows, projectTitle);
+  const zoneFormulas = [];
+  appendZone6WheelBlocksToAoa(zoneAoa, zoneMerges, rows, projectTitle, zoneFormulas);
   const wsZone = window.XLSX.utils.aoa_to_sheet(zoneAoa);
+  applyFormulasToWorksheet(wsZone, zoneFormulas);
   wsZone['!merges'] = zoneMerges;
   wsZone['!cols'] = defaultCols;
   window.XLSX.utils.book_append_sheet(workbook, wsZone, 'รวมสำเนาทุกสาย');
@@ -3008,7 +3112,7 @@ function buildCopyOnlyWorkbook(rows) {
   return workbook;
 }
 
-// 2. สร้างไฟล์แบบ "ใบเบิก" (Sheet 1: ใบเบิก + Sheet 2..N: แผ่นที่ 1, แผ่นที่ 2... แผ่นละ 30 แถว)
+// 2. สร้างไฟล์แบบ "ใบเบิก" (Sheet 1: ใบเบิก + Sheet 2..N: ตั้งชื่อแท็บตามสายรถ แผ่นละ 30 แถว เหมือนต้นฉบับ 100%)
 function buildBillingOnlyWorkbook(rows, existingPricesMap = new Map()) {
   const { issueDateBE, startDateBE, endDateBE, periodLabel, projectTitle, defaultCols } =
     getWorkbookMetaFromRows(rows);
@@ -3034,21 +3138,22 @@ function buildBillingOnlyWorkbook(rows, existingPricesMap = new Map()) {
   wsBill['!cols'] = defaultCols;
   window.XLSX.utils.book_append_sheet(workbook, wsBill, 'ใบเบิก');
 
-  // Sheet 2..N: แผ่นที่ 1, แผ่นที่ 2, แผ่นที่ 3... (แยกแผ่นละ 30 แถวตามเส้นทาง)
+  // Sheet 2..N: แยกแผ่นละ 30 แถวตามเส้นทาง (ตั้งชื่อแท็บตามสายรถ เช่น "ไลฟ์รัชดา - พระราม9", "ไลฟ์รัชดา - พระราม9 (2)")
   const routeBuckets = new Map();
   if (rows.length === 0) {
-    routeBuckets.set('__empty__', []);
+    routeBuckets.set(projectTitle || 'แผ่นที่ 1', []);
   } else {
     for (const r of rows) {
-      const key = (r.route || '').trim() || '__default__';
+      const key = (r.route || r.site_name || '').trim() || projectTitle || 'ทั่วไป';
       if (!routeBuckets.has(key)) routeBuckets.set(key, []);
       routeBuckets.get(key).push(r);
     }
   }
 
   let pageNo = 1;
-  for (const [, bucketRows] of routeBuckets.entries()) {
+  for (const [bucketKey, bucketRows] of routeBuckets.entries()) {
     const pageCount = Math.max(1, Math.ceil(bucketRows.length / 30));
+    const baseTabName = sanitizeExcelSheetName(bucketKey, `แผ่นที่ ${pageNo}`);
     for (let p = 0; p < pageCount; p++) {
       const slice30 = bucketRows.slice(p * 30, (p + 1) * 30);
       const pageAoa = [];
@@ -3062,7 +3167,7 @@ function buildBillingOnlyWorkbook(rows, existingPricesMap = new Map()) {
         endDateBE
       );
       if (pageAoa[1]) {
-        pageAoa[1][10] = pageNo; // Set แผ่นที่ X
+        pageAoa[1][10] = pageNo; // Set แผ่นที่ X in cell K2
       }
       // Adjust sequence numbers for multi-page routes (31..60, 61..90)
       if (p > 0) {
@@ -3075,7 +3180,9 @@ function buildBillingOnlyWorkbook(rows, existingPricesMap = new Map()) {
       const wsPage = window.XLSX.utils.aoa_to_sheet(pageAoa);
       wsPage['!merges'] = pageMerges;
       wsPage['!cols'] = defaultCols;
-      window.XLSX.utils.book_append_sheet(workbook, wsPage, `แผ่นที่ ${pageNo}`);
+      const desiredTabName = p === 0 ? baseTabName : `${baseTabName.slice(0, 24)} (${p + 1})`;
+      const finalTabName = getUniqueSheetName(workbook, desiredTabName);
+      window.XLSX.utils.book_append_sheet(workbook, wsPage, finalTabName);
       pageNo += 1;
     }
   }
