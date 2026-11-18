@@ -2343,7 +2343,17 @@ function appendBillingSectionToAoa(
     if (slot % 2 === 0 && itemIdx < routeGroups.length) {
       const g = routeGroups[itemIdx];
       itemIdx += 1;
-      const savedPrice = existingPricesMap.get(g.route);
+      const normRoute = String(g.route || '').replace(/[\s\-]+/g, '').toLowerCase();
+      let savedPrice = existingPricesMap.get(g.route);
+      if (savedPrice === undefined) {
+        for (const [k, v] of existingPricesMap.entries()) {
+          const normK = String(k || '').replace(/[\s\-]+/g, '').toLowerCase();
+          if (normK && (normK === normRoute || normK.includes(normRoute) || normRoute.includes(normK))) {
+            savedPrice = v;
+            break;
+          }
+        }
+      }
       const unitPrice =
         savedPrice !== undefined && savedPrice !== '' ? Number(savedPrice) : '';
       const calcAmount =
@@ -2939,30 +2949,44 @@ function extractExistingDataFromWorkbook(existingWorkbook) {
   return { existingRows, existingPricesMap };
 }
 
-// Merge existing Excel rows with current web app rows (ไหลข้อมูลใหม่ต่อท้ายไฟล์เดิมโดยไม่ซ้ำ)
+// Merge existing Excel rows with current web app rows (ไหลข้อมูลใหม่ต่อท้ายไฟล์เดิมโดยไม่ตกหล่นและไม่ซ้ำ)
 function mergeLogsForExcel(existingRows, currentWebRows) {
   const mergedMap = new Map();
-  const makeKey = (r) =>
+  const makeSignature = (r) =>
     [
       String(r.worker_name || '').trim(),
       String(r.travel_date || '').trim(),
       String(r.departure_time || '').trim(),
+      String(r.arrival_time || '').trim(),
       String(r.route || '').trim(),
-      String(r.vehicle_plate || '').trim()
+      String(r.vehicle_plate || '').trim(),
+      String(r.passenger_count ?? '').trim(),
+      String(r.note || '').trim()
     ].join('||');
 
+  const existingCounts = new Map();
   for (const r of existingRows) {
-    mergedMap.set(makeKey(r), { ...r });
+    const sig = makeSignature(r);
+    const occ = (existingCounts.get(sig) || 0) + 1;
+    existingCounts.set(sig, occ);
+    mergedMap.set(`${sig}##${occ}`, { ...r });
   }
+
+  const webCounts = new Map();
   for (const r of currentWebRows) {
-    mergedMap.set(makeKey(r), { ...r });
+    const sig = makeSignature(r);
+    const occ = (webCounts.get(sig) || 0) + 1;
+    webCounts.set(sig, occ);
+    mergedMap.set(`${sig}##${occ}`, { ...r });
   }
 
   return Array.from(mergedMap.values()).sort((a, b) => {
     const d1 = a.travel_date || '';
     const d2 = b.travel_date || '';
     if (d1 !== d2) return d1.localeCompare(d2);
-    return String(a.departure_time || '').localeCompare(String(b.departure_time || ''));
+    return String(a.departure_time || a.arrival_time || '').localeCompare(
+      String(b.departure_time || b.arrival_time || '')
+    );
   });
 }
 
