@@ -22,9 +22,9 @@
 
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
-  <!-- SheetJS (xlsx) & ExcelJS for Non-Destructive Template-Preserving Excel (.xlsx) Export -->
+  <!-- SheetJS (xlsx) & Vendored ExcelJS for Non-Destructive Template-Preserving Excel (.xlsx) Export -->
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
+  <script src="/vendor/exceljs.min.js"></script>
   <script>
     tailwind.config = {
       theme: {
@@ -1195,7 +1195,7 @@
   </div>
 
   <!-- Frontend Logic -->
-  <script src="/excel-sync.js"></script>
-  <script src="/app.js"></script>
+  <script src="/excel-sync.js?v=2"></script>
+  <script src="/app.js?v=2"></script>
 </body>
 </html>

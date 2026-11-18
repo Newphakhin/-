@@ -3265,12 +3265,49 @@ function getDefaultProjectTitleForSync(rows) {
   return firstSite || '';
 }
 
+function loadScriptDynamic(src) {
+  return new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = src;
+    script.async = false;
+    script.onload = () => resolve(true);
+    script.onerror = () => reject(new Error(`โหลดไฟล์ ${src} ไม่สำเร็จ`));
+    document.head.appendChild(script);
+  });
+}
+
+let excelLibLoadPromise = null;
+async function ensureExcelLibrariesLoaded() {
+  if (typeof window.ExcelJS !== 'undefined' && window.CkpExcelSync) {
+    return true;
+  }
+  if (!excelLibLoadPromise) {
+    excelLibLoadPromise = (async () => {
+      if (typeof window.ExcelJS === 'undefined') {
+        try {
+          await loadScriptDynamic('/vendor/exceljs.min.js');
+        } catch {
+          await loadScriptDynamic('https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js');
+        }
+      }
+      if (!window.CkpExcelSync) {
+        await loadScriptDynamic('/excel-sync.js?v=2');
+      }
+    })();
+  }
+  try {
+    await excelLibLoadPromise;
+    return typeof window.ExcelJS !== 'undefined' && Boolean(window.CkpExcelSync);
+  } catch (err) {
+    excelLibLoadPromise = null;
+    showToast(err?.message || 'ไม่สามารถโหลดไลบรารี Excel ได้ กรุณากด Ctrl+F5', 'error');
+    return false;
+  }
+}
+
 // บันทึกแยกเฉพาะไฟล์สำเนา (รักษาไฟล์ต้นฉบับ รูปแบบ ตาราง และข้อมูลเดิม 100%)
 async function saveCopyExcelFile() {
-  if (typeof window.ExcelJS === 'undefined' || !window.CkpExcelSync) {
-    showToast('กำลังโหลดไลบรารี Excel กรุณาลองใหม่อีกครั้ง', 'error');
-    return;
-  }
+  if (!(await ensureExcelLibrariesLoaded())) return;
   if (state.linkedCopyHandle) {
     await writeWorkbookIntoHandleByType('copy', state.linkedCopyHandle, false);
   } else {
@@ -3280,10 +3317,7 @@ async function saveCopyExcelFile() {
 
 // บันทึกแยกเฉพาะไฟล์ใบเบิก (รักษาไฟล์ต้นฉบับ รูปแบบ ตาราง และข้อมูลเดิม 100%)
 async function saveBillingExcelFile() {
-  if (typeof window.ExcelJS === 'undefined' || !window.CkpExcelSync) {
-    showToast('กำลังโหลดไลบรารี Excel กรุณาลองใหม่อีกครั้ง', 'error');
-    return;
-  }
+  if (!(await ensureExcelLibrariesLoaded())) return;
   if (state.linkedBillingHandle) {
     await writeWorkbookIntoHandleByType('billing', state.linkedBillingHandle, false);
   } else {
@@ -3509,10 +3543,7 @@ async function writeWorkbookIntoHandleByType(type, handle, silentToast = false) 
 }
 
 async function downloadWorkbookByType(type) {
-  if (typeof window.ExcelJS === 'undefined' || !window.CkpExcelSync) {
-    showToast('กำลังโหลดไลบรารี Excel กรุณาลองใหม่อีกครั้ง', 'error');
-    return;
-  }
+  if (!(await ensureExcelLibrariesLoaded())) return;
   try {
     const dateSuffix = state.filterDate || getTodayISO();
     const built = await buildNonDestructiveExcelBuffer(type, null);
@@ -3713,10 +3744,7 @@ function openExcelLinkModalByType(type) {
 
 // ปุ่มหลัก: ไหลข้อมูลเข้าไฟล์ที่ผูกไว้ (ทั้งไฟล์สำเนา และ/หรือ ไฟล์ใบเบิก ในปุ่มเดียว!)
 async function exportLogsToExcel() {
-  if (typeof window.ExcelJS === 'undefined' || !window.CkpExcelSync) {
-    showToast('กำลังโหลดไลบรารี Excel กรุณาลองใหม่อีกครั้ง', 'error');
-    return;
-  }
+  if (!(await ensureExcelLibrariesLoaded())) return;
 
   const hasCopy = Boolean(state.linkedCopyHandle);
   const hasBilling = Boolean(state.linkedBillingHandle);
