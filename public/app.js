@@ -9,7 +9,8 @@ const state = {
   currentView: 'front', // 'front' | 'back'
   editingWorkerName: null, // null = Create mode, string = Edit mode (PK)
   lastCheckedGps: null, // Stores latest checked GPS object from form button
-  linkedExcelHandle: null, // Persistent FileSystemFileHandle for in-place Excel sync
+  linkedCopyHandle: null, // Persistent FileSystemFileHandle for แบบสำเนา
+  linkedBillingHandle: null, // Persistent FileSystemFileHandle for แบบใบเบิก
 
   // Data from Backend
   activeWorkers: [],
@@ -2016,7 +2017,8 @@ function splitRouteParts(routeStr, fallbackSite = '') {
 
 const EXCEL_SYNC_DB_NAME = 'ckp_excel_sync_db';
 const EXCEL_SYNC_STORE = 'file_handles';
-const EXCEL_SYNC_KEY = 'master_excel_file';
+const EXCEL_SYNC_KEY_COPY = 'copy_excel_file';
+const EXCEL_SYNC_KEY_BILLING = 'billing_excel_file';
 
 function openExcelSyncIdb() {
   return new Promise((resolve, reject) => {
@@ -2036,15 +2038,20 @@ function openExcelSyncIdb() {
   });
 }
 
-async function saveLinkedExcelHandle(handle) {
-  state.linkedExcelHandle = handle;
+async function saveLinkedExcelHandleByType(type, handle) {
+  if (type === 'copy') {
+    state.linkedCopyHandle = handle;
+  } else {
+    state.linkedBillingHandle = handle;
+  }
   updateLinkedExcelUI();
   try {
     const db = await openExcelSyncIdb();
     if (!db) return;
+    const key = type === 'copy' ? EXCEL_SYNC_KEY_COPY : EXCEL_SYNC_KEY_BILLING;
     await new Promise((resolve, reject) => {
       const tx = db.transaction(EXCEL_SYNC_STORE, 'readwrite');
-      tx.objectStore(EXCEL_SYNC_STORE).put(handle, EXCEL_SYNC_KEY);
+      tx.objectStore(EXCEL_SYNC_STORE).put(handle, key);
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
     });
@@ -2053,48 +2060,71 @@ async function saveLinkedExcelHandle(handle) {
   }
 }
 
-async function loadLinkedExcelHandle() {
+async function loadLinkedExcelHandles() {
   try {
     const db = await openExcelSyncIdb();
-    if (!db) return null;
-    const handle = await new Promise((resolve) => {
-      const tx = db.transaction(EXCEL_SYNC_STORE, 'readonly');
-      const req = tx.objectStore(EXCEL_SYNC_STORE).get(EXCEL_SYNC_KEY);
-      req.onsuccess = () => resolve(req.result || null);
-      req.onerror = () => resolve(null);
-    });
-    if (handle) {
-      state.linkedExcelHandle = handle;
-      updateLinkedExcelUI();
-    }
-    return handle;
+    if (!db) return;
+    const [copyHandle, billingHandle] = await Promise.all([
+      new Promise((resolve) => {
+        const tx = db.transaction(EXCEL_SYNC_STORE, 'readonly');
+        const req = tx.objectStore(EXCEL_SYNC_STORE).get(EXCEL_SYNC_KEY_COPY);
+        req.onsuccess = () => resolve(req.result || null);
+        req.onerror = () => resolve(null);
+      }),
+      new Promise((resolve) => {
+        const tx = db.transaction(EXCEL_SYNC_STORE, 'readonly');
+        const req = tx.objectStore(EXCEL_SYNC_STORE).get(EXCEL_SYNC_KEY_BILLING);
+        req.onsuccess = () => resolve(req.result || null);
+        req.onerror = () => resolve(null);
+      })
+    ]);
+    if (copyHandle) state.linkedCopyHandle = copyHandle;
+    if (billingHandle) state.linkedBillingHandle = billingHandle;
+    updateLinkedExcelUI();
   } catch {
-    return null;
+    // ignore
   }
 }
 
 function updateLinkedExcelUI() {
-  const badge = document.getElementById('linked-excel-badge');
-  const filenameEl = document.getElementById('linked-excel-filename');
+  const copyNameEl = document.getElementById('linked-copy-filename');
+  const billingNameEl = document.getElementById('linked-billing-filename');
+  const btnCopy = document.getElementById('btn-link-copy-excel');
+  const btnBilling = document.getElementById('btn-link-billing-excel');
   const btnLabel = document.getElementById('btn-export-excel-label');
-  if (state.linkedExcelHandle && state.linkedExcelHandle.name) {
-    if (badge) {
-      badge.classList.remove('hidden');
-      badge.classList.add('inline-flex');
-    }
-    if (filenameEl) {
-      filenameEl.textContent = state.linkedExcelHandle.name;
-    }
-    if (btnLabel) {
-      btnLabel.textContent = `ไหลข้อมูลเข้าไฟล์เดิม (${state.linkedExcelHandle.name})`;
-    }
-  } else {
-    if (badge) {
-      badge.classList.add('hidden');
-      badge.classList.remove('inline-flex');
-    }
-    if (btnLabel) {
-      btnLabel.textContent = 'ส่งออก / ไหลข้อมูลเข้าไฟล์ Excel เดิม (ครบทั้ง 2 แบบฟอร์ม)';
+
+  const hasCopy = Boolean(state.linkedCopyHandle && state.linkedCopyHandle.name);
+  const hasBilling = Boolean(state.linkedBillingHandle && state.linkedBillingHandle.name);
+
+  if (copyNameEl) {
+    copyNameEl.textContent = hasCopy ? state.linkedCopyHandle.name : 'ยังไม่ได้เลือก (คลิกเพื่อผูกไฟล์)';
+  }
+  if (btnCopy) {
+    btnCopy.className = hasCopy
+      ? 'min-h-[42px] px-3 py-2 rounded-xl border border-emerald-400 bg-emerald-50 hover:bg-emerald-100 text-emerald-950 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer shadow-xs'
+      : 'min-h-[42px] px-3 py-2 rounded-xl border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-900 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer';
+  }
+
+  if (billingNameEl) {
+    billingNameEl.textContent = hasBilling
+      ? state.linkedBillingHandle.name
+      : 'ยังไม่ได้เลือก (คลิกเพื่อผูกไฟล์)';
+  }
+  if (btnBilling) {
+    btnBilling.className = hasBilling
+      ? 'min-h-[42px] px-3 py-2 rounded-xl border border-emerald-400 bg-emerald-50 hover:bg-emerald-100 text-emerald-950 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer shadow-xs'
+      : 'min-h-[42px] px-3 py-2 rounded-xl border border-sky-300 bg-sky-50 hover:bg-sky-100 text-sky-900 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer';
+  }
+
+  if (btnLabel) {
+    if (hasCopy && hasBilling) {
+      btnLabel.textContent = 'ไหลข้อมูลเข้าทั้ง 2 ไฟล์เดิม (สำเนา + ใบเบิก)';
+    } else if (hasCopy) {
+      btnLabel.textContent = `ไหลข้อมูลเข้าไฟล์สำเนา (${state.linkedCopyHandle.name})`;
+    } else if (hasBilling) {
+      btnLabel.textContent = `ไหลข้อมูลเข้าไฟล์ใบเบิก (${state.linkedBillingHandle.name})`;
+    } else {
+      btnLabel.textContent = 'ไหลข้อมูลเข้าไฟล์ Excel (สำเนา + ใบเบิก)';
     }
   }
 }
@@ -2619,7 +2649,7 @@ function mergeLogsForExcel(existingRows, currentWebRows) {
   });
 }
 
-function buildCompleteCkpWorkbook(rows, existingPricesMap = new Map()) {
+function getWorkbookMetaFromRows(rows) {
   const todayISO = getTodayISO();
   const issueDateBE = formatShortThaiDateBE(todayISO);
 
@@ -2652,7 +2682,6 @@ function buildCompleteCkpWorkbook(rows, existingPricesMap = new Map()) {
       ? uniqueRoutes[0]
       : 'ไลฟ์รัชดา -พระราม9';
 
-  const workbook = window.XLSX.utils.book_new();
   const defaultCols = [
     { wch: 8 },  // A: ลำดับ
     { wch: 15 }, // B: ว/ด/ป / รายละเอียด
@@ -2668,14 +2697,58 @@ function buildCompleteCkpWorkbook(rows, existingPricesMap = new Map()) {
     { wch: 20 }  // L: หมายเหตุ
   ];
 
-  // Sheet 1: รวมทุกแบบฟอร์มในหน้าเดียว (ตามต้นฉบับที่ผู้ใช้ส่งมา 100%)
-  const combinedAoa = [];
-  const combinedMerges = [];
-  const combinedFormulas = [];
+  return { issueDateBE, startDateBE, endDateBE, periodLabel, projectTitle, defaultCols };
+}
+
+function appendHistorySheet(workbook, rows) {
+  const wsHistory = window.XLSX.utils.json_to_sheet(
+    rows.map((r) => ({
+      worker_name: r.worker_name || '',
+      site_name: r.site_name || '',
+      travel_date: r.travel_date || '',
+      route: r.route || '',
+      departure_time: r.departure_time || '',
+      arrival_time: r.arrival_time || '',
+      vehicle_plate: r.vehicle_plate || '',
+      passenger_count:
+        r.passenger_count !== null && r.passenger_count !== undefined ? r.passenger_count : ''
+    }))
+  );
+  window.XLSX.utils.book_append_sheet(workbook, wsHistory, '_CKP_HISTORY');
+}
+
+// 1. สร้างไฟล์แบบ "สำเนา" (บันทึกรายการรถ 6 ล้อ รับ-ส่งคนงาน + สรุปจำนวนเที่ยวคนขับ/ทะเบียนรถ)
+function buildCopyOnlyWorkbook(rows) {
+  const { projectTitle, defaultCols } = getWorkbookMetaFromRows(rows);
+  const workbook = window.XLSX.utils.book_new();
+
+  // Sheet 1: รวมสำเนาทั้งหมดในหน้าเดียว
+  const zoneAoa = [];
+  const zoneMerges = [];
+  appendZone6WheelBlocksToAoa(zoneAoa, zoneMerges, rows, projectTitle);
+  const wsZone = window.XLSX.utils.aoa_to_sheet(zoneAoa);
+  wsZone['!merges'] = zoneMerges;
+  wsZone['!cols'] = defaultCols;
+  window.XLSX.utils.book_append_sheet(workbook, wsZone, 'สำเนา_บันทึกรถ6ล้อ');
+
+  appendHistorySheet(workbook, rows);
+  return workbook;
+}
+
+// 2. สร้างไฟล์แบบ "ใบเบิก" (ใบเบิกผลงานผู้รับเหมา + ใบบันทึกการปฏิบัติงานรถ 6 ล้อ แผ่นที่ 1..N)
+function buildBillingOnlyWorkbook(rows, existingPricesMap = new Map()) {
+  const { issueDateBE, startDateBE, endDateBE, periodLabel, projectTitle, defaultCols } =
+    getWorkbookMetaFromRows(rows);
+  const workbook = window.XLSX.utils.book_new();
+
+  // Sheet 1: รวมใบเบิก + ใบบันทึกการปฏิบัติงานรถ 6 ล้อ ในหน้าเดียว
+  const combinedBillingAoa = [];
+  const combinedBillingMerges = [];
+  const combinedBillingFormulas = [];
   appendBillingSectionToAoa(
-    combinedAoa,
-    combinedMerges,
-    combinedFormulas,
+    combinedBillingAoa,
+    combinedBillingMerges,
+    combinedBillingFormulas,
     rows,
     projectTitle,
     periodLabel,
@@ -2683,20 +2756,18 @@ function buildCompleteCkpWorkbook(rows, existingPricesMap = new Map()) {
     existingPricesMap
   );
   appendOperationPagesToAoa(
-    combinedAoa,
-    combinedMerges,
+    combinedBillingAoa,
+    combinedBillingMerges,
     rows,
     projectTitle,
     startDateBE,
     endDateBE
   );
-  appendZone6WheelBlocksToAoa(combinedAoa, combinedMerges, rows, projectTitle);
-
-  const wsCombined = window.XLSX.utils.aoa_to_sheet(combinedAoa);
-  applyFormulasToWorksheet(wsCombined, combinedFormulas);
-  wsCombined['!merges'] = combinedMerges;
-  wsCombined['!cols'] = defaultCols;
-  window.XLSX.utils.book_append_sheet(workbook, wsCombined, 'รวมทุกแบบฟอร์ม');
+  const wsCombinedBilling = window.XLSX.utils.aoa_to_sheet(combinedBillingAoa);
+  applyFormulasToWorksheet(wsCombinedBilling, combinedBillingFormulas);
+  wsCombinedBilling['!merges'] = combinedBillingMerges;
+  wsCombinedBilling['!cols'] = defaultCols;
+  window.XLSX.utils.book_append_sheet(workbook, wsCombinedBilling, 'ใบเบิกและใบบันทึก');
 
   // Sheet 2: แยกเฉพาะ ใบเบิกผลงานผู้รับเหมา
   const billAoa = [];
@@ -2716,46 +2787,23 @@ function buildCompleteCkpWorkbook(rows, existingPricesMap = new Map()) {
   applyFormulasToWorksheet(wsBill, billFormulas);
   wsBill['!merges'] = billMerges;
   wsBill['!cols'] = defaultCols;
-  window.XLSX.utils.book_append_sheet(workbook, wsBill, '1_ใบเบิกผู้รับเหมา');
+  window.XLSX.utils.book_append_sheet(workbook, wsBill, 'ใบเบิกผู้รับเหมา');
 
-  // Sheet 3: แยกเฉพาะ ใบบันทึกการปฏิบัติงานรถ 6 ล้อ
+  // Sheet 3: แยกเฉพาะ ใบบันทึกการปฏิบัติงานรถ 6 ล้อ (แผ่นที่ 1..N)
   const opAoa = [];
   const opMerges = [];
   appendOperationPagesToAoa(opAoa, opMerges, rows, projectTitle, startDateBE, endDateBE);
   const wsOp = window.XLSX.utils.aoa_to_sheet(opAoa);
   wsOp['!merges'] = opMerges;
   wsOp['!cols'] = defaultCols;
-  window.XLSX.utils.book_append_sheet(workbook, wsOp, '2_ใบบันทึกปฏิบัติงานรถ6ล้อ');
+  window.XLSX.utils.book_append_sheet(workbook, wsOp, 'ใบบันทึกปฏิบัติงานรถ6ล้อ');
 
-  // Sheet 4: แยกเฉพาะ บันทึกรายการรถ 6 ล้อ รับ-ส่งคนงาน + สรุปเที่ยว
-  const zoneAoa = [];
-  const zoneMerges = [];
-  appendZone6WheelBlocksToAoa(zoneAoa, zoneMerges, rows, projectTitle);
-  const wsZone = window.XLSX.utils.aoa_to_sheet(zoneAoa);
-  wsZone['!merges'] = zoneMerges;
-  wsZone['!cols'] = defaultCols;
-  window.XLSX.utils.book_append_sheet(workbook, wsZone, '3_บันทึกรายการรถ6ล้อ');
-
-  // Sheet 5: _CKP_HISTORY (เก็บประวัติสะสมเพื่อให้กดปุ่มครั้งต่อไปข้อมูลไหลต่อท้ายไฟล์เดิมได้เรื่อยๆ)
-  const wsHistory = window.XLSX.utils.json_to_sheet(
-    rows.map((r) => ({
-      worker_name: r.worker_name || '',
-      site_name: r.site_name || '',
-      travel_date: r.travel_date || '',
-      route: r.route || '',
-      departure_time: r.departure_time || '',
-      arrival_time: r.arrival_time || '',
-      vehicle_plate: r.vehicle_plate || '',
-      passenger_count:
-        r.passenger_count !== null && r.passenger_count !== undefined ? r.passenger_count : ''
-    }))
-  );
-  window.XLSX.utils.book_append_sheet(workbook, wsHistory, '_CKP_HISTORY');
-
+  appendHistorySheet(workbook, rows);
   return workbook;
 }
 
-async function writeWorkbookIntoHandle(handle) {
+async function writeWorkbookIntoHandleByType(type, handle, silentToast = false) {
+  const typeLabel = type === 'copy' ? 'แบบสำเนา' : 'แบบใบเบิก';
   try {
     if (handle.queryPermission) {
       let perm = await handle.queryPermission({ mode: 'readwrite' });
@@ -2763,8 +2811,8 @@ async function writeWorkbookIntoHandle(handle) {
         perm = await handle.requestPermission({ mode: 'readwrite' });
       }
       if (perm !== 'granted') {
-        showToast('ไม่ได้รับสิทธิ์เขียนทับไฟล์ กรุณากดอนุญาตสิทธิ์เข้าถึงไฟล์', 'warning');
-        return;
+        showToast(`ไม่ได้รับสิทธิ์เขียนทับไฟล์${typeLabel} กรุณากดอนุญาตสิทธิ์`, 'warning');
+        return false;
       }
     }
 
@@ -2785,19 +2833,25 @@ async function writeWorkbookIntoHandle(handle) {
 
     const currentWebRows = getFilteredLogs();
     const mergedRows = mergeLogsForExcel(existingRows, currentWebRows);
-    const workbook = buildCompleteCkpWorkbook(mergedRows, existingPricesMap);
+    const workbook =
+      type === 'copy'
+        ? buildCopyOnlyWorkbook(mergedRows)
+        : buildBillingOnlyWorkbook(mergedRows, existingPricesMap);
     const outArrayBuffer = window.XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
 
     const writable = await handle.createWritable();
     await writable.write(outArrayBuffer);
     await writable.close();
 
-    await saveLinkedExcelHandle(handle);
-    showToast(
-      `ไหลข้อมูลเข้าไฟล์เดิม "${handle.name}" สำเร็จ!`,
-      'success',
-      `อัปเดตข้อมูลสะสมรวมทั้งหมด ${mergedRows.length} รายการ ลงในไฟล์เดิมเรียบร้อยแล้ว`
-    );
+    await saveLinkedExcelHandleByType(type, handle);
+    if (!silentToast) {
+      showToast(
+        `ไหลข้อมูลเข้าไฟล์${typeLabel} "${handle.name}" สำเร็จ!`,
+        'success',
+        `อัปเดตข้อมูลสะสมรวมทั้งหมด ${mergedRows.length} รายการ ลงในไฟล์เดิมเรียบร้อยแล้ว`
+      );
+    }
+    return true;
   } catch (err) {
     const msg = String(err?.message || err || '');
     if (
@@ -2810,10 +2864,12 @@ async function writeWorkbookIntoHandle(handle) {
         <div class="p-6 space-y-4">
           <div class="flex items-start gap-3.5">
             <div class="w-12 h-12 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center text-xl shrink-0">
-              <i class="fa-solid fa-file-Lock"></i>
+              <i class="fa-solid fa-file-circle-exclamation"></i>
             </div>
             <div>
-              <h3 class="text-base font-bold text-slate-900">ไฟล์ Excel กำลังเปิดค้างอยู่ในโปรแกรม Excel</h3>
+              <h3 class="text-base font-bold text-slate-900">ไฟล์ Excel (${escapeHtml(
+                typeLabel
+              )}) กำลังเปิดค้างอยู่ในโปรแกรม Excel</h3>
               <p class="text-xs sm:text-sm text-slate-600 mt-1 leading-relaxed">
                 กรุณา<strong>ปิดโปรแกรม Microsoft Excel</strong> ที่เปิดไฟล์ <strong>"${escapeHtml(
                   handle.name
@@ -2842,75 +2898,119 @@ async function writeWorkbookIntoHandle(handle) {
       document.getElementById('modal-btn-cancel')?.addEventListener('click', closeCustomModal);
       document.getElementById('modal-btn-retry-write')?.addEventListener('click', async () => {
         closeCustomModal();
-        await writeWorkbookIntoHandle(handle);
+        await writeWorkbookIntoHandleByType(type, handle, silentToast);
       });
-      return;
+      return false;
     }
 
-    showToast(err.message || 'ไม่สามารถเขียนข้อมูลลงไฟล์เดิมได้', 'error');
+    showToast(err.message || `ไม่สามารถเขียนข้อมูลลงไฟล์${typeLabel}ได้`, 'error');
+    return false;
   }
 }
 
-function downloadNewWorkbookFallback() {
+function downloadWorkbookByType(type) {
   const rows = mergeLogsForExcel([], getFilteredLogs());
-  const workbook = buildCompleteCkpWorkbook(rows, new Map());
   const dateSuffix = state.filterDate || getTodayISO();
-  const filename = `CKP_ใบเบิกและใบบันทึกรถ6ล้อ_${dateSuffix}.xlsx`;
-  window.XLSX.writeFile(workbook, filename);
-  showToast(
-    `ดาวน์โหลดไฟล์ Excel สำเร็จ (${rows.length} รายการ)`,
-    'success',
-    `ไฟล์ ${filename} ครบทุกแบบฟอร์มตามต้นฉบับ`
-  );
+  if (type === 'copy') {
+    const wb = buildCopyOnlyWorkbook(rows);
+    const filename = `สำเนา_บันทึกรายการรถ6ล้อ_${dateSuffix}.xlsx`;
+    window.XLSX.writeFile(wb, filename);
+    showToast(`ดาวน์โหลดไฟล์สำเนาสำเร็จ (${rows.length} รายการ)`, 'success', filename);
+  } else {
+    const wb = buildBillingOnlyWorkbook(rows, new Map());
+    const filename = `ใบเบิก_และใบบันทึกปฏิบัติงานรถ6ล้อ_${dateSuffix}.xlsx`;
+    window.XLSX.writeFile(wb, filename);
+    showToast(`ดาวน์โหลดไฟล์ใบเบิกสำเร็จ (${rows.length} รายการ)`, 'success', filename);
+  }
 }
 
-function openExcelSyncSetupModal() {
+// Modal สำหรับเลือกผูกไฟล์ 1. แบบสำเนา หรือ 2. แบบใบเบิก
+function openExcelLinkModalByType(type) {
+  const isCopy = type === 'copy';
+  const titleText = isCopy
+    ? 'ผูกไฟล์ที่ 1: แบบ "สำเนา" (บันทึกรายการรถ 6 ล้อ + สรุปเที่ยว)'
+    : 'ผูกไฟล์ที่ 2: แบบ "ใบเบิก" (ใบเบิกผู้รับเหมา + ใบบันทึกปฏิบัติงาน)';
+  const subtitleText = isCopy
+    ? 'เช่น ไฟล์ "สำเนา27 โซนวิภา ( 1 - 15 ส.ค. 69 ).xlsx" — เมื่อผูกแล้ว กดปุ่มส่งออกข้อมูลจะไหลต่อท้ายเข้าไฟล์สำเนานี้ทันที'
+    : 'เช่น ไฟล์ "ใบเบิกไลฟ์รัชดา-พระราม9 ( 1-15-6).xlsx" — เมื่อผูกแล้ว กดปุ่มส่งออกข้อมูลจะไหลเข้าหน้าใบเบิกและใบบันทึกของไฟล์นี้ทันที';
+  const currentHandle = isCopy ? state.linkedCopyHandle : state.linkedBillingHandle;
+
   const supportsFileSystemAccess =
     typeof window.showOpenFilePicker === 'function' &&
     typeof window.showSaveFilePicker === 'function';
 
   if (!supportsFileSystemAccess) {
-    downloadNewWorkbookFallback();
+    downloadWorkbookByType(type);
     return;
   }
 
   openCustomModal(`
     <div class="p-6 space-y-4">
       <div class="flex items-start gap-3.5">
-        <div class="w-12 h-12 rounded-2xl bg-emerald-100 text-emerald-700 flex items-center justify-center text-xl shrink-0">
+        <div class="w-12 h-12 rounded-2xl ${
+          isCopy ? 'bg-amber-100 text-amber-700' : 'bg-sky-100 text-sky-700'
+        } flex items-center justify-center text-xl shrink-0">
           <i class="fa-solid fa-file-excel"></i>
         </div>
         <div>
           <h3 class="text-base sm:text-lg font-bold text-slate-900">
-            เลือกไฟล์ Excel หลักเพื่อให้ข้อมูลไหลเข้าไฟล์เดิมอัตโนมัติ
+            ${escapeHtml(titleText)}
           </h3>
           <p class="text-xs sm:text-sm text-slate-600 mt-1 leading-relaxed">
-            เลือกไฟล์เพียงครั้งแรกครั้งเดียว ครั้งต่อไปเมื่อกดปุ่มส่งออก ข้อมูลใหม่จะ<strong>ไหลต่อท้ายเข้าไฟล์ Excel ไฟล์เดิมทันที</strong>โดยไม่ต้องดาวน์โหลดไฟล์ใหม่ซ้ำๆ
+            ${escapeHtml(subtitleText)}
           </p>
+          ${
+            currentHandle && currentHandle.name
+              ? `<p class="mt-2 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-semibold">
+                  <i class="fa-solid fa-check-circle text-emerald-600"></i>
+                  <span>ไฟล์ที่ผูกอยู่ปัจจุบัน: <strong>${escapeHtml(currentHandle.name)}</strong></span>
+                </p>`
+              : ''
+          }
         </div>
       </div>
 
       <div class="space-y-2.5 pt-2">
+        ${
+          currentHandle && currentHandle.name
+            ? `<button
+                type="button"
+                id="modal-btn-flow-current"
+                class="w-full min-h-[48px] px-4 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs sm:text-sm font-bold shadow-sm flex items-center justify-between gap-3 transition cursor-pointer"
+              >
+                <span class="flex items-center gap-2.5 text-left">
+                  <i class="fa-solid fa-bolt text-amber-300 text-base"></i>
+                  <span>ไหลข้อมูลเข้าไฟล์เดิม "${escapeHtml(currentHandle.name)}" ทันที</span>
+                </span>
+                <i class="fa-solid fa-chevron-right text-xs"></i>
+              </button>`
+            : ''
+        }
+
         <button
           type="button"
-          id="modal-btn-pick-existing-excel"
-          class="w-full min-h-[48px] px-4 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs sm:text-sm font-bold shadow-sm flex items-center justify-between gap-3 transition cursor-pointer"
+          id="modal-btn-pick-existing"
+          class="w-full min-h-[48px] px-4 py-3 rounded-xl ${
+            isCopy
+              ? 'bg-amber-600 hover:bg-amber-700 text-white'
+              : 'bg-sky-600 hover:bg-sky-700 text-white'
+          } text-xs sm:text-sm font-bold shadow-sm flex items-center justify-between gap-3 transition cursor-pointer"
         >
           <span class="flex items-center gap-2.5 text-left">
             <i class="fa-solid fa-folder-open text-base"></i>
-            <span>1. เลือกไฟล์ Excel เดิมที่มีอยู่ในเครื่อง (ให้ไหลเข้าไฟล์นี้ตลอด)</span>
+            <span>1. เลือกไฟล์ Excel "${isCopy ? 'สำเนา' : 'ใบเบิก'}" เดิมที่มีอยู่ในเครื่อง</span>
           </span>
           <i class="fa-solid fa-chevron-right text-xs"></i>
         </button>
 
         <button
           type="button"
-          id="modal-btn-create-master-excel"
+          id="modal-btn-create-new"
           class="w-full min-h-[48px] px-4 py-3 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-white text-xs sm:text-sm font-bold shadow-sm flex items-center justify-between gap-3 transition cursor-pointer"
         >
           <span class="flex items-center gap-2.5 text-left">
             <i class="fa-solid fa-file-circle-plus text-amber-400 text-base"></i>
-            <span>2. สร้างไฟล์ Excel หลักใหม่ 1 ไฟล์ (แล้วจำไฟล์นี้ไว้ไหลข้อมูลครั้งต่อไป)</span>
+            <span>2. สร้างไฟล์ Excel "${isCopy ? 'สำเนา' : 'ใบเบิก'}" หลักใหม่ไว้ในเครื่อง</span>
           </span>
           <i class="fa-solid fa-chevron-right text-xs"></i>
         </button>
@@ -2921,7 +3021,7 @@ function openExcelSyncSetupModal() {
           class="w-full min-h-[44px] px-4 py-2.5 rounded-xl border border-slate-300 bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs sm:text-sm font-semibold flex items-center justify-center gap-2 transition cursor-pointer"
         >
           <i class="fa-solid fa-download"></i>
-          <span>ดาวน์โหลดแยกเป็นไฟล์ .xlsx ทันที (ไม่ผูกไฟล์เดิม)</span>
+          <span>ดาวน์โหลดไฟล์ "${isCopy ? 'สำเนา' : 'ใบเบิก'}" แยกเป็นไฟล์ .xlsx ทันที</span>
         </button>
       </div>
 
@@ -2931,7 +3031,7 @@ function openExcelSyncSetupModal() {
           id="modal-btn-cancel"
           class="min-h-[40px] px-4 py-1.5 rounded-xl border border-slate-300 bg-white text-slate-600 text-xs font-medium cursor-pointer"
         >
-          ยกเลิก
+          ปิดหน้าต่าง
         </button>
       </div>
     </div>
@@ -2939,7 +3039,14 @@ function openExcelSyncSetupModal() {
 
   document.getElementById('modal-btn-cancel')?.addEventListener('click', closeCustomModal);
 
-  document.getElementById('modal-btn-pick-existing-excel')?.addEventListener('click', async () => {
+  document.getElementById('modal-btn-flow-current')?.addEventListener('click', async () => {
+    closeCustomModal();
+    if (currentHandle) {
+      await writeWorkbookIntoHandleByType(type, currentHandle, false);
+    }
+  });
+
+  document.getElementById('modal-btn-pick-existing')?.addEventListener('click', async () => {
     closeCustomModal();
     try {
       const [handle] = await window.showOpenFilePicker({
@@ -2954,7 +3061,7 @@ function openExcelSyncSetupModal() {
         ]
       });
       if (handle) {
-        await writeWorkbookIntoHandle(handle);
+        await writeWorkbookIntoHandleByType(type, handle, false);
       }
     } catch (err) {
       if (err?.name !== 'AbortError') {
@@ -2963,12 +3070,15 @@ function openExcelSyncSetupModal() {
     }
   });
 
-  document.getElementById('modal-btn-create-master-excel')?.addEventListener('click', async () => {
+  document.getElementById('modal-btn-create-new')?.addEventListener('click', async () => {
     closeCustomModal();
     try {
       const dateSuffix = state.filterDate || getTodayISO();
+      const suggestedName = isCopy
+        ? `สำเนา_บันทึกรายการรถ6ล้อ_${dateSuffix}.xlsx`
+        : `ใบเบิก_และใบบันทึกปฏิบัติงานรถ6ล้อ_${dateSuffix}.xlsx`;
       const handle = await window.showSaveFilePicker({
-        suggestedName: `CKP_ใบเบิกและใบบันทึกรถ6ล้อ_${dateSuffix}.xlsx`,
+        suggestedName,
         types: [
           {
             description: 'Excel Workbook (.xlsx)',
@@ -2979,34 +3089,138 @@ function openExcelSyncSetupModal() {
         ]
       });
       if (handle) {
-        await writeWorkbookIntoHandle(handle);
+        await writeWorkbookIntoHandleByType(type, handle, false);
       }
     } catch (err) {
       if (err?.name !== 'AbortError') {
-        showToast('ยกเลิกการสร้างไฟล์ Excel หลัก', 'info');
+        showToast('ยกเลิกการสร้างไฟล์ Excel', 'info');
       }
     }
   });
 
   document.getElementById('modal-btn-download-once')?.addEventListener('click', () => {
     closeCustomModal();
-    downloadNewWorkbookFallback();
+    downloadWorkbookByType(type);
   });
 }
 
-// Unified Single-Button Export: Flows directly into the linked Excel file on disk (or prompts once to link)
+// ปุ่มหลัก: ไหลข้อมูลเข้าไฟล์ที่ผูกไว้ (ทั้งไฟล์สำเนา และ/หรือ ไฟล์ใบเบิก ในปุ่มเดียว!)
 async function exportLogsToExcel() {
   if (typeof window.XLSX === 'undefined') {
     showToast('ไม่พบไลบรารี SheetJS (XLSX) สำหรับสร้างไฟล์ Excel', 'error');
     return;
   }
 
-  if (state.linkedExcelHandle) {
-    await writeWorkbookIntoHandle(state.linkedExcelHandle);
+  const hasCopy = Boolean(state.linkedCopyHandle);
+  const hasBilling = Boolean(state.linkedBillingHandle);
+
+  if (hasCopy && hasBilling) {
+    const okCopy = await writeWorkbookIntoHandleByType('copy', state.linkedCopyHandle, true);
+    const okBilling = await writeWorkbookIntoHandleByType('billing', state.linkedBillingHandle, true);
+    if (okCopy && okBilling) {
+      showToast(
+        'ไหลข้อมูลเข้าทั้ง 2 ไฟล์ (สำเนา + ใบเบิก) สำเร็จ!',
+        'success',
+        `อัปเดตไฟล์ "${state.linkedCopyHandle.name}" และ "${state.linkedBillingHandle.name}" เรียบร้อยแล้ว`
+      );
+    }
     return;
   }
 
-  openExcelSyncSetupModal();
+  if (hasCopy) {
+    await writeWorkbookIntoHandleByType('copy', state.linkedCopyHandle, false);
+    return;
+  }
+
+  if (hasBilling) {
+    await writeWorkbookIntoHandleByType('billing', state.linkedBillingHandle, false);
+    return;
+  }
+
+  // หากยังไม่ได้ผูกไฟล์ใดเลย ให้เปิดหน้าต่างเลือกผูกไฟล์ทั้ง 2 แบบ
+  openCustomModal(`
+    <div class="p-6 space-y-4">
+      <div class="flex items-start gap-3.5">
+        <div class="w-12 h-12 rounded-2xl bg-emerald-100 text-emerald-700 flex items-center justify-center text-xl shrink-0">
+          <i class="fa-solid fa-file-excel"></i>
+        </div>
+        <div>
+          <h3 class="text-base sm:text-lg font-bold text-slate-900">
+            เลือกผูกไฟล์ Excel 2 แบบฟอร์ม (1. แบบสำเนา / 2. แบบใบเบิก)
+          </h3>
+          <p class="text-xs sm:text-sm text-slate-600 mt-1 leading-relaxed">
+            กรุณาเลือกผูกไฟล์ที่ต้องการอย่างน้อย 1 ไฟล์ (หรือผูกทั้ง 2 ไฟล์) เพื่อให้เวลากดปุ่มนี้ ข้อมูลจะ<strong>ไหลเข้าไฟล์เดิมที่ผูกไว้โดยอัตโนมัติ</strong>ครับ
+          </p>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+        <button
+          type="button"
+          id="modal-choose-link-copy"
+          class="p-4 rounded-2xl border-2 border-amber-300 bg-amber-50/70 hover:bg-amber-100 text-left space-y-1.5 transition cursor-pointer"
+        >
+          <div class="flex items-center justify-between text-amber-800 font-bold text-sm">
+            <span><i class="fa-solid fa-link mr-1.5"></i>1. ผูกไฟล์แบบ "สำเนา"</span>
+            <i class="fa-solid fa-chevron-right text-xs"></i>
+          </div>
+          <p class="text-xs text-amber-900/80">
+            บันทึกรายการรถ 6 ล้อ รับ-ส่งคนงาน + สรุปจำนวนเที่ยวคนขับ/ทะเบียนรถ
+          </p>
+        </button>
+
+        <button
+          type="button"
+          id="modal-choose-link-billing"
+          class="p-4 rounded-2xl border-2 border-sky-300 bg-sky-50/70 hover:bg-sky-100 text-left space-y-1.5 transition cursor-pointer"
+        >
+          <div class="flex items-center justify-between text-sky-800 font-bold text-sm">
+            <span><i class="fa-solid fa-link mr-1.5"></i>2. ผูกไฟล์แบบ "ใบเบิก"</span>
+            <i class="fa-solid fa-chevron-right text-xs"></i>
+          </div>
+          <p class="text-xs text-sky-900/80">
+            ใบเบิกผลงานผู้รับเหมา + ใบบันทึกการปฏิบัติงานรถ 6 ล้อ (แผ่นที่ 1..N)
+          </p>
+        </button>
+      </div>
+
+      <div class="pt-2">
+        <button
+          type="button"
+          id="modal-download-both-now"
+          class="w-full min-h-[44px] px-4 py-2.5 rounded-xl border border-slate-300 bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs sm:text-sm font-semibold flex items-center justify-center gap-2 transition cursor-pointer"
+        >
+          <i class="fa-solid fa-download"></i>
+          <span>ดาวน์โหลดทั้ง 2 ไฟล์ (สำเนา + ใบเบิก) แยกเป็น .xlsx ทันที</span>
+        </button>
+      </div>
+
+      <div class="pt-3 border-t border-slate-100 flex justify-end">
+        <button
+          type="button"
+          id="modal-btn-cancel"
+          class="min-h-[40px] px-4 py-1.5 rounded-xl border border-slate-300 bg-white text-slate-600 text-xs font-medium cursor-pointer"
+        >
+          ปิดหน้าต่าง
+        </button>
+      </div>
+    </div>
+  `);
+
+  document.getElementById('modal-btn-cancel')?.addEventListener('click', closeCustomModal);
+  document.getElementById('modal-choose-link-copy')?.addEventListener('click', () => {
+    closeCustomModal();
+    openExcelLinkModalByType('copy');
+  });
+  document.getElementById('modal-choose-link-billing')?.addEventListener('click', () => {
+    closeCustomModal();
+    openExcelLinkModalByType('billing');
+  });
+  document.getElementById('modal-download-both-now')?.addEventListener('click', () => {
+    closeCustomModal();
+    downloadWorkbookByType('copy');
+    setTimeout(() => downloadWorkbookByType('billing'), 350);
+  });
 }
 
 // ============================================================================
@@ -4071,10 +4285,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   document.getElementById('btn-export-excel')?.addEventListener('click', exportLogsToExcel);
-  document
-    .getElementById('btn-change-excel-file')
-    ?.addEventListener('click', openExcelSyncSetupModal);
-  loadLinkedExcelHandle();
+  document.getElementById('btn-link-copy-excel')?.addEventListener('click', () => {
+    openExcelLinkModalByType('copy');
+  });
+  document.getElementById('btn-link-billing-excel')?.addEventListener('click', () => {
+    openExcelLinkModalByType('billing');
+  });
+  loadLinkedExcelHandles();
 
   // 12. Back-Office: Storage Quota Settings Form
   document.getElementById('form-gps-settings')?.addEventListener('submit', async (e) => {

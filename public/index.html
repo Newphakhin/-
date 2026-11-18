@@ -729,31 +729,40 @@
                 </p>
               </div>
 
-              <!-- Action Button: Unified Single-File Live Sync Excel Export (.xlsx) -->
+              <!-- Action Buttons: 2 File-Linking Buttons (1. แบบสำเนา, 2. แบบใบเบิก) + Unified Flow Button -->
               <div class="flex flex-wrap items-center gap-2">
-                <div
-                  id="linked-excel-badge"
-                  class="hidden items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-medium"
+                <!-- ปุ่มเลือกผูกไฟล์ที่ 1: แบบสำเนา -->
+                <button
+                  type="button"
+                  id="btn-link-copy-excel"
+                  title="คลิกเพื่อเลือกผูกไฟล์ Excel แบบสำเนา (บันทึกรายการรถ 6 ล้อ)"
+                  class="min-h-[42px] px-3 py-2 rounded-xl border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-900 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
                 >
-                  <i class="fa-solid fa-link text-emerald-600"></i>
-                  <span>ไฟล์หลัก: <strong id="linked-excel-filename" class="font-bold"></strong></span>
-                  <button
-                    type="button"
-                    id="btn-change-excel-file"
-                    title="เปลี่ยนไฟล์ Excel หลักที่เชื่อมต่อ"
-                    class="ml-1 px-2 py-0.5 rounded-lg bg-white hover:bg-emerald-100 text-emerald-700 border border-emerald-300 text-[11px] font-semibold transition cursor-pointer"
-                  >
-                    เปลี่ยนไฟล์
-                  </button>
-                </div>
+                  <i class="fa-solid fa-link text-amber-600"></i>
+                  <span>ผูกไฟล์สำเนา:</span>
+                  <strong id="linked-copy-filename" class="font-bold text-amber-700">ยังไม่ได้เลือก</strong>
+                </button>
 
+                <!-- ปุ่มเลือกผูกไฟล์ที่ 2: แบบใบเบิก -->
+                <button
+                  type="button"
+                  id="btn-link-billing-excel"
+                  title="คลิกเพื่อเลือกผูกไฟล์ Excel แบบใบเบิก (ใบเบิกผู้รับเหมา + ใบบันทึกปฏิบัติงาน)"
+                  class="min-h-[42px] px-3 py-2 rounded-xl border border-sky-300 bg-sky-50 hover:bg-sky-100 text-sky-900 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
+                >
+                  <i class="fa-solid fa-link text-sky-600"></i>
+                  <span>ผูกไฟล์ใบเบิก:</span>
+                  <strong id="linked-billing-filename" class="font-bold text-sky-700">ยังไม่ได้เลือก</strong>
+                </button>
+
+                <!-- ปุ่มหลัก: ไหลข้อมูลเข้าไฟล์ที่ผูกไว้ (ครบทั้งสำเนา + ใบเบิก ในปุ่มเดียว) -->
                 <button
                   type="button"
                   id="btn-export-excel"
                   class="min-h-[44px] px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white text-xs sm:text-sm font-semibold shadow-sm flex items-center gap-2 transition cursor-pointer"
                 >
                   <i class="fa-solid fa-file-excel text-base"></i>
-                  <span id="btn-export-excel-label">ส่งออก / ไหลข้อมูลเข้าไฟล์ Excel เดิม (ครบทั้ง 2 แบบฟอร์ม)</span>
+                  <span id="btn-export-excel-label">ไหลข้อมูลเข้าไฟล์ Excel (สำเนา + ใบเบิก)</span>
                 </button>
               </div>
             </div>
