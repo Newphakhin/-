@@ -3244,10 +3244,31 @@ function buildBillingOnlyWorkbook(rows, existingPricesMap = new Map()) {
   return workbook;
 }
 
-// บันทึกแยกเฉพาะไฟล์สำเนา
+function downloadArrayBufferAsXlsx(buffer, filename) {
+  const blob = new Blob([buffer], {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1500);
+}
+
+function getDefaultProjectTitleForSync(rows) {
+  const selectedFormSite = (document.getElementById('form-site')?.value || '').trim();
+  if (selectedFormSite) return selectedFormSite;
+  const firstSite = (rows.find((r) => (r.site_name || '').trim())?.site_name || '').trim();
+  return firstSite || '';
+}
+
+// บันทึกแยกเฉพาะไฟล์สำเนา (รักษาไฟล์ต้นฉบับ รูปแบบ ตาราง และข้อมูลเดิม 100%)
 async function saveCopyExcelFile() {
-  if (typeof window.XLSX === 'undefined') {
-    showToast('ไม่พบไลบรารี SheetJS (XLSX)', 'error');
+  if (typeof window.ExcelJS === 'undefined' || !window.CkpExcelSync) {
+    showToast('กำลังโหลดไลบรารี Excel กรุณาลองใหม่อีกครั้ง', 'error');
     return;
   }
   if (state.linkedCopyHandle) {
@@ -3257,10 +3278,10 @@ async function saveCopyExcelFile() {
   }
 }
 
-// บันทึกแยกเฉพาะไฟล์ใบเบิก
+// บันทึกแยกเฉพาะไฟล์ใบเบิก (รักษาไฟล์ต้นฉบับ รูปแบบ ตาราง และข้อมูลเดิม 100%)
 async function saveBillingExcelFile() {
-  if (typeof window.XLSX === 'undefined') {
-    showToast('ไม่พบไลบรารี SheetJS (XLSX)', 'error');
+  if (typeof window.ExcelJS === 'undefined' || !window.CkpExcelSync) {
+    showToast('กำลังโหลดไลบรารี Excel กรุณาลองใหม่อีกครั้ง', 'error');
     return;
   }
   if (state.linkedBillingHandle) {
@@ -3270,10 +3291,45 @@ async function saveBillingExcelFile() {
   }
 }
 
+async function buildNonDestructiveExcelBuffer(type, handleOrNull) {
+  const wb = new window.ExcelJS.Workbook();
+  if (handleOrNull) {
+    const existingFile = await handleOrNull.getFile();
+    if (existingFile && existingFile.size > 0) {
+      const arrayBuf = await existingFile.arrayBuffer();
+      try {
+        await wb.xlsx.load(arrayBuf);
+      } catch (loadErr) {
+        const err = new Error(
+          `ไม่สามารถอ่านไฟล์ "${handleOrNull.name}" ได้ (กรุณาตรวจสอบว่าเป็นไฟล์ .xlsx มาตรฐาน หรือเปิด-บันทึกเป็น .xlsx ใหม่ใน Excel ก่อน): ${loadErr?.message || ''}`
+        );
+        err.isFileReadError = true;
+        throw err;
+      }
+    }
+  }
+
+  const currentWebRows = getFilteredLogs();
+  const projectTitle = getDefaultProjectTitleForSync(currentWebRows);
+  const result =
+    type === 'copy'
+      ? window.CkpExcelSync.applyRowsToCopyWorkbookExcelJS(wb, currentWebRows, projectTitle)
+      : window.CkpExcelSync.applyRowsToBillingWorkbookExcelJS(wb, currentWebRows, projectTitle);
+
+  const outArrayBuffer = await wb.xlsx.writeBuffer();
+  return {
+    outArrayBuffer,
+    syncedCount: result.syncedCount,
+    totalFlowed: result.totalFlowed,
+    summaryText: result.summaryText,
+    webRowsCount: currentWebRows.length
+  };
+}
+
 async function writeWorkbookIntoHandleByType(type, handle, silentToast = false) {
   const typeLabel = type === 'copy' ? 'แบบสำเนา' : 'แบบใบเบิก';
-  let lastMergedRows = [];
-  let lastWorkbook = null;
+  let lastOutBuffer = null;
+  let lastSyncMeta = null;
   try {
     if (handle.queryPermission) {
       let perm = await handle.queryPermission({ mode: 'readwrite' });
@@ -3286,45 +3342,39 @@ async function writeWorkbookIntoHandleByType(type, handle, silentToast = false) 
       }
     }
 
-    let existingRows = [];
-    let existingPricesMap = new Map();
-    try {
-      const existingFile = await handle.getFile();
-      if (existingFile && existingFile.size > 0) {
-        const arrayBuf = await existingFile.arrayBuffer();
-        const existingWb = window.XLSX.read(arrayBuf, { type: 'array' });
-        const extracted = extractExistingDataFromWorkbook(existingWb);
-        existingRows = extracted.existingRows;
-        existingPricesMap = extracted.existingPricesMap;
-      }
-    } catch {
-      // Newly created file or unreadable prior content — start clean
-    }
-
-    const currentWebRows = getFilteredLogs();
-    const mergedRows = mergeLogsForExcel(existingRows, currentWebRows);
-    lastMergedRows = mergedRows;
-    const workbook =
-      type === 'copy'
-        ? buildCopyOnlyWorkbook(mergedRows)
-        : buildBillingOnlyWorkbook(mergedRows, existingPricesMap);
-    lastWorkbook = workbook;
-    const outArrayBuffer = window.XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
+    const built = await buildNonDestructiveExcelBuffer(type, handle);
+    lastOutBuffer = built.outArrayBuffer;
+    lastSyncMeta = built;
 
     const writable = await handle.createWritable();
-    await writable.write(outArrayBuffer);
+    await writable.write(built.outArrayBuffer);
     await writable.close();
 
     await saveLinkedExcelHandleByType(type, handle);
     if (!silentToast) {
-      showToast(
-        `ไหลข้อมูลเข้าไฟล์${typeLabel} "${handle.name}" สำเร็จ!`,
-        'success',
-        `อัปเดตข้อมูลสะสมรวมทั้งหมด ${mergedRows.length} รายการ ลงในไฟล์เดิมเรียบร้อยแล้ว`
-      );
+      if (built.syncedCount > 0) {
+        showToast(
+          `ไหลข้อมูลเข้าไฟล์${typeLabel} "${handle.name}" สำเร็จ! (+${built.syncedCount} รายการ)`,
+          'success',
+          built.summaryText
+            ? `เพิ่มลงในแท็บ ${built.summaryText} (ข้อมูลเดิมในไฟล์อยู่ครบ 100%)`
+            : `อัปเดตข้อมูลเรียบร้อยแล้ว (ข้อมูลเดิมในไฟล์อยู่ครบ 100%)`
+        );
+      } else {
+        showToast(
+          `ข้อมูลในไฟล์${typeLabel} "${handle.name}" ตรงกับหน้าเว็บครบอยู่แล้ว`,
+          'info',
+          `ไม่มีรายการใหม่เพิ่มเติม (ข้อมูลเดิมทั้งหมดในไฟล์ยังคงอยู่ครบ 100%)`
+        );
+      }
     }
     return true;
   } catch (err) {
+    if (err?.isFileReadError) {
+      showToast(err.message, 'error');
+      return false;
+    }
+
     const msg = String(err?.message || err || '');
     const isLockOrStateErr =
       err?.name === 'NoModificationAllowedError' ||
@@ -3350,7 +3400,7 @@ async function writeWorkbookIntoHandleByType(type, handle, silentToast = false) 
                 )}"</strong> อาจยังเปิดค้างอยู่ใน Excel / OneDrive หรือถูกล็อกสิทธิ์โดย Windows
               </p>
               <p class="text-[11px] text-slate-500 mt-1">
-                หากปิด Excel แล้วยังกดลองซ้ำไม่ได้ สามารถกด <strong>"บันทึกเป็นไฟล์ใหม่ (Save As)"</strong> หรือ <strong>"ดาวน์โหลด .xlsx"</strong> ได้เลย (ข้อมูลเดิม+ใหม่รวมไว้ให้ครบแล้วครับ)
+                หากปิด Excel แล้วยังกดลองซ้ำไม่ได้ สามารถกด <strong>"บันทึกเป็นไฟล์ใหม่ (Save As)"</strong> หรือ <strong>"ดาวน์โหลด .xlsx"</strong> ได้เลย (ข้อมูลเดิม+ใหม่รวมไว้ให้ครบ 100% แล้วครับ)
               </p>
             </div>
           </div>
@@ -3363,7 +3413,7 @@ async function writeWorkbookIntoHandleByType(type, handle, silentToast = false) 
               ปิดหน้าต่าง
             </button>
             ${
-              lastWorkbook
+              lastOutBuffer
                 ? `<button
                     type="button"
                     id="modal-btn-download-fallback"
@@ -3374,7 +3424,7 @@ async function writeWorkbookIntoHandleByType(type, handle, silentToast = false) 
                 : ''
             }
             ${
-              lastWorkbook && typeof window.showSaveFilePicker === 'function'
+              lastOutBuffer && typeof window.showSaveFilePicker === 'function'
                 ? `<button
                     type="button"
                     id="modal-btn-saveas-fallback"
@@ -3396,14 +3446,16 @@ async function writeWorkbookIntoHandleByType(type, handle, silentToast = false) 
       `);
       document.getElementById('modal-btn-cancel')?.addEventListener('click', closeCustomModal);
       document.getElementById('modal-btn-download-fallback')?.addEventListener('click', () => {
-        if (lastWorkbook) {
+        if (lastOutBuffer) {
           const fallbackName = handle.name || `export_${type}.xlsx`;
-          window.XLSX.writeFile(lastWorkbook, fallbackName);
+          downloadArrayBufferAsXlsx(lastOutBuffer, fallbackName);
           closeCustomModal();
           showToast(
-            `ดาวน์โหลดไฟล์สำเร็จ (${lastMergedRows.length} รายการ)`,
+            `ดาวน์โหลดไฟล์สำเร็จ`,
             'success',
-            fallbackName
+            lastSyncMeta?.summaryText
+              ? `${fallbackName} (${lastSyncMeta.summaryText})`
+              : fallbackName
           );
         }
       });
@@ -3421,16 +3473,15 @@ async function writeWorkbookIntoHandleByType(type, handle, silentToast = false) 
               }
             ]
           });
-          if (newHandle && lastWorkbook) {
-            const buf = window.XLSX.write(lastWorkbook, { bookType: 'xlsx', type: 'array' });
+          if (newHandle && lastOutBuffer) {
             const w = await newHandle.createWritable();
-            await w.write(buf);
+            await w.write(lastOutBuffer);
             await w.close();
             await saveLinkedExcelHandleByType(type, newHandle);
             showToast(
               `บันทึกและผูกไฟล์ใหม่ "${newHandle.name}" สำเร็จ!`,
               'success',
-              `รวมข้อมูลทั้งหมด ${lastMergedRows.length} รายการเรียบร้อยแล้ว`
+              lastSyncMeta?.summaryText || 'บันทึกข้อมูลเรียบร้อยแล้ว'
             );
           }
         } catch (saveErr) {
@@ -3457,19 +3508,26 @@ async function writeWorkbookIntoHandleByType(type, handle, silentToast = false) 
   }
 }
 
-function downloadWorkbookByType(type) {
-  const rows = mergeLogsForExcel([], getFilteredLogs());
-  const dateSuffix = state.filterDate || getTodayISO();
-  if (type === 'copy') {
-    const wb = buildCopyOnlyWorkbook(rows);
-    const filename = `สำเนา_บันทึกรายการรถ6ล้อ_${dateSuffix}.xlsx`;
-    window.XLSX.writeFile(wb, filename);
-    showToast(`ดาวน์โหลดไฟล์สำเนาสำเร็จ (${rows.length} รายการ)`, 'success', filename);
-  } else {
-    const wb = buildBillingOnlyWorkbook(rows, new Map());
-    const filename = `ใบเบิก_และใบบันทึกปฏิบัติงานรถ6ล้อ_${dateSuffix}.xlsx`;
-    window.XLSX.writeFile(wb, filename);
-    showToast(`ดาวน์โหลดไฟล์ใบเบิกสำเร็จ (${rows.length} รายการ)`, 'success', filename);
+async function downloadWorkbookByType(type) {
+  if (typeof window.ExcelJS === 'undefined' || !window.CkpExcelSync) {
+    showToast('กำลังโหลดไลบรารี Excel กรุณาลองใหม่อีกครั้ง', 'error');
+    return;
+  }
+  try {
+    const dateSuffix = state.filterDate || getTodayISO();
+    const built = await buildNonDestructiveExcelBuffer(type, null);
+    const filename =
+      type === 'copy'
+        ? `สำเนา_บันทึกรายการรถ6ล้อ_${dateSuffix}.xlsx`
+        : `ใบเบิก_และใบบันทึกปฏิบัติงานรถ6ล้อ_${dateSuffix}.xlsx`;
+    downloadArrayBufferAsXlsx(built.outArrayBuffer, filename);
+    showToast(
+      `ดาวน์โหลดไฟล์${type === 'copy' ? 'สำเนา' : 'ใบเบิก'}สำเร็จ (${built.webRowsCount} รายการ)`,
+      'success',
+      filename
+    );
+  } catch (err) {
+    showToast(err?.message || 'ไม่สามารถสร้างไฟล์ Excel ได้', 'error');
   }
 }
 
@@ -3655,8 +3713,8 @@ function openExcelLinkModalByType(type) {
 
 // ปุ่มหลัก: ไหลข้อมูลเข้าไฟล์ที่ผูกไว้ (ทั้งไฟล์สำเนา และ/หรือ ไฟล์ใบเบิก ในปุ่มเดียว!)
 async function exportLogsToExcel() {
-  if (typeof window.XLSX === 'undefined') {
-    showToast('ไม่พบไลบรารี SheetJS (XLSX) สำหรับสร้างไฟล์ Excel', 'error');
+  if (typeof window.ExcelJS === 'undefined' || !window.CkpExcelSync) {
+    showToast('กำลังโหลดไลบรารี Excel กรุณาลองใหม่อีกครั้ง', 'error');
     return;
   }
 
