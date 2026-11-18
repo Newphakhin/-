@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS travel_logs (
   departure_time TEXT,
   arrival_time TEXT,
   vehicle_plate TEXT,
+  passenger_count INTEGER,
   gps_status TEXT DEFAULT '',
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );

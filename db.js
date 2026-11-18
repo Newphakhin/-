@@ -88,6 +88,7 @@ function createSchema() {
       departure_time TEXT,
       arrival_time TEXT,
       vehicle_plate TEXT,
+      passenger_count INTEGER DEFAULT NULL,
       gps_status TEXT DEFAULT '',
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
@@ -98,10 +99,13 @@ function createSchema() {
     );
   `);
 
-  // Ensure gps_status column exists if upgrading from an older travel_logs table
+  // Ensure columns exist if upgrading from an older travel_logs table
   const columns = db.prepare('PRAGMA table_info(travel_logs)').all();
   if (!columns.some((c) => c.name === 'gps_status')) {
     db.exec("ALTER TABLE travel_logs ADD COLUMN gps_status TEXT DEFAULT '';");
+  }
+  if (!columns.some((c) => c.name === 'passenger_count')) {
+    db.exec('ALTER TABLE travel_logs ADD COLUMN passenger_count INTEGER DEFAULT NULL;');
   }
 }
 

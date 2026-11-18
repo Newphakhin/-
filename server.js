@@ -445,6 +445,7 @@ app.post('/api/logs', requireAuth, async (req, res) => {
     const departure_time = String(req.body.departure_time || '').trim();
     const arrival_time = String(req.body.arrival_time || '').trim();
     const vehicle_plate = String(req.body.vehicle_plate || '').trim();
+    const passenger_count = req.body.passenger_count;
 
     if (!worker_name) {
       return res.status(400).json({ error: 'กรุณาเลือกชื่อคนงาน (Primary Key)' });
@@ -457,6 +458,7 @@ app.post('/api/logs', requireAuth, async (req, res) => {
       departure_time,
       arrival_time,
       vehicle_plate,
+      passenger_count,
       gps_status: String(req.body.gps_status || '').trim()
     });
     return res.status(201).json(created);
@@ -483,6 +485,8 @@ app.put('/api/logs/:worker_name', requireAuth, async (req, res) => {
       updates.arrival_time = String(req.body.arrival_time).trim();
     if (req.body.vehicle_plate !== undefined)
       updates.vehicle_plate = String(req.body.vehicle_plate).trim();
+    if (req.body.passenger_count !== undefined)
+      updates.passenger_count = req.body.passenger_count;
 
     const updated = await store.updateLog(worker_name, updates);
     return res.json(updated);

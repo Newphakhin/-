@@ -1139,6 +1139,11 @@ function enterEditMode(workerName) {
 
   renderVehicleDropdown();
   document.getElementById('form-vehicle').value = log.vehicle_plate || '';
+  const passengersEl = document.getElementById('form-passengers');
+  if (passengersEl) {
+    passengersEl.value =
+      log.passenger_count !== null && log.passenger_count !== undefined ? log.passenger_count : '';
+  }
 
   const formCard = document.getElementById('form-card-container');
   const formHeaderBar = document.getElementById('form-header-bar');
@@ -1192,6 +1197,8 @@ function exitEditModeAndResetForm() {
   document.getElementById('form-departure').value = '';
   document.getElementById('form-arrival').value = '';
   document.getElementById('form-vehicle').value = '';
+  const passengersEl = document.getElementById('form-passengers');
+  if (passengersEl) passengersEl.value = '';
   document.getElementById('form-gps-preview-card')?.classList.add('hidden');
 
   const formCard = document.getElementById('form-card-container');
@@ -1400,6 +1407,9 @@ async function handleTravelLogSubmit(e) {
   const departure_time = (document.getElementById('form-departure')?.value || '').trim();
   const arrival_time = (document.getElementById('form-arrival')?.value || '').trim();
   const vehicle_plate = (document.getElementById('form-vehicle')?.value || '').trim();
+  const passenger_count_raw = (document.getElementById('form-passengers')?.value || '').trim();
+  const passenger_count =
+    passenger_count_raw === '' ? null : Math.max(0, Number.parseInt(passenger_count_raw, 10));
 
   if (!worker_name) {
     openCustomModal(`
@@ -1440,10 +1450,7 @@ async function handleTravelLogSubmit(e) {
     departure_time,
     arrival_time,
     vehicle_plate,
-    gps_status:
-      state.lastCheckedGps && state.lastCheckedGps.plate === vehicle_plate
-        ? JSON.stringify(state.lastCheckedGps)
-        : undefined
+    passenger_count: Number.isNaN(passenger_count) ? null : passenger_count
   };
 
   // If in Create mode and duplicate PK or Storage Full, send directly so backend returns 409 or 507 immediately
@@ -1462,6 +1469,7 @@ async function handleTravelLogSubmit(e) {
   if (!departure_time) missingFields.push('เวลาขับรถ (ออกเดินทาง)');
   if (!arrival_time) missingFields.push('เวลาที่ต้องไปถึงไซต์งาน');
   if (!vehicle_plate) missingFields.push('ทะเบียนรถ');
+  if (passenger_count_raw === '') missingFields.push('จำนวนคนโดยสาร');
 
   if (missingFields.length > 0) {
     showIncompleteFieldsModal(missingFields, payload);
@@ -1494,10 +1502,11 @@ function getFilteredLogs() {
         thaiDateFull,
         row.route || '',
         row.vehicle_plate || '',
+        row.passenger_count !== null && row.passenger_count !== undefined
+          ? `${row.passenger_count} คน`
+          : '',
         row.departure_time || '',
-        row.arrival_time || '',
-        gpsObj?.status || '',
-        gpsObj?.location || ''
+        row.arrival_time || ''
       ]
         .join(' ')
         .toLowerCase();
@@ -1609,7 +1618,7 @@ function renderLogsTable() {
         </div>
       </div>
     `;
-    tbody.innerHTML = `<tr><td colspan="7">${emptyHtml}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="8">${emptyHtml}</td></tr>`;
     if (mobileCards) mobileCards.innerHTML = emptyHtml;
     return;
   }
@@ -1720,6 +1729,17 @@ function renderLogsTable() {
             }
           </td>
 
+          <td class="py-3.5 px-3 text-center whitespace-nowrap">
+            ${
+              row.passenger_count !== null && row.passenger_count !== undefined
+                ? `<span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-sky-50 text-sky-800 border border-sky-200 text-xs font-semibold">
+                    <i class="fa-solid fa-users text-[10px]"></i>
+                    <span>${escapeHtml(row.passenger_count)} คน</span>
+                  </span>`
+                : '<span class="text-xs text-slate-400 italic">ไม่ได้ระบุ</span>'
+            }
+          </td>
+
           <td class="py-3.5 px-4 text-right whitespace-nowrap">
             <div class="inline-flex items-center gap-1.5">
               <button
@@ -1805,6 +1825,16 @@ function renderLogsTable() {
           row.arrival_time || '-'
         )}
                   <span class="ml-1 text-indigo-600">(${escapeHtml(duration.text)})</span>
+                </span>
+              </div>
+              <div class="flex items-center justify-between gap-2">
+                <span class="text-slate-500">จำนวนคนโดยสาร:</span>
+                <span class="font-semibold text-sky-800">
+                  ${
+                    row.passenger_count !== null && row.passenger_count !== undefined
+                      ? `${escapeHtml(row.passenger_count)} คน`
+                      : '<span class="text-slate-400 font-normal italic">ไม่ได้ระบุ</span>'
+                  }
                 </span>
               </div>
             </div>
@@ -1925,7 +1955,6 @@ function exportLogsToExcel() {
 
   const excelData = rows.map((r, idx) => {
     const dur = calculateTravelDuration(r.departure_time, r.arrival_time);
-    const gps = parseGpsStatus(r.gps_status);
     return {
       'ลำดับ': idx + 1,
       'ชื่อคนงาน (PK)': r.worker_name || '',
@@ -1936,7 +1965,8 @@ function exportLogsToExcel() {
       'เวลาที่ต้องไปถึงไซต์งาน': r.arrival_time || '-',
       'ระยะเวลาเดินทาง': dur.text,
       'ทะเบียนรถ': r.vehicle_plate || '-',
-      'สถานะ Cartrack GPS': gps ? `${gps.status} (${gps.location || ''})` : '-',
+      'จำนวนคนโดยสาร (คน)':
+        r.passenger_count !== null && r.passenger_count !== undefined ? r.passenger_count : '-',
       'อัปเดตล่าสุด': r.updated_at || ''
     };
   });
@@ -1953,7 +1983,7 @@ function exportLogsToExcel() {
       { wch: 20 },
       { wch: 22 },
       { wch: 18 },
-      { wch: 42 },
+      { wch: 20 },
       { wch: 20 }
     ];
     const workbook = window.XLSX.utils.book_new();
@@ -1989,8 +2019,7 @@ function exportLogsToCSV() {
     'เวลาที่ต้องไปถึงไซต์งาน',
     'ระยะเวลาเดินทาง',
     'ทะเบียนรถ',
-    'สถานะ Cartrack GPS',
-    'ลิงก์แผนที่ Google Maps',
+    'จำนวนคนโดยสาร (คน)',
     'อัปเดตล่าสุด'
   ];
 
@@ -2006,7 +2035,6 @@ function exportLogsToCSV() {
     headers.map(escapeCsvCell).join(','),
     ...rows.map((r, idx) => {
       const dur = calculateTravelDuration(r.departure_time, r.arrival_time);
-      const gps = parseGpsStatus(r.gps_status);
       return [
         idx + 1,
         r.worker_name || '',
@@ -2017,8 +2045,7 @@ function exportLogsToCSV() {
         r.arrival_time || '',
         dur.text,
         r.vehicle_plate || '',
-        gps ? `${gps.status} - ${gps.location || ''}` : '',
-        gps?.maps_url || '',
+        r.passenger_count !== null && r.passenger_count !== undefined ? r.passenger_count : '',
         r.updated_at || ''
       ]
         .map(escapeCsvCell)

@@ -440,7 +440,7 @@
               </div>
 
               <!-- 3. เส้นทาง / ที่หมาย (Combo Box + Auto-fill + Action Buttons) -->
-              <div class="md:col-span-6">
+              <div class="md:col-span-12 lg:col-span-5">
                 <div class="flex flex-wrap items-center justify-between gap-2 mb-1.5">
                   <label for="form-route" class="text-sm font-semibold text-slate-700 flex items-center gap-1.5">
                     <i class="fa-solid fa-map-location-dot text-indigo-600"></i>
@@ -512,7 +512,7 @@
               </div>
 
               <!-- 4. เวลาขับรถ (ออกเดินทาง) -->
-              <div class="md:col-span-3">
+              <div class="md:col-span-4 lg:col-span-2">
                 <label for="form-departure" class="block text-sm font-semibold text-slate-700 mb-1.5">
                   <i class="fa-regular fa-clock text-indigo-600 mr-1"></i>
                   เวลาขับรถ (ออกเดินทาง)
@@ -520,26 +520,48 @@
                 <input
                   type="time"
                   id="form-departure"
-                  class="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 transition"
+                  class="w-full min-h-[44px] px-3 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 transition"
                 />
-                <p class="mt-1.5 text-[11px] text-slate-500">รูปแบบเวลา 24 ชั่วโมง (HH:mm)</p>
+                <p class="mt-1.5 text-[11px] text-slate-500">เวลา 24 ชม. (HH:mm)</p>
               </div>
 
               <!-- 5. เวลาที่ต้องไปถึงไซต์งาน -->
-              <div class="md:col-span-3">
+              <div class="md:col-span-4 lg:col-span-2">
                 <label for="form-arrival" class="block text-sm font-semibold text-slate-700 mb-1.5">
                   <i class="fa-solid fa-flag-checkered text-indigo-600 mr-1"></i>
-                  เวลาที่ต้องไปถึงไซต์งาน
+                  เวลาถึงไซต์งาน
                 </label>
                 <input
                   type="time"
                   id="form-arrival"
-                  class="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 transition"
+                  class="w-full min-h-[44px] px-3 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 transition"
                 />
                 <div id="form-duration-preview" class="mt-1.5 text-[11px] text-slate-500 flex items-center gap-1">
                   <i class="fa-solid fa-stopwatch text-slate-400"></i>
-                  <span>คำนวณระยะเวลาอัตโนมัติ (รองรับข้ามวัน)</span>
+                  <span>คำนวณระยะเวลาอัตโนมัติ</span>
                 </div>
+              </div>
+
+              <!-- 7. จำนวนคนโดยสาร -->
+              <div class="md:col-span-4 lg:col-span-3">
+                <label for="form-passengers" class="block text-sm font-semibold text-slate-700 mb-1.5">
+                  <i class="fa-solid fa-users text-indigo-600 mr-1"></i>
+                  จำนวนคนโดยสาร (คน)
+                </label>
+                <div class="relative">
+                  <input
+                    type="number"
+                    id="form-passengers"
+                    min="0"
+                    step="1"
+                    placeholder="ระบุจำนวนคน (เว้นว่างได้)"
+                    class="w-full min-h-[44px] pl-3.5 pr-12 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 transition"
+                  />
+                  <span class="absolute inset-y-0 right-0 pr-3.5 flex items-center text-xs font-medium text-slate-400 pointer-events-none">
+                    คน
+                  </span>
+                </div>
+                <p class="mt-1.5 text-[11px] text-slate-500">ระบุจำนวนผู้โดยสารที่เดินทางไปกับรถ</p>
               </div>
 
             </div>
@@ -750,6 +772,7 @@
                   <th class="py-3.5 px-3 text-center">เวลาขับรถ - ถึงไซต์</th>
                   <th class="py-3.5 px-3 text-center">ระยะเวลาเดินทาง</th>
                   <th class="py-3.5 px-4">ทะเบียนรถ</th>
+                  <th class="py-3.5 px-3 text-center">คนโดยสาร</th>
                   <th class="py-3.5 px-4 text-right">จัดการ</th>
                 </tr>
               </thead>

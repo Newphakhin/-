@@ -836,27 +836,68 @@ async function deleteVehicle(id) {
 // TRAVEL LOGS
 // ============================================================================
 
+function normalizePassengerCount(val) {
+  if (val === null || val === undefined || String(val).trim() === '') {
+    return null;
+  }
+  const num = Number.parseInt(String(val).trim(), 10);
+  if (Number.isNaN(num) || num < 0) return null;
+  return num;
+}
+
+function withResolvedPassengerCount(row) {
+  if (!row) return row;
+  let count = row.passenger_count !== undefined && row.passenger_count !== null
+    ? normalizePassengerCount(row.passenger_count)
+    : null;
+
+  if (count === null && row.gps_status) {
+    try {
+      const parsed = JSON.parse(row.gps_status);
+      if (parsed && parsed.passenger_count !== undefined && parsed.passenger_count !== null) {
+        count = normalizePassengerCount(parsed.passenger_count);
+      }
+    } catch {
+      // ignore non-JSON gps_status
+    }
+  }
+
+  return {
+    ...row,
+    passenger_count: count
+  };
+}
+
+function isMissingPassengerColumnError(error) {
+  if (!error) return false;
+  const msg = String(error.message || '').toLowerCase();
+  return (
+    error.code === 'PGRST204' ||
+    error.code === '42703' ||
+    msg.includes('passenger_count')
+  );
+}
+
 async function listLogs(dateFilter = '', searchFilter = '') {
   let rows = [];
   if (isSupabaseConfigured && supabase) {
     const { data, error } = await supabase
       .from('travel_logs')
-      .select(
-        'worker_name, travel_date, route, departure_time, arrival_time, vehicle_plate, gps_status, updated_at'
-      )
+      .select('*')
       .order('travel_date', { ascending: false })
       .order('departure_time', { ascending: true })
       .order('worker_name', { ascending: true });
     if (error) throw new Error(error.message);
-    rows = data || [];
+    rows = (data || []).map(withResolvedPassengerCount);
   } else {
     rows = db
       .prepare(
-        `SELECT worker_name, travel_date, route, departure_time, arrival_time, vehicle_plate, gps_status, updated_at
+        `SELECT worker_name, travel_date, route, departure_time, arrival_time, vehicle_plate, passenger_count, gps_status, updated_at
          FROM travel_logs
          ORDER BY travel_date DESC, departure_time ASC, worker_name ASC`
       )
-      .all();
+      .all()
+      .map(withResolvedPassengerCount);
   }
 
   if (dateFilter) {
@@ -871,6 +912,7 @@ async function listLogs(dateFilter = '', searchFilter = '') {
         r.travel_date || '',
         r.route || '',
         r.vehicle_plate || '',
+        r.passenger_count !== null && r.passenger_count !== undefined ? `${r.passenger_count} คน` : '',
         r.departure_time || '',
         r.arrival_time || ''
       ]
@@ -893,6 +935,7 @@ async function createLog(payload) {
     vehicle_plate,
     gps_status
   } = payload;
+  const passenger_count = normalizePassengerCount(payload.passenger_count);
 
   if (isSupabaseConfigured && supabase) {
     const { data: existing } = await supabase
@@ -906,7 +949,7 @@ async function createLog(payload) {
       );
       err.status = 409;
       err.code = 'DUPLICATE_WORKER_PK';
-      err.existing = existing;
+      err.existing = withResolvedPassengerCount(existing);
       throw err;
     }
 
@@ -921,23 +964,41 @@ async function createLog(payload) {
       throw err;
     }
 
-    const { data: created, error } = await supabase
+    const insertRow = {
+      worker_name,
+      travel_date: travel_date || '',
+      route: route || '',
+      departure_time: departure_time || '',
+      arrival_time: arrival_time || '',
+      vehicle_plate: vehicle_plate || '',
+      passenger_count,
+      gps_status: passenger_count !== null ? JSON.stringify({ passenger_count }) : gps_status || '',
+      updated_at: new Date().toISOString()
+    };
+
+    let { data: created, error } = await supabase
       .from('travel_logs')
-      .insert({
-        worker_name,
-        travel_date: travel_date || '',
-        route: route || '',
-        departure_time: departure_time || '',
-        arrival_time: arrival_time || '',
-        vehicle_plate: vehicle_plate || '',
-        gps_status: gps_status || '',
-        updated_at: new Date().toISOString()
-      })
+      .insert(insertRow)
       .select('*')
       .single();
+
+    if (error && isMissingPassengerColumnError(error)) {
+      const { passenger_count: _omit, ...fallbackRow } = insertRow;
+      const retry = await supabase
+        .from('travel_logs')
+        .insert(fallbackRow)
+        .select('*')
+        .single();
+      created = retry.data;
+      error = retry.error;
+    }
+
     if (error) throw new Error(error.message);
 
-    return { ...created, storageQuota: await getQuotaStatus() };
+    return {
+      ...withResolvedPassengerCount(created),
+      storageQuota: await getQuotaStatus()
+    };
   }
 
   const existing = db
@@ -949,7 +1010,7 @@ async function createLog(payload) {
     );
     err.status = 409;
     err.code = 'DUPLICATE_WORKER_PK';
-    err.existing = existing;
+    err.existing = withResolvedPassengerCount(existing);
     throw err;
   }
 
@@ -965,8 +1026,8 @@ async function createLog(payload) {
   }
 
   db.prepare(
-    `INSERT INTO travel_logs (worker_name, travel_date, route, departure_time, arrival_time, vehicle_plate, gps_status, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))`
+    `INSERT INTO travel_logs (worker_name, travel_date, route, departure_time, arrival_time, vehicle_plate, passenger_count, gps_status, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))`
   ).run(
     worker_name,
     travel_date || '',
@@ -974,12 +1035,13 @@ async function createLog(payload) {
     departure_time || '',
     arrival_time || '',
     vehicle_plate || '',
+    passenger_count,
     gps_status || ''
   );
 
   syncJsonFallbackFile();
   const created = db.prepare('SELECT * FROM travel_logs WHERE worker_name = ?').get(worker_name);
-  return { ...created, storageQuota: await getQuotaStatus() };
+  return { ...withResolvedPassengerCount(created), storageQuota: await getQuotaStatus() };
 }
 
 async function updateLog(worker_name, updates) {
@@ -995,6 +1057,12 @@ async function updateLog(worker_name, updates) {
       throw err;
     }
 
+    const resolvedExisting = withResolvedPassengerCount(existing);
+    const nextPassengerCount =
+      updates.passenger_count !== undefined
+        ? normalizePassengerCount(updates.passenger_count)
+        : resolvedExisting.passenger_count;
+
     const nextRow = {
       travel_date:
         updates.travel_date !== undefined ? updates.travel_date : existing.travel_date || '',
@@ -1007,20 +1075,39 @@ async function updateLog(worker_name, updates) {
         updates.arrival_time !== undefined ? updates.arrival_time : existing.arrival_time || '',
       vehicle_plate:
         updates.vehicle_plate !== undefined ? updates.vehicle_plate : existing.vehicle_plate || '',
+      passenger_count: nextPassengerCount,
       gps_status:
-        updates.gps_status !== undefined ? updates.gps_status : existing.gps_status || '',
+        nextPassengerCount !== null
+          ? JSON.stringify({ passenger_count: nextPassengerCount })
+          : '',
       updated_at: new Date().toISOString()
     };
 
-    const { data: updated, error } = await supabase
+    let { data: updated, error } = await supabase
       .from('travel_logs')
       .update(nextRow)
       .eq('worker_name', worker_name)
       .select('*')
       .single();
+
+    if (error && isMissingPassengerColumnError(error)) {
+      const { passenger_count: _omit, ...fallbackRow } = nextRow;
+      const retry = await supabase
+        .from('travel_logs')
+        .update(fallbackRow)
+        .eq('worker_name', worker_name)
+        .select('*')
+        .single();
+      updated = retry.data;
+      error = retry.error;
+    }
+
     if (error) throw new Error(error.message);
 
-    return { ...updated, storageQuota: await getQuotaStatus() };
+    return {
+      ...withResolvedPassengerCount(updated),
+      storageQuota: await getQuotaStatus()
+    };
   }
 
   const existing = db
@@ -1041,18 +1128,31 @@ async function updateLog(worker_name, updates) {
     updates.arrival_time !== undefined ? updates.arrival_time : existing.arrival_time;
   const vehicle_plate =
     updates.vehicle_plate !== undefined ? updates.vehicle_plate : existing.vehicle_plate;
+  const passenger_count =
+    updates.passenger_count !== undefined
+      ? normalizePassengerCount(updates.passenger_count)
+      : normalizePassengerCount(existing.passenger_count);
   const gps_status =
     updates.gps_status !== undefined ? updates.gps_status : existing.gps_status || '';
 
   db.prepare(
     `UPDATE travel_logs
-     SET travel_date = ?, route = ?, departure_time = ?, arrival_time = ?, vehicle_plate = ?, gps_status = ?, updated_at = datetime('now', 'localtime')
+     SET travel_date = ?, route = ?, departure_time = ?, arrival_time = ?, vehicle_plate = ?, passenger_count = ?, gps_status = ?, updated_at = datetime('now', 'localtime')
      WHERE worker_name = ?`
-  ).run(travel_date, route, departure_time, arrival_time, vehicle_plate, gps_status, worker_name);
+  ).run(
+    travel_date,
+    route,
+    departure_time,
+    arrival_time,
+    vehicle_plate,
+    passenger_count,
+    gps_status,
+    worker_name
+  );
 
   syncJsonFallbackFile();
   const updated = db.prepare('SELECT * FROM travel_logs WHERE worker_name = ?').get(worker_name);
-  return { ...updated, storageQuota: await getQuotaStatus() };
+  return { ...withResolvedPassengerCount(updated), storageQuota: await getQuotaStatus() };
 }
 
 async function deleteLog(worker_name) {
