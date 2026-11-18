@@ -3272,6 +3272,8 @@ async function saveBillingExcelFile() {
 
 async function writeWorkbookIntoHandleByType(type, handle, silentToast = false) {
   const typeLabel = type === 'copy' ? 'แบบสำเนา' : 'แบบใบเบิก';
+  let lastMergedRows = [];
+  let lastWorkbook = null;
   try {
     if (handle.queryPermission) {
       let perm = await handle.queryPermission({ mode: 'readwrite' });
@@ -3301,10 +3303,12 @@ async function writeWorkbookIntoHandleByType(type, handle, silentToast = false) 
 
     const currentWebRows = getFilteredLogs();
     const mergedRows = mergeLogsForExcel(existingRows, currentWebRows);
+    lastMergedRows = mergedRows;
     const workbook =
       type === 'copy'
         ? buildCopyOnlyWorkbook(mergedRows)
         : buildBillingOnlyWorkbook(mergedRows, existingPricesMap);
+    lastWorkbook = workbook;
     const outArrayBuffer = window.XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
 
     const writable = await handle.createWritable();
@@ -3322,12 +3326,14 @@ async function writeWorkbookIntoHandleByType(type, handle, silentToast = false) 
     return true;
   } catch (err) {
     const msg = String(err?.message || err || '');
-    if (
+    const isLockOrStateErr =
       err?.name === 'NoModificationAllowedError' ||
       err?.name === 'InvalidStateError' ||
+      err?.name === 'NotAllowedError' ||
       msg.toLowerCase().includes('lock') ||
-      msg.toLowerCase().includes('used by another')
-    ) {
+      msg.toLowerCase().includes('used by another');
+
+    if (isLockOrStateErr) {
       openCustomModal(`
         <div class="p-6 space-y-4">
           <div class="flex items-start gap-3.5">
@@ -3335,28 +3341,53 @@ async function writeWorkbookIntoHandleByType(type, handle, silentToast = false) 
               <i class="fa-solid fa-file-circle-exclamation"></i>
             </div>
             <div>
-              <h3 class="text-base font-bold text-slate-900">ไฟล์ Excel (${escapeHtml(
+              <h3 class="text-base font-bold text-slate-900">ยังไม่สามารถเขียนทับไฟล์${escapeHtml(
                 typeLabel
-              )}) กำลังเปิดค้างอยู่ในโปรแกรม Excel</h3>
+              )}ได้</h3>
               <p class="text-xs sm:text-sm text-slate-600 mt-1 leading-relaxed">
-                กรุณา<strong>ปิดโปรแกรม Microsoft Excel</strong> ที่เปิดไฟล์ <strong>"${escapeHtml(
+                ไฟล์ <strong>"${escapeHtml(
                   handle.name
-                )}"</strong> ค้างไว้ก่อน แล้วกดปุ่ม <strong>"ลองไหลข้อมูลอีกครั้ง"</strong> เพื่อให้ระบบบันทึกทับลงไฟล์เดิมได้ครับ
+                )}"</strong> อาจยังเปิดค้างอยู่ใน Excel / OneDrive หรือถูกล็อกสิทธิ์โดย Windows
+              </p>
+              <p class="text-[11px] text-slate-500 mt-1">
+                หากปิด Excel แล้วยังกดลองซ้ำไม่ได้ สามารถกด <strong>"บันทึกเป็นไฟล์ใหม่ (Save As)"</strong> หรือ <strong>"ดาวน์โหลด .xlsx"</strong> ได้เลย (ข้อมูลเดิม+ใหม่รวมไว้ให้ครบแล้วครับ)
               </p>
             </div>
           </div>
-          <div class="pt-3 border-t border-slate-100 flex justify-end gap-2">
+          <div class="pt-3 border-t border-slate-100 flex flex-wrap justify-end gap-2">
             <button
               type="button"
               id="modal-btn-cancel"
-              class="min-h-[42px] px-4 py-2 rounded-xl border border-slate-300 bg-white text-slate-700 text-xs sm:text-sm font-medium cursor-pointer"
+              class="min-h-[40px] px-3.5 py-2 rounded-xl border border-slate-300 bg-white text-slate-700 text-xs font-medium cursor-pointer"
             >
               ปิดหน้าต่าง
             </button>
+            ${
+              lastWorkbook
+                ? `<button
+                    type="button"
+                    id="modal-btn-download-fallback"
+                    class="min-h-[40px] px-3.5 py-2 rounded-xl border border-sky-300 bg-sky-50 hover:bg-sky-100 text-sky-800 text-xs font-semibold cursor-pointer"
+                  >
+                    <i class="fa-solid fa-download mr-1"></i>ดาวน์โหลด .xlsx
+                  </button>`
+                : ''
+            }
+            ${
+              lastWorkbook && typeof window.showSaveFilePicker === 'function'
+                ? `<button
+                    type="button"
+                    id="modal-btn-saveas-fallback"
+                    class="min-h-[40px] px-3.5 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold cursor-pointer"
+                  >
+                    <i class="fa-solid fa-file-export mr-1"></i>บันทึกเป็นไฟล์ใหม่ (Save As)
+                  </button>`
+                : ''
+            }
             <button
               type="button"
               id="modal-btn-retry-write"
-              class="min-h-[42px] px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs sm:text-sm font-semibold cursor-pointer"
+              class="min-h-[40px] px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold cursor-pointer"
             >
               ลองไหลข้อมูลเข้าไฟล์เดิมอีกครั้ง
             </button>
@@ -3364,7 +3395,57 @@ async function writeWorkbookIntoHandleByType(type, handle, silentToast = false) 
         </div>
       `);
       document.getElementById('modal-btn-cancel')?.addEventListener('click', closeCustomModal);
-      document.getElementById('modal-btn-retry-write')?.addEventListener('click', async () => {
+      document.getElementById('modal-btn-download-fallback')?.addEventListener('click', () => {
+        if (lastWorkbook) {
+          const fallbackName = handle.name || `export_${type}.xlsx`;
+          window.XLSX.writeFile(lastWorkbook, fallbackName);
+          closeCustomModal();
+          showToast(
+            `ดาวน์โหลดไฟล์สำเร็จ (${lastMergedRows.length} รายการ)`,
+            'success',
+            fallbackName
+          );
+        }
+      });
+      document.getElementById('modal-btn-saveas-fallback')?.addEventListener('click', async () => {
+        closeCustomModal();
+        try {
+          const newHandle = await window.showSaveFilePicker({
+            suggestedName: handle.name || `export_${type}.xlsx`,
+            types: [
+              {
+                description: 'Excel Workbook (.xlsx)',
+                accept: {
+                  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx']
+                }
+              }
+            ]
+          });
+          if (newHandle && lastWorkbook) {
+            const buf = window.XLSX.write(lastWorkbook, { bookType: 'xlsx', type: 'array' });
+            const w = await newHandle.createWritable();
+            await w.write(buf);
+            await w.close();
+            await saveLinkedExcelHandleByType(type, newHandle);
+            showToast(
+              `บันทึกและผูกไฟล์ใหม่ "${newHandle.name}" สำเร็จ!`,
+              'success',
+              `รวมข้อมูลทั้งหมด ${lastMergedRows.length} รายการเรียบร้อยแล้ว`
+            );
+          }
+        } catch (saveErr) {
+          if (saveErr?.name !== 'AbortError') {
+            showToast(saveErr?.message || 'ยกเลิกการบันทึกไฟล์ใหม่', 'info');
+          }
+        }
+      });
+      document.getElementById('modal-btn-retry-write')?.addEventListener('click', async (e) => {
+        const btn = e.currentTarget;
+        if (btn) {
+          btn.disabled = true;
+          btn.textContent = 'กำลังลองเขียนทับ...';
+        }
+        await new Promise((r) => setTimeout(r, 150));
         closeCustomModal();
         await writeWorkbookIntoHandleByType(type, handle, silentToast);
       });
