@@ -660,7 +660,7 @@
     if (dur) {
       el.innerHTML = `<i class="fa-solid fa-stopwatch text-emerald-600"></i><span class="text-emerald-700 font-semibold">ใช้เวลา ${escapeHtml(dur)}</span>`;
     } else {
-      el.innerHTML = '<i class="fa-solid fa-stopwatch text-slate-400"></i><span>คำนวณระยะเวลาอัตโนมัติ</span>';
+      el.innerHTML = '<i class="fa-solid fa-stopwatch text-slate-400"></i><span>เว้นว่างได้ หรือระบุตามจริง</span>';
     }
   }
 

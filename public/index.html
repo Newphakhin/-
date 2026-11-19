@@ -703,7 +703,7 @@
               <div class="lg:col-span-2">
                 <label for="form-arr-time" class="block text-sm font-semibold text-slate-700 mb-1.5">
                   <i class="fa-solid fa-flag-checkered text-indigo-600 mr-1"></i>
-                  เวลาถึง (น.)
+                  เวลาถึง
                 </label>
                 <input
                   type="time"
@@ -712,7 +712,7 @@
                 />
                 <div id="form-duration-preview" class="mt-1.5 text-[11px] text-slate-500 flex items-center gap-1">
                   <i class="fa-solid fa-stopwatch text-slate-400"></i>
-                  <span>ระบบคำนวณเวลาเดินทางให้</span>
+                  <span>เว้นว่างได้ หรือระบุตามจริง</span>
                 </div>
               </div>
 
@@ -748,12 +748,12 @@
                     id="form-unit-price"
                     min="0"
                     step="0.01"
-                    placeholder="0.00"
+                    placeholder="เว้นว่างได้"
                     class="w-full min-h-[44px] pl-3.5 pr-12 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-600 focus:border-emerald-600 transition"
                   />
                   <span class="absolute inset-y-0 right-0 pr-3 flex items-center text-xs text-slate-400 pointer-events-none">บาท</span>
                 </div>
-                <p id="form-price-hint" class="mt-1.5 text-[11px] text-slate-500">เติมจากเส้นทางให้ • งานเหมาพิมพ์ราคาเองได้</p>
+                <p id="form-price-hint" class="mt-1.5 text-[11px] text-slate-500">กรอกราคาของเที่ยวนี้ หรือเว้นว่างได้</p>
               </div>
 
               <!-- 12. หมายเหตุ -->
@@ -1339,7 +1339,7 @@
                   />
                 </div>
                 <div class="lg:col-span-2">
-                  <label for="input-route-dep-time" class="block text-xs font-semibold text-slate-700 mb-1">เวลาออกปกติ</label>
+                  <label for="input-route-dep-time" class="block text-xs font-semibold text-slate-700 mb-1">เวลาออก (เว้นว่างได้)</label>
                   <input
                     type="time"
                     id="input-route-dep-time"
@@ -1347,7 +1347,7 @@
                   />
                 </div>
                 <div class="lg:col-span-2">
-                  <label for="input-route-arr-time" class="block text-xs font-semibold text-slate-700 mb-1">เวลาถึงปกติ</label>
+                  <label for="input-route-arr-time" class="block text-xs font-semibold text-slate-700 mb-1">เวลาถึง (เว้นว่างได้)</label>
                   <input
                     type="time"
                     id="input-route-arr-time"
@@ -1355,18 +1355,18 @@
                   />
                 </div>
                 <div class="lg:col-span-2">
-                  <label for="input-route-unit-price" class="block text-xs font-semibold text-slate-700 mb-1">ราคาต่อเที่ยว (บาท)</label>
+                  <label for="input-route-unit-price" class="block text-xs font-semibold text-slate-700 mb-1">ราคาต่อเที่ยว (เว้นว่างได้)</label>
                   <input
                     type="number"
                     id="input-route-unit-price"
                     min="0"
                     step="0.01"
-                    placeholder="0.00"
+                    placeholder="เว้นว่างได้"
                     class="w-full min-h-[42px] px-3 py-2 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-600 transition"
                   />
                 </div>
               </div>
-              <p class="text-[11px] text-slate-500">เวลาและราคาที่ตั้งไว้ตรงนี้ จะถูกเติมให้อัตโนมัติเมื่อเลือกเส้นทางนี้ในหน้าบันทึกเที่ยววิ่ง (แก้ทีหลังได้)</p>
+              <p class="text-[11px] text-slate-500">เวลาและราคาไม่จำเป็นต้องใส่ตายตัว (เว้นว่างไว้ได้ แล้วค่อยไปกรอกหรือปรับเปลี่ยนตอนบันทึกแต่ละเที่ยววิ่ง)</p>
 
               <details id="route-advanced-details" class="rounded-xl bg-white border border-slate-200">
                 <summary class="cursor-pointer select-none px-3.5 py-2.5 text-xs font-semibold text-indigo-700">
