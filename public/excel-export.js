@@ -135,6 +135,7 @@
       fontName = 'Arial',
       size = 12,
       bold = false,
+      underline = false,
       color = COLOR_BLACK,
       h = 'center',
       v = 'middle',
@@ -144,7 +145,7 @@
       numFmt = null
     } = {}
   ) {
-    cell.font = { name: fontName, size, bold, color };
+    cell.font = { name: fontName, size, bold, underline, color };
     cell.alignment = { horizontal: h, vertical: v, wrapText: wrap };
     if (border) cell.border = border;
     if (fill) cell.fill = fill;
@@ -761,14 +762,14 @@
 
       ws.mergeCells('H3:I3');
       ws.getCell('H3').value = toBE(ctx.start);
-      applyStyle(ws.getCell('H3'), { fontName: 'Arial', size: 55, bold: true, h: 'center', v: 'bottom', numFmt: '@' });
+      applyStyle(ws.getCell('H3'), { fontName: 'Arial', size: 55, bold: true, underline: true, h: 'center', v: 'bottom', numFmt: '@' });
 
       ws.getCell('J3').value = 'ถึงวันที่ ';
       applyStyle(ws.getCell('J3'), { fontName: 'Angsana New', size: 50, bold: true, h: 'center', v: 'bottom' });
 
       ws.mergeCells('K3:L3');
       ws.getCell('K3').value = toBE(ctx.end);
-      applyStyle(ws.getCell('K3'), { fontName: 'Arial', size: 55, bold: true, h: 'center', v: 'bottom', numFmt: '@' });
+      applyStyle(ws.getCell('K3'), { fontName: 'Arial', size: 55, bold: true, underline: true, h: 'center', v: 'bottom', numFmt: '@' });
 
       // แถวที่ 4: เว้นว่าง + เส้นบนตาราง
       ws.getRow(4).height = 27.5;
