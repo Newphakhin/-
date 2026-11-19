@@ -298,7 +298,7 @@
 
   function switchView(view) {
     if (view === 'back' && (!state.user || state.user.role !== 'admin')) {
-      showToast('เฉพาะแอดมินเท่านั้นที่เข้าใช้งานระบบหลังบ้านได้', 'warning');
+      showToast('เฉพาะแอดมินเท่านั้นที่เข้าเมนูตั้งค่าได้ — กรุณาแจ้งแอดมิน', 'warning');
       return;
     }
     state.activeView = view;
@@ -408,7 +408,7 @@
         banner.className = 'rounded-2xl p-4 border shadow-sm bg-rose-50 border-rose-300 text-rose-900 text-xs sm:text-sm flex items-center gap-3';
         banner.innerHTML = `
           <i class="fa-solid fa-circle-exclamation text-rose-600 text-lg shrink-0"></i>
-          <div><strong>พื้นที่จัดเก็บข้อมูลเต็มแล้ว (${formatInt(quota.currentCount)}/${formatInt(quota.maxLimit)} รายการ)</strong> — กรุณาส่งออกไฟล์ Excel สำรองข้อมูลแล้วล้างข้อมูลเก่า หรือเพิ่มขีดจำกัดในระบบหลังบ้าน</div>
+          <div><strong>พื้นที่จัดเก็บข้อมูลเต็มแล้ว (${formatInt(quota.currentCount)}/${formatInt(quota.maxLimit)} รายการ)</strong> — กรุณาส่งออกไฟล์ Excel สำรองข้อมูลแล้วล้างข้อมูลเก่า หรือเพิ่มขีดจำกัดในเมนูตั้งค่า</div>
         `;
       } else if (quota.isWarning) {
         banner.className = 'rounded-2xl p-4 border shadow-sm bg-amber-50 border-amber-300 text-amber-900 text-xs sm:text-sm flex items-center gap-3';
@@ -468,6 +468,7 @@
 
     state.logs = logs || [];
     state.todayLogsCount = (todayLogs || []).length;
+    renderStepGuide();
     renderLogs();
     renderFilterSummaryLabel();
   }
@@ -497,12 +498,49 @@
 
     const hintBox = $('empty-master-hint');
     const hintText = $('empty-master-hint-text');
+    const isAdmin = Boolean(state.user && state.user.role === 'admin');
     if (missing.length > 0) {
       hintBox.classList.remove('hidden');
-      hintText.textContent = `ยังไม่ได้เพิ่มข้อมูลหลัก: ${missing.join(', ')} — กรุณาเพิ่มในระบบหลังบ้านเพื่อให้ Dropdown พร้อมใช้งาน`;
+      hintText.textContent = isAdmin
+        ? `ยังขาด: ${missing.join(', ')} — กดปุ่ม "เริ่มตั้งค่า" ทางขวาเพื่อเพิ่ม`
+        : `ยังขาด: ${missing.join(', ')} — กรุณาแจ้งแอดมินให้เพิ่มข้อมูลก่อน`;
     } else {
       hintBox.classList.add('hidden');
     }
+    renderStepGuide(missing);
+  }
+
+  // แถบ 3 ขั้นตอนการใช้งาน (ตั้งค่า → บันทึกเที่ยววิ่ง → ออกเอกสาร)
+  function renderStepGuide(missing) {
+    const s1 = $('step-1-status');
+    const n1 = $('step-1-num');
+    if (s1 && Array.isArray(missing)) {
+      if (missing.length === 0) {
+        s1.className = 'block text-xs font-semibold mt-1 text-emerald-700';
+        s1.innerHTML = '<i class="fa-solid fa-circle-check mr-1"></i>ตั้งค่าครบแล้ว';
+        if (n1) {
+          n1.className = 'w-9 h-9 rounded-full bg-emerald-500 text-white flex items-center justify-center text-base font-bold shrink-0';
+          n1.innerHTML = '<i class="fa-solid fa-check"></i>';
+        }
+      } else {
+        s1.className = 'block text-xs font-semibold mt-1 text-amber-700';
+        s1.textContent = `ยังขาด: ${missing.join(', ')}`;
+        if (n1) {
+          n1.className = 'w-9 h-9 rounded-full bg-amber-100 text-amber-800 flex items-center justify-center text-base font-bold shrink-0';
+          n1.textContent = '1';
+        }
+      }
+    }
+    const s2 = $('step-2-status');
+    if (s2) {
+      const n = Number(state.todayLogsCount) || 0;
+      s2.textContent = n > 0 ? `วันนี้บันทึกแล้ว ${formatInt(n)} เที่ยว` : 'วันนี้ยังไม่ได้บันทึก';
+    }
+  }
+
+  function scrollToEl(id) {
+    const el = $(id);
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
   function populateSelect(selectEl, options, placeholder, preserveValue = true) {
@@ -558,7 +596,7 @@
         value: String(r.id),
         label: `${r.origin} → ${r.destination}${r.unit_price ? ` (${formatMoney(r.unit_price)} บ.)` : ''}`
       })),
-      '-- เลือกเส้นทางมาตรฐาน (Auto-fill) --'
+      '-- เลือกเส้นทาง (ระบบเติมข้อมูลให้) --'
     );
 
     // Filter site dropdown (include all sites + any historical site_name)
@@ -637,9 +675,9 @@
     if (!el) return;
 
     if (tripType === 'charter') {
-      el.innerHTML = `ชีต Excel: <strong class="text-amber-700">งานเหมา / เหมา</strong> • รายการใบเบิก: <strong class="text-slate-700">${escapeHtml(billing)}</strong>`;
+      el.innerHTML = `แผ่นงาน Excel: <strong class="text-amber-700">งานเหมา / เหมา</strong> • รายการในใบเบิก: <strong class="text-slate-700">${escapeHtml(billing)}</strong>`;
     } else {
-      el.innerHTML = `ชีต Excel: <strong class="text-indigo-700">${escapeHtml(sheet)}</strong> • ใบเบิก: <strong class="text-slate-700">${escapeHtml(billing)}</strong> • โซนคอลัมน์ C: <strong>${escapeHtml(mode)}</strong>`;
+      el.innerHTML = `แผ่นงาน Excel: <strong class="text-indigo-700">${escapeHtml(sheet)}</strong> • ชื่อในใบเบิก: <strong class="text-slate-700">${escapeHtml(billing)}</strong> • สำเนาโซนแสดง: <strong>${escapeHtml(mode)}</strong>`;
     }
   }
 
@@ -648,7 +686,7 @@
     const box = $('route-meta-advanced-box');
     const btn = $('btn-toggle-route-meta');
     box.classList.toggle('hidden', !state.routeMetaExpanded);
-    btn.textContent = state.routeMetaExpanded ? 'ซ่อนการตั้งค่าชีต/ใบเบิก' : 'กำหนดชื่อชีต/ใบเบิกเอง';
+    btn.textContent = state.routeMetaExpanded ? 'ซ่อนการตั้งค่าเพิ่มเติม' : 'ตั้งค่าเพิ่มเติม (ไม่บังคับ)';
   }
 
   function onWorkerSelectChange() {
@@ -665,9 +703,9 @@
       }
       vehSelect.value = worker.default_vehicle;
       pulseElement(vehSelect);
-      hint.innerHTML = `<span class="text-emerald-700 font-semibold"><i class="fa-solid fa-wand-magic-sparkles mr-1"></i>Auto-fill ทะเบียนประจำตัว: ${escapeHtml(worker.default_vehicle)}</span>`;
+      hint.innerHTML = `<span class="text-emerald-700 font-semibold"><i class="fa-solid fa-wand-magic-sparkles mr-1"></i>เติมรถประจำตัวให้แล้ว: ${escapeHtml(worker.default_vehicle)}</span>`;
     } else {
-      hint.textContent = 'เลือกคนขับเพื่อ Auto-fill ทะเบียนรถประจำตัว';
+      hint.textContent = 'เลือกคนขับแล้วระบบเติมทะเบียนรถประจำตัวให้';
     }
   }
 
@@ -752,7 +790,7 @@
     $('form-route-sheet-name').value = '';
     $('form-billing-title').value = '';
     $('form-display-mode-zone').value = 'worker_name';
-    $('form-worker-vehicle-hint').textContent = 'เลือกคนขับเพื่อ Auto-fill ทะเบียนรถประจำตัว';
+    $('form-worker-vehicle-hint').textContent = 'เลือกคนขับแล้วระบบเติมทะเบียนรถประจำตัวให้';
 
     $('swap-status-badge').classList.add('hidden');
     $('swap-status-badge').classList.remove('inline-flex');
@@ -763,7 +801,7 @@
     $('btn-cancel-edit').classList.add('hidden');
     $('btn-cancel-edit').classList.remove('flex');
     $('form-card-container').classList.remove('ring-2', 'ring-amber-400');
-    $('form-mode-title').textContent = 'บันทึกข้อมูลการเดินทางพนักงาน (สะสมรายเที่ยว)';
+    $('form-mode-title').textContent = 'ขั้นที่ 2: บันทึกเที่ยววิ่ง';
     $('form-mode-icon').innerHTML = '<i class="fa-solid fa-plus"></i>';
     $('btn-submit-text').textContent = 'บันทึกข้อมูลการเดินทาง';
     $('btn-submit-icon').className = 'fa-solid fa-floppy-disk text-amber-400';
@@ -1969,7 +2007,7 @@
     const el = $('list-vehicles');
     if (state.vehicles.length === 0) {
       el.innerHTML =
-        '<div class="col-span-full py-10 text-center text-xs text-slate-400 border border-dashed border-slate-300 rounded-xl">ยังไม่มีทะเบียนรถในระบบ — เพิ่มทะเบียนรถจากฟอร์มด้านบน</div>';
+        '<div class="col-span-full py-10 text-center text-xs text-slate-400 border border-dashed border-slate-300 rounded-xl">ยังไม่มีทะเบียนรถ — พิมพ์เลขทะเบียนในช่องด้านบน แล้วกด "เพิ่มทะเบียนรถ"</div>';
       return;
     }
     el.innerHTML = state.vehicles
@@ -2003,7 +2041,7 @@
   function renderWorkersList() {
     const el = $('list-workers');
     if (state.workers.length === 0) {
-      el.innerHTML = '<div class="py-10 text-center text-xs text-slate-400">ยังไม่มีรายชื่อคนขับในระบบ — เพิ่มคนขับจากฟอร์มด้านบน</div>';
+      el.innerHTML = '<div class="py-10 text-center text-xs text-slate-400">ยังไม่มีคนขับ — พิมพ์ชื่อในช่องด้านบน เลือกรถประจำตัว แล้วกด "เพิ่มคนขับ"</div>';
       return;
     }
     el.innerHTML = state.workers
@@ -2043,7 +2081,7 @@
   function renderSitesList() {
     const el = $('list-sites');
     if (state.sites.length === 0) {
-      el.innerHTML = '<div class="py-10 text-center text-xs text-slate-400">ยังไม่มีไซต์งาน / โครงการในระบบ — เพิ่มโครงการจากฟอร์มด้านบน</div>';
+      el.innerHTML = '<div class="py-10 text-center text-xs text-slate-400">ยังไม่มีโครงการ — พิมพ์ชื่อโครงการในช่องด้านบน แล้วกด "เพิ่มโครงการ"</div>';
       return;
     }
     el.innerHTML = state.sites
@@ -2083,7 +2121,7 @@
   function renderRoutesList() {
     const el = $('list-routes');
     if (state.routes.length === 0) {
-      el.innerHTML = '<div class="py-10 text-center text-xs text-slate-400">ยังไม่มีเส้นทางในระบบ — เพิ่มเส้นทางจากฟอร์มด้านบน</div>';
+      el.innerHTML = '<div class="py-10 text-center text-xs text-slate-400">ยังไม่มีเส้นทาง — กรอกต้นทาง ปลายทาง เวลา และราคาด้านบน แล้วกด "เพิ่มเส้นทาง"</div>';
       return;
     }
     el.innerHTML = state.routes
@@ -2102,13 +2140,13 @@
               ${r.active ? '' : '<span class="text-[10px] px-2 py-0.5 rounded-full bg-slate-200 text-slate-600 font-semibold">ปิดใช้งาน</span>'}
             </div>
             <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-600">
-              <span><strong class="text-slate-700">แท็บชีต:</strong> ${escapeHtml(r.route_sheet_name)}</span>
-              <span><strong class="text-slate-700">ใบเบิก:</strong> ${escapeHtml(r.billing_title)}</span>
+              <span><strong class="text-slate-700">แผ่นงาน Excel:</strong> ${escapeHtml(r.route_sheet_name)}</span>
+              <span><strong class="text-slate-700">ชื่อในใบเบิก:</strong> ${escapeHtml(r.billing_title)}</span>
               <span><strong class="text-slate-700">เวลา:</strong> ${escapeHtml(r.default_dep_time || '-')} – ${escapeHtml(r.default_arr_time || '-')}</span>
               <span>
                 <strong class="text-slate-700">โซนคอลัมน์ C:</strong>
                 <span class="px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-800 font-semibold text-[11px]">
-                  ${r.display_mode_zone === 'license_plate' ? 'ทะเบียนรถ (license_plate)' : 'ชื่อคนขับ (worker_name)'}
+                  ${r.display_mode_zone === 'license_plate' ? 'สำเนาโซนแสดง: ทะเบียนรถ' : 'สำเนาโซนแสดง: ชื่อคนขับ'}
                 </span>
               </span>
             </div>
@@ -2272,7 +2310,7 @@
               class="w-full min-h-[42px] px-3 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600" />
           </div>
           <div>
-            <label class="block text-xs font-semibold text-slate-700 mb-1">ทะเบียนรถประจำตัว (Auto-fill)</label>
+            <label class="block text-xs font-semibold text-slate-700 mb-1">ทะเบียนรถประจำตัว</label>
             <select id="m-veh" class="w-full min-h-[42px] px-3 py-2 rounded-xl border border-slate-300 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-600">
               <option value="">-- ยังไม่ผูกทะเบียนรถ --</option>
               ${vehOpts}
@@ -2368,32 +2406,32 @@
         <form id="modal-edit-form" class="space-y-3">
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label class="block text-xs font-semibold text-slate-700 mb-1">ต้นทาง (origin) *</label>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">ต้นทาง *</label>
               <input type="text" id="m-origin" value="${escapeHtml(r.origin)}" required
                 class="w-full min-h-[40px] px-3 py-2 rounded-xl border border-slate-300 text-sm" />
             </div>
             <div>
-              <label class="block text-xs font-semibold text-slate-700 mb-1">ปลายทาง (destination) *</label>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">ปลายทาง *</label>
               <input type="text" id="m-dest" value="${escapeHtml(r.destination)}" required
                 class="w-full min-h-[40px] px-3 py-2 rounded-xl border border-slate-300 text-sm" />
             </div>
             <div>
-              <label class="block text-xs font-semibold text-slate-700 mb-1">ชื่อแท็บชีต Excel (route_sheet_name)</label>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">ชื่อแผ่นงาน (แท็บ) ในไฟล์ Excel</label>
               <input type="text" id="m-sheet" value="${escapeHtml(r.route_sheet_name)}"
                 class="w-full min-h-[40px] px-3 py-2 rounded-xl border border-slate-300 text-sm" />
             </div>
             <div>
-              <label class="block text-xs font-semibold text-slate-700 mb-1">ชื่อรายการในใบเบิก (billing_title)</label>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">ชื่อรายการที่แสดงในใบเบิก</label>
               <input type="text" id="m-billing" value="${escapeHtml(r.billing_title)}"
                 class="w-full min-h-[40px] px-3 py-2 rounded-xl border border-slate-300 text-sm" />
             </div>
             <div>
-              <label class="block text-xs font-semibold text-slate-700 mb-1">เวลาออกมาตรฐาน</label>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">เวลาออกปกติ</label>
               <input type="time" id="m-dep" value="${escapeHtml(r.default_dep_time)}"
                 class="w-full min-h-[40px] px-3 py-2 rounded-xl border border-slate-300 text-sm" />
             </div>
             <div>
-              <label class="block text-xs font-semibold text-slate-700 mb-1">เวลาถึงมาตรฐาน</label>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">เวลาถึงปกติ</label>
               <input type="time" id="m-arr" value="${escapeHtml(r.default_arr_time)}"
                 class="w-full min-h-[40px] px-3 py-2 rounded-xl border border-slate-300 text-sm" />
             </div>
@@ -2403,10 +2441,10 @@
                 class="w-full min-h-[40px] px-3 py-2 rounded-xl border border-slate-300 text-sm" />
             </div>
             <div>
-              <label class="block text-xs font-semibold text-slate-700 mb-1">คอลัมน์ C ในสำเนาโซน</label>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">ไฟล์สำเนาโซน: ช่องคอลัมน์ C ให้แสดง</label>
               <select id="m-mode" class="w-full min-h-[40px] px-3 py-2 rounded-xl border border-slate-300 text-sm bg-white">
-                <option value="worker_name" ${r.display_mode_zone !== 'license_plate' ? 'selected' : ''}>ชื่อคนขับ (worker_name)</option>
-                <option value="license_plate" ${r.display_mode_zone === 'license_plate' ? 'selected' : ''}>ทะเบียนรถ (license_plate)</option>
+                <option value="worker_name" ${r.display_mode_zone !== 'license_plate' ? 'selected' : ''}>ชื่อคนขับ</option>
+                <option value="license_plate" ${r.display_mode_zone === 'license_plate' ? 'selected' : ''}>เลขทะเบียนรถ</option>
               </select>
             </div>
           </div>
@@ -2638,6 +2676,33 @@
     $('mobile-nav-front').addEventListener('click', () => switchView('front'));
     $('mobile-nav-back').addEventListener('click', () => switchView('back'));
     $('btn-goto-backoffice-hint').addEventListener('click', () => switchView('back'));
+
+    // แถบ 3 ขั้นตอน + ปุ่ม "ถัดไป" ในหน้าตั้งค่า
+    $('step-1').addEventListener('click', () => {
+      if (state.user && state.user.role === 'admin') {
+        switchView('back');
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      } else {
+        showToast('การตั้งค่ารายชื่อ รถ และเส้นทาง ทำได้เฉพาะแอดมิน — กรุณาแจ้งแอดมิน', 'warning');
+      }
+    });
+    $('step-2').addEventListener('click', () => {
+      scrollToEl('form-card-container');
+      setTimeout(() => $('form-date') && $('form-date').focus({ preventScroll: true }), 400);
+    });
+    $('step-3').addEventListener('click', () => scrollToEl('logs-section'));
+    document.querySelectorAll('[data-goto-bo]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        switchBoTab(btn.getAttribute('data-goto-bo'));
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      });
+    });
+    document.querySelectorAll('[data-goto-view]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        switchView(btn.getAttribute('data-goto-view'));
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      });
+    });
 
     // Back-Office Sub-Tabs
     $('bo-tab-vehicles').addEventListener('click', () => switchBoTab('vehicles'));
