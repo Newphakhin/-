@@ -1,7 +1,9 @@
 /**
- * ตัวสร้างไฟล์ Excel (.xlsx) ด้วย ExcelJS — 2 รูปแบบตามเอกสารของบริษัท
- *   1) สำเนาโซน  : buildZoneCopyWorkbook(ExcelJS, logs, opts)
+ * ตัวสร้างไฟล์ Excel (.xlsx) ด้วย ExcelJS — จัดรูปแบบเหมือนไฟล์ต้นฉบับบริษัท 100%
+ *   1) สำเนาโซน      : buildZoneCopyWorkbook(ExcelJS, logs, opts)
+ *      อ้างอิงโครงสร้าง ฟอนต์ สีไฮไลท์ คอลัมน์ ความสูงแถว สูตรสรุปเที่ยว (COUNTIF/SUM) จากต้นฉบับสำเนาโซน
  *   2) ใบเบิกโครงการ : buildBillingWorkbook(ExcelJS, logs, opts)
+ *      อ้างอิงโครงสร้าง ฟอนต์ Angsana New / Tahoma / Arial ขนาด สัดส่วนคอลัมน์ ความสูงแถว เส้นประ สูตรคำนวณ และการตัดหน้า 30 แถว จากต้นฉบับใบเบิก
  * ไม่มีข้อมูลตัวอย่างในโค้ดนี้ — ทุกแถวมาจากบันทึกการเดินทาง (travel_logs) ที่ส่งเข้ามาเท่านั้น
  */
 (function (root, factory) {
@@ -11,10 +13,30 @@
 })(typeof window !== 'undefined' ? window : globalThis, function () {
   'use strict';
 
-  const COMPANY = 'บริษัท จักรพงษ์ ขนส่ง (2003) จำกัด';
+  const COMPANY_ZONE = 'บริษัท จักรพงษ์ ขนส่ง (2003) จำกัด';
+  const COMPANY_BILLING = 'บริษัท จักรพงษ์ ขนส่ง ( 2003 ) จำกัด';
   const THAI_MONTHS_SHORT = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
   const MIN_ZONE_ROWS = 45;
   const OP_ROWS_PER_SHEET = 30;
+  const ACCOUNTING_FMT = '_-* #,##0.00_-;-* #,##0.00_-;_-* "-"??_-;_-@';
+
+  // สีตามไฟล์ต้นฉบับสำเนาโซน
+  const COLOR_BLACK = { argb: 'FF000000' };
+  const COLOR_RED = { argb: 'FFFF0000' };
+  const FILL_YELLOW = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFF00' } };
+  const FILL_GREEN = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF92D050' } };
+  const FILL_ROSE = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD99694' } };
+  const CHARTER_GROUP_FILLS = [
+    { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF92D050' } }, // เขียว
+    { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFCCC0DA' } }, // ม่วงอ่อน
+    { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFB8CCE4' } }, // ฟ้าอ่อน
+    { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE6B8B7' } }, // ชมพูอ่อน
+    { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFF00' } }  // เหลือง
+  ];
+
+  const THIN = { style: 'thin', color: COLOR_BLACK };
+  const DOTTED = { style: 'dotted', color: COLOR_BLACK };
+  const BORDER_ALL = { top: THIN, left: THIN, bottom: THIN, right: THIN };
 
   // ---------------------------------------------------------------- helpers
   function parseIso(iso) {
@@ -96,30 +118,34 @@
     };
   }
 
-  const THIN = { style: 'thin', color: { argb: 'FF000000' } };
-  const BORDER_ALL = { top: THIN, left: THIN, bottom: THIN, right: THIN };
-
-  function pageSetup(ws) {
-    ws.pageSetup = {
-      paperSize: 9, // A4
-      orientation: 'portrait',
-      fitToPage: true,
-      fitToWidth: 1,
-      fitToHeight: 1,
-      horizontalCentered: true,
-      margins: { left: 0.4, right: 0.4, top: 0.5, bottom: 0.5, header: 0.3, footer: 0.3 }
-    };
-  }
-
-  function style(cell, { size = 12, bold = false, h = 'center', v = 'middle', border = false, wrap = false, numFmt } = {}) {
-    cell.font = { name: 'Arial', size, bold };
+  function applyStyle(
+    cell,
+    {
+      fontName = 'Arial',
+      size = 12,
+      bold = false,
+      color = COLOR_BLACK,
+      h = 'center',
+      v = 'middle',
+      border = null,
+      fill = null,
+      wrap = false,
+      numFmt = null
+    } = {}
+  ) {
+    cell.font = { name: fontName, size, bold, color };
     cell.alignment = { horizontal: h, vertical: v, wrapText: wrap };
-    if (border) cell.border = BORDER_ALL;
+    if (border) cell.border = border;
+    if (fill) cell.fill = fill;
     if (numFmt) cell.numFmt = numFmt;
   }
 
-  function borderBox(ws, r1, c1, r2, c2) {
-    for (let r = r1; r <= r2; r++) for (let c = c1; c <= c2; c++) ws.getCell(r, c).border = BORDER_ALL;
+  function borderBox(ws, r1, c1, r2, c2, border = BORDER_ALL) {
+    for (let r = r1; r <= r2; r++) {
+      for (let c = c1; c <= c2; c++) {
+        ws.getCell(r, c).border = border;
+      }
+    }
   }
 
   function newWorkbook(ExcelJS) {
@@ -129,27 +155,49 @@
     return wb;
   }
 
-  // ============================================================ 1) สำเนาโซน
-  function addZoneSheet(wb, sheetName, rows, kind, projectLabel) {
+  // ============================================================================
+  // 1) ไฟล์สำเนาโซน — เหมือนต้นฉบับ "สำเนา27 โซนวิภา" 100%
+  // ============================================================================
+  function addZoneSheet(wb, sheetName, rows, kind) {
     const ws = wb.addWorksheet(sheetName);
-    pageSetup(ws);
-    [9, 12, 13, 26, 9, 14, 11, 18].forEach((w, i) => {
+    ws.properties.defaultRowHeight = 14.5;
+    ws.views = [{ state: 'normal', zoomScale: 100, zoomScaleNormal: 100, showGridLines: true }];
+    ws.pageSetup = {
+      paperSize: 9, // A4
+      orientation: 'portrait',
+      fitToPage: true,
+      fitToWidth: 1,
+      fitToHeight: 1,
+      margins: { left: 0.7, right: 0.7, top: 0.75, bottom: 0.75, header: 0.3, footer: 0.3 }
+    };
+
+    const colWidths =
+      kind === 'charter'
+        ? [10, 13.45, 13.45, 37.63, 8.73, 37.54, 13.27, 44]
+        : [8.73, 11.18, 11.91, 25.36, 8.27, 13.45, 10.73, 14.63];
+    colWidths.forEach((w, i) => {
       ws.getColumn(i + 1).width = w;
     });
 
-    const titles = [
-      ['A1:H1', COMPANY, 25, 38],
-      ['A2:H2', 'บันทึกรายการรถ 6 ล้อ รับ-ส่งคนงาน', 18, 28],
-      ['A3:H3', `โครงการ  ${projectLabel || ''}`, 15, 24]
-    ];
-    titles.forEach(([range, text, size, height], i) => {
-      ws.mergeCells(range);
-      const cell = ws.getCell(range.split(':')[0]);
-      cell.value = text;
-      style(cell, { size, bold: true });
-      ws.getRow(i + 1).height = height;
-    });
+    // หัวกระดาษ 3 แถว (แถว 3 "โครงการ  " ตัวแดงเหมือนต้นฉบับ)
+    ws.mergeCells('A1:H1');
+    ws.getCell('A1').value = COMPANY_ZONE;
+    applyStyle(ws.getCell('A1'), { fontName: 'Arial', size: 25, bold: true, color: COLOR_BLACK, h: 'center', v: 'bottom' });
+    ws.getRow(1).height = 31.5;
 
+    ws.mergeCells('A2:H2');
+    ws.getCell('A2').value = 'บันทึกรายการรถ 6 ล้อ รับ-ส่งคนงาน';
+    applyStyle(ws.getCell('A2'), { fontName: 'Arial', size: 18, bold: true, color: COLOR_BLACK, h: 'center', v: 'bottom' });
+    ws.getRow(2).height = 23;
+
+    ws.mergeCells('A3:H3');
+    ws.getCell('A3').value = 'โครงการ  ';
+    applyStyle(ws.getCell('A3'), { fontName: 'Arial', size: 15, bold: true, color: COLOR_RED, h: 'center', v: 'bottom' });
+    ws.getRow(3).height = 19;
+
+    ws.getRow(4).height = 19;
+
+    // แถวที่ 5 หัวตาราง (Arial 12pt ไม่หนา กึ่งกลาง ตีกรอบ 4 ด้าน)
     const headers =
       kind === 'charter'
         ? ['ลำดับ', 'วัน เดือน ปี', 'ทะเบียนรถ', 'จาก', 'เวลา', 'ถึง', 'ราคา', 'หมายเหตุ']
@@ -157,70 +205,214 @@
     headers.forEach((text, i) => {
       const cell = ws.getCell(5, i + 1);
       cell.value = text;
-      style(cell, { size: 12, border: true });
+      applyStyle(cell, {
+        fontName: 'Arial',
+        size: 12,
+        bold: false,
+        color: COLOR_BLACK,
+        h: 'center',
+        v: i === 5 || (kind === 'charter' && i === 7) ? 'middle' : 'bottom',
+        border: BORDER_ALL
+      });
     });
-    ws.getRow(5).height = 22;
+    ws.getRow(5).height = 15.5;
 
-    const total = Math.max(MIN_ZONE_ROWS, rows.length);
+    // ข้อมูลและตารางสรุปจำนวนเที่ยวรายคน/รายทะเบียน (เฉพาะสายวิ่งปกติ)
+    if (kind === 'charter') {
+      const totalRows = Math.max(MIN_ZONE_ROWS, rows.length);
+      let prevDate = '';
+      let prevGroupKey = '';
+      let groupColorIdx = -1;
+
+      for (let i = 0; i < totalRows; i++) {
+        const r = 6 + i;
+        const log = rows[i];
+
+        const aCell = ws.getCell(r, 1);
+        aCell.value = i + 1;
+        applyStyle(aCell, { fontName: 'Calibri', size: 11, h: 'center', v: 'bottom', border: BORDER_ALL });
+
+        if (!log) {
+          for (let c = 2; c <= 8; c++) {
+            applyStyle(ws.getCell(r, c), {
+              fontName: 'Calibri',
+              size: 11,
+              h: c === 8 ? 'left' : 'center',
+              v: c === 8 ? 'middle' : 'bottom',
+              border: BORDER_ALL
+            });
+          }
+          continue;
+        }
+
+        const gKey = `${log.trip_date}||${log.origin}||${log.destination}`;
+        if (gKey !== prevGroupKey) {
+          prevGroupKey = gKey;
+          groupColorIdx = (groupColorIdx + 1) % CHARTER_GROUP_FILLS.length;
+        }
+        const rowFill = CHARTER_GROUP_FILLS[groupColorIdx];
+
+        const showDate = log.trip_date !== prevDate;
+        prevDate = log.trip_date;
+
+        const setCharterCell = (c, val, opts = {}) => {
+          const cell = ws.getCell(r, c);
+          if (val !== undefined && val !== null && val !== '') cell.value = val;
+          applyStyle(cell, {
+            fontName: 'Calibri',
+            size: 11,
+            h: 'center',
+            v: 'bottom',
+            border: BORDER_ALL,
+            fill: rowFill,
+            ...opts
+          });
+        };
+
+        setCharterCell(2, showDate ? toBE(log.trip_date) : '', { numFmt: '@' });
+        setCharterCell(3, log.license_plate, { numFmt: '@' });
+        setCharterCell(4, log.origin);
+        setCharterCell(5, showTime(log.dep_time), { numFmt: '@' });
+        setCharterCell(6, log.destination);
+        setCharterCell(7, Number(log.unit_price) || 0, { v: 'middle', numFmt: '#,##0' });
+        setCharterCell(8, log.remark, { h: 'left', v: 'middle' });
+      }
+      return ws;
+    }
+
+    // สายวิ่งปกติ: เตรียมข้อมูลสรุปรายคนขับ/ทะเบียน (คอลัมน์ F = ชื่อ/ทะเบียนพื้นเขียว, คอลัมน์ G = COUNTIF พื้นเหลือง, รวม = SUM พื้นชมพู)
+    const primaryOrigin = rows.length > 0 ? String(rows[0].origin || '').trim() : '';
+    const lastDataRow = 5 + rows.length;
+    const distinctColC = [];
+    const colCCounts = new Map();
+    for (const log of rows) {
+      const col3Val = String(log.display_mode_zone === 'license_plate' ? log.license_plate : log.worker_name || '').trim();
+      if (!col3Val) continue;
+      if (!colCCounts.has(col3Val)) {
+        distinctColC.push(col3Val);
+        colCCounts.set(col3Val, 0);
+      }
+      colCCounts.set(col3Val, colCCounts.get(col3Val) + 1);
+    }
+
+    const sumStartRow = rows.length > 0 && distinctColC.length > 0 ? lastDataRow + 3 : -1;
+    const sumEndRow = sumStartRow > 0 ? sumStartRow + distinctColC.length - 1 : -1;
+    const sumTotalRow = sumEndRow > 0 ? sumEndRow + 1 : -1;
+    const totalRows = Math.max(MIN_ZONE_ROWS, sumTotalRow > 0 ? sumTotalRow - 5 + 5 : rows.length);
+
     let prevDate = '';
-    for (let i = 0; i < total; i++) {
+    for (let i = 0; i < totalRows; i++) {
       const r = 6 + i;
       const log = rows[i];
-      ws.getRow(r).height = 20;
-      const set = (col, value, opts) => {
-        const cell = ws.getCell(r, col);
-        if (value !== undefined && value !== null && value !== '') cell.value = value;
-        style(cell, { border: true, ...opts });
-      };
-      set(1, i + 1);
-      if (!log) {
-        for (let c = 2; c <= 8; c++) set(c, '');
-        continue;
-      }
-      const showDate = log.trip_date !== prevDate;
-      prevDate = log.trip_date;
-      set(2, showDate ? toBE(log.trip_date) : '');
-      if (kind === 'charter') {
-        set(3, log.license_plate);
-        set(4, log.origin, { h: 'left' });
-        set(5, showTime(log.dep_time));
-        set(6, log.destination);
-        set(7, Number(log.unit_price) || 0, { numFmt: '#,##0.00' });
-        set(8, log.remark, { h: 'left' });
+
+      // คอลัมน์ A: ลำดับ (ไม่มีพื้นสี)
+      const aCell = ws.getCell(r, 1);
+      aCell.value = i + 1;
+      applyStyle(aCell, { fontName: 'Calibri', size: 11, h: 'center', v: 'bottom', border: BORDER_ALL });
+
+      if (log) {
+        const showDate = log.trip_date !== prevDate;
+        prevDate = log.trip_date;
+        const col3Val = log.display_mode_zone === 'license_plate' ? log.license_plate : log.worker_name;
+        const isReturn = primaryOrigin && String(log.origin || '').trim() !== primaryOrigin;
+        const hasPass = log.passengers !== null && log.passengers !== undefined && log.passengers !== '';
+        const hasRemark = Boolean(String(log.remark || '').trim());
+
+        const setNormal = (c, val, opts = {}) => {
+          const cell = ws.getCell(r, c);
+          if (val !== undefined && val !== null && val !== '') cell.value = val;
+          applyStyle(cell, {
+            fontName: 'Calibri',
+            size: 11,
+            h: 'center',
+            v: 'bottom',
+            border: BORDER_ALL,
+            ...opts
+          });
+        };
+
+        setNormal(2, showDate ? toBE(log.trip_date) : '', { fill: FILL_YELLOW, numFmt: '@' });
+        setNormal(3, col3Val, { fill: FILL_YELLOW, numFmt: '@' });
+        setNormal(4, log.origin, { h: isReturn ? 'right' : 'left', fill: FILL_YELLOW });
+        setNormal(5, showTime(log.dep_time), { fill: FILL_YELLOW, numFmt: '@' });
+        setNormal(6, hasPass ? Number(log.passengers) : '', { v: 'middle', fill: hasPass ? FILL_YELLOW : null });
+        setNormal(7, '');
+        setNormal(8, log.remark, { h: 'center', fill: hasRemark ? FILL_YELLOW : null });
       } else {
-        const col3 = log.display_mode_zone === 'license_plate' ? log.license_plate : log.worker_name;
-        set(3, col3);
-        set(4, log.origin, { h: 'left' });
-        set(5, showTime(log.dep_time));
-        set(6, log.passengers === null || log.passengers === undefined || log.passengers === '' ? '' : Number(log.passengers));
-        set(7, '');
-        set(8, log.remark, { h: 'left' });
+        // แถวว่างใต้ข้อมูล หรือแถวสรุปจำนวนเที่ยวรายคน/ทะเบียน
+        for (let c = 2; c <= 8; c++) {
+          applyStyle(ws.getCell(r, c), {
+            fontName: 'Calibri',
+            size: 11,
+            h: c === 4 ? 'right' : 'center',
+            v: c === 6 ? 'middle' : 'bottom',
+            border: BORDER_ALL
+          });
+        }
+
+        if (sumStartRow > 0 && r >= sumStartRow && r <= sumEndRow) {
+          const label = distinctColC[r - sumStartRow];
+          const count = colCCounts.get(label) || 0;
+          const fCell = ws.getCell(r, 6);
+          fCell.value = label;
+          applyStyle(fCell, {
+            fontName: 'Calibri',
+            size: 11,
+            h: 'center',
+            v: 'bottom',
+            border: BORDER_ALL,
+            fill: FILL_GREEN
+          });
+          const gCell = ws.getCell(r, 7);
+          gCell.value = { formula: `COUNTIF(C$6:C$${lastDataRow},F${r})`, result: count };
+          applyStyle(gCell, {
+            fontName: 'Calibri',
+            size: 11,
+            h: 'center',
+            v: 'bottom',
+            border: BORDER_ALL,
+            fill: FILL_YELLOW
+          });
+        } else if (sumTotalRow > 0 && r === sumTotalRow) {
+          const gCell = ws.getCell(r, 7);
+          gCell.value = { formula: `SUM(G${sumStartRow}:G${sumEndRow})`, result: rows.length };
+          applyStyle(gCell, {
+            fontName: 'Calibri',
+            size: 11,
+            h: 'center',
+            v: 'bottom',
+            border: BORDER_ALL,
+            fill: FILL_ROSE
+          });
+        }
       }
     }
+
     return ws;
   }
 
-  function buildZoneCopyWorkbook(ExcelJS, logs, opts = {}) {
+  function buildZoneCopyWorkbook(ExcelJS, logs) {
     const wb = newWorkbook(ExcelJS);
     const namer = createSheetNamer();
     const sorted = sortChrono(logs);
     const normal = sorted.filter((l) => l.trip_type !== 'charter');
     const charter = sorted.filter((l) => l.trip_type === 'charter');
-    const projectOf = (rows) => opts.siteName || distinctSites(rows).join(', ');
 
     for (const [key, rows] of groupBy(normal, (l) => l.route_sheet_name || `${l.origin} - ${l.destination}`)) {
-      addZoneSheet(wb, namer(key, 'สายวิ่ง'), rows, 'normal', projectOf(rows));
+      addZoneSheet(wb, namer(key, 'สายวิ่ง'), rows, 'normal');
     }
     if (charter.length > 0) {
-      addZoneSheet(wb, namer('งานเหมา'), charter, 'charter', projectOf(charter));
+      addZoneSheet(wb, namer('งานเหมา'), charter, 'charter');
     }
     if (wb.worksheets.length === 0) {
-      addZoneSheet(wb, namer('สำเนา'), [], 'normal', opts.siteName || '');
+      addZoneSheet(wb, namer('สำเนา'), [], 'normal');
     }
     return wb;
   }
 
-  // ============================================================ 2) ใบเบิกโครงการ
+  // ============================================================================
+  // 2) ไฟล์ใบเบิกโครงการ — เหมือนต้นฉบับ "ใบเบิกไลฟ์รัชดา-พระราม9" 100%
+  // ============================================================================
   function periodLabel(start, end) {
     const a = parseIso(start);
     const b = parseIso(end);
@@ -242,106 +434,253 @@
 
   function addBillingSummarySheet(wb, normal, charter, ctx) {
     const ws = wb.addWorksheet('ใบเบิก');
-    pageSetup(ws);
-    [8, 14, 14, 14, 10, 10, 12, 13, 13, 20].forEach((w, i) => {
+    ws.properties.defaultRowHeight = 14.5;
+    ws.views = [{ state: 'normal', zoomScale: 20, zoomScaleNormal: 20, showGridLines: true }];
+    ws.pageSetup = {
+      paperSize: 9, // A4
+      orientation: 'portrait',
+      fitToPage: true,
+      fitToWidth: 1,
+      fitToHeight: 1,
+      margins: { left: 0.39, right: 0.47, top: 0.42, bottom: 0.43, header: 0.3, footer: 0.3 }
+    };
+
+    // ความกว้างคอลัมน์ตรงต้นฉบับ 100%
+    [30.91, 72.36, 60.27, 72.09, 43.36, 45.63, 90, 60, 72.36, 126.91].forEach((w, i) => {
       ws.getColumn(i + 1).width = w;
     });
 
+    // แถวที่ 1: หัวเอกสาร
     ws.mergeCells('A1:J1');
     ws.getCell('A1').value = 'ใบเบิกผลงานผู้รับเหมา';
-    style(ws.getCell('A1'), { size: 20, bold: true });
-    ws.getRow(1).height = 32;
+    applyStyle(ws.getCell('A1'), { fontName: 'Tahoma', size: 65, bold: false, h: 'center', v: 'bottom' });
+    ws.getRow(1).height = 141;
 
+    // แถวที่ 2: ผู้รับเหมาชุด + วันที่ (J2 ขีดเส้นประใต้)
+    ws.getRow(2).height = 203;
     ws.getCell('A2').value = 'ผู้รับเหมาชุด    ';
+    applyStyle(ws.getCell('A2'), { fontName: 'Angsana New', size: 48, bold: true, h: 'left', v: 'bottom' });
     ws.mergeCells('C2:F2');
-    ws.getCell('C2').value = 'บริษัท จักรพงษ์ ขนส่ง ( 2003 ) จำกัด';
+    ws.getCell('C2').value = COMPANY_BILLING;
+    applyStyle(ws.getCell('C2'), { fontName: 'Angsana New', size: 72, bold: true, h: 'center', v: 'bottom' });
     ws.mergeCells('H2:I2');
     ws.getCell('H2').value = 'วันที่';
+    applyStyle(ws.getCell('H2'), { fontName: 'Angsana New', size: 55, bold: true, h: 'left', v: 'bottom' });
     ws.getCell('J2').value = toBE(ctx.issueDate);
+    applyStyle(ws.getCell('J2'), {
+      fontName: 'Tahoma',
+      size: 65,
+      bold: false,
+      h: 'center',
+      v: 'bottom',
+      border: { bottom: DOTTED },
+      numFmt: '@'
+    });
 
+    // แถวที่ 3: โครงการ + ประจำงวด (C3:F3 และ J3 ขีดเส้นประใต้)
+    ws.getRow(3).height = 128.5;
     ws.getCell('A3').value = 'โครงการ';
+    applyStyle(ws.getCell('A3'), { fontName: 'Angsana New', size: 48, bold: true, h: 'left', v: 'bottom' });
     ws.mergeCells('C3:F3');
     ws.getCell('C3').value = ctx.siteName;
+    applyStyle(ws.getCell('C3'), { fontName: 'Angsana New', size: 65, bold: true, h: 'center', v: 'bottom' });
+    for (let c = 3; c <= 6; c++) ws.getCell(3, c).border = { bottom: DOTTED };
     ws.mergeCells('H3:I3');
     ws.getCell('H3').value = 'ประจำงวด';
+    applyStyle(ws.getCell('H3'), { fontName: 'Angsana New', size: 55, bold: true, h: 'left', v: 'bottom' });
     ws.getCell('J3').value = periodLabel(ctx.start, ctx.end);
-    for (const addr of ['A2', 'C2', 'H2', 'J2', 'A3', 'C3', 'H3', 'J3']) {
-      style(ws.getCell(addr), { size: 13, bold: true, h: addr.startsWith('A') ? 'left' : 'center' });
-    }
+    applyStyle(ws.getCell('J3'), {
+      fontName: 'Tahoma',
+      size: 59,
+      bold: false,
+      h: 'center',
+      v: 'bottom',
+      border: { bottom: DOTTED },
+      numFmt: '@'
+    });
 
-    // หัวตาราง
+    // แถวที่ 4: เส้นขอบบนของหัวตาราง
+    ws.getRow(4).height = 45.5;
+    for (let c = 1; c <= 10; c++) ws.getCell(4, c).border = { bottom: THIN };
+
+    // แถวที่ 5-6: หัวตาราง 2 ชั้น (Angsana New 72pt Bold)
+    ws.getRow(5).height = 114.5;
+    ws.getRow(6).height = 133.5;
     ws.mergeCells('A5:A6');
     ws.mergeCells('B5:D6');
     ws.mergeCells('E5:G5');
     ws.mergeCells('H5:I6');
     ws.mergeCells('J5:J6');
-    const heads = { A5: 'ลำดับ', B5: 'รายละเอียดงาน', E5: 'ปริมาณงาน', H5: 'จำนวนเงิน', J5: 'หมายเหตุ', E6: 'จำนวน', F6: 'หน่วย', G6: 'ราคา/หน่วย' };
-    for (const [addr, text] of Object.entries(heads)) ws.getCell(addr).value = text;
-    borderBox(ws, 5, 1, 6, 10);
-    for (let r = 5; r <= 6; r++) for (let c = 1; c <= 10; c++) style(ws.getCell(r, c), { size: 12, bold: true, border: true });
 
-    // รายการ: แถวคู่ 8,10,12,... เว้น 1 แถวคั่น
+    const heads = {
+      A5: 'ลำดับ',
+      B5: 'รายละเอียดงาน',
+      E5: 'ปริมาณงาน',
+      H5: 'จำนวนเงิน',
+      J5: 'หมายเหตุ',
+      E6: 'จำนวน',
+      F6: 'หน่วย',
+      G6: 'ราคา/หน่วย'
+    };
+    borderBox(ws, 5, 1, 6, 10, BORDER_ALL);
+    for (const [addr, text] of Object.entries(heads)) {
+      const cell = ws.getCell(addr);
+      cell.value = text;
+      applyStyle(cell, {
+        fontName: 'Angsana New',
+        size: 72,
+        bold: true,
+        h: 'center',
+        v: 'middle',
+        border: BORDER_ALL
+      });
+    }
+
+    // เตรียมรายการแถวคู่ 8, 10, 12... เว้น 1 แถวคั่น
     const items = [
       ...billingGroups(normal).map((g) => ({ ...g, charter: false })),
       ...billingGroups(charter).map((g) => ({ ...g, charter: true }))
     ];
-    let row = 8;
+    let nextRow = 8;
     let seq = 1;
     let grand = 0;
     const placed = [];
     for (const it of items) {
-      placed.push({ ...it, row, seq });
-      if (it.charter) ws.getCell(row + 1, 2).value = '( ขนย้าย )';
-      row += 2;
+      placed.push({ ...it, row: nextRow, seq });
+      nextRow += 2;
       seq += 1;
       grand += it.count * it.price;
     }
-    const tableEnd = Math.max(28, row - 1);
+
+    const tableEnd = Math.max(28, nextRow - 1);
     const totalRow = tableEnd + 1;
 
+    // ผสานเซลล์และตีกรอบทุกแถวตั้งแต่ 7 ถึง totalRow (ปกติ 7..29)
     for (let r = 7; r <= totalRow; r++) {
       ws.mergeCells(`B${r}:D${r}`);
       ws.mergeCells(`H${r}:I${r}`);
+      ws.getRow(r).height = r === 7 ? 131 : 183.5;
     }
-    borderBox(ws, 7, 1, totalRow, 10);
-    for (let r = 7; r <= totalRow; r++) {
-      ws.getRow(r).height = 20;
-      for (let c = 1; c <= 10; c++) {
-        style(ws.getCell(r, c), { size: 12, border: true, h: c >= 2 && c <= 4 ? 'left' : 'center' });
-      }
-    }
-    ws.getCell('B7').value = 'ค่ารถรับ -  ส่ง   ';
+    borderBox(ws, 7, 1, totalRow, 10, BORDER_ALL);
 
+    // แถวที่ 7: หัวข้อย่อย "ค่ารถรับ -  ส่ง   "
+    ws.getCell('B7').value = 'ค่ารถรับ -  ส่ง   ';
+    applyStyle(ws.getCell('B7'), {
+      fontName: 'Angsana New',
+      size: 70,
+      bold: true,
+      h: 'left',
+      v: 'bottom',
+      border: BORDER_ALL
+    });
+
+    // ใส่รายการแต่ละแถวคู่ + "( ขนย้าย )" แถวถัดไปสำหรับงานเหมา
     for (const it of placed) {
       const r = it.row;
       ws.getCell(r, 1).value = it.seq;
+      applyStyle(ws.getCell(r, 1), { fontName: 'Angsana New', size: 70, bold: false, h: 'center', v: 'bottom', border: BORDER_ALL });
+
       ws.getCell(r, 2).value = it.title;
+      applyStyle(ws.getCell(r, 2), {
+        fontName: it.charter ? 'Arial' : 'Tahoma',
+        size: 70,
+        bold: false,
+        h: 'left',
+        v: 'bottom',
+        border: BORDER_ALL,
+        numFmt: '@'
+      });
+
       ws.getCell(r, 5).value = it.count;
+      applyStyle(ws.getCell(r, 5), { fontName: 'Tahoma', size: 71, bold: false, h: 'center', v: 'bottom', border: BORDER_ALL });
+
       ws.getCell(r, 6).value = 'เที่ยว';
+      applyStyle(ws.getCell(r, 6), { fontName: 'Tahoma', size: 71, bold: false, h: 'center', v: 'bottom', border: BORDER_ALL });
+
       ws.getCell(r, 7).value = it.price;
-      ws.getCell(r, 7).numFmt = '#,##0.00';
+      applyStyle(ws.getCell(r, 7), {
+        fontName: 'Tahoma',
+        size: 71,
+        bold: false,
+        h: 'center',
+        v: 'bottom',
+        border: BORDER_ALL,
+        numFmt: ACCOUNTING_FMT
+      });
+
       ws.getCell(r, 8).value = { formula: `SUM(E${r}*G${r})`, result: it.count * it.price };
-      ws.getCell(r, 8).numFmt = '#,##0.00';
-      if (it.remark) ws.getCell(r, 10).value = it.remark;
+      applyStyle(ws.getCell(r, 8), {
+        fontName: 'Tahoma',
+        size: 71,
+        bold: false,
+        h: 'center',
+        v: 'bottom',
+        border: BORDER_ALL,
+        numFmt: ACCOUNTING_FMT
+      });
+
+      if (it.remark) {
+        ws.getCell(r, 10).value = it.remark;
+        applyStyle(ws.getCell(r, 10), { fontName: 'Angsana New', size: 48, bold: false, h: 'center', v: 'bottom', border: BORDER_ALL });
+      }
+
+      if (it.charter) {
+        ws.getCell(r + 1, 2).value = '( ขนย้าย )';
+        applyStyle(ws.getCell(r + 1, 2), {
+          fontName: 'Arial',
+          size: 72,
+          bold: true,
+          h: 'center',
+          v: 'bottom',
+          border: BORDER_ALL,
+          numFmt: '@'
+        });
+      }
     }
 
-    // รวม
+    // แถวรวม (แถวที่ 29 เมื่อมีไม่เกิน 10 รายการ)
     ws.getCell(totalRow, 2).value = 'รวม';
-    style(ws.getCell(totalRow, 2), { size: 12, bold: true, border: true });
+    applyStyle(ws.getCell(totalRow, 2), {
+      fontName: 'Angsana New',
+      size: 73,
+      bold: true,
+      h: 'center',
+      v: 'bottom',
+      border: BORDER_ALL
+    });
     ws.getCell(totalRow, 8).value = { formula: `SUM(H8:I${tableEnd})`, result: grand };
-    style(ws.getCell(totalRow, 8), { size: 12, bold: true, border: true, numFmt: '#,##0.00' });
+    applyStyle(ws.getCell(totalRow, 8), {
+      fontName: 'Tahoma',
+      size: 70,
+      bold: false,
+      h: 'center',
+      v: 'bottom',
+      border: BORDER_ALL,
+      numFmt: ACCOUNTING_FMT
+    });
 
-    // ลายเซ็น
+    // แถวเว้นว่าง 30-31
+    ws.getRow(totalRow + 1).height = 183.5;
+    ws.getRow(totalRow + 2).height = 183.5;
+
+    // แถวลายเซ็น 32-33
     const sig1 = totalRow + 3;
     const sig2 = totalRow + 4;
+    ws.getRow(sig1).height = 144;
+    ws.getRow(sig2).height = 137;
+    ws.getRow(sig2 + 1).height = 45;
+
     ws.getCell(sig1, 5).value = 'ผู้ตรวจรับ / Checked by         ';
+    applyStyle(ws.getCell(sig1, 5), { fontName: 'Angsana New', size: 48, bold: false, h: 'left', v: 'bottom' });
+    ws.mergeCells(`G${sig1}:I${sig1}`);
+    for (let c = 7; c <= 9; c++) ws.getCell(sig1, c).border = { bottom: THIN };
+
     ws.getCell(sig2, 5).value = 'วันที่ / Date                            ';
-    for (const r of [sig1, sig2]) {
-      ws.mergeCells(`G${r}:I${r}`);
-      style(ws.getCell(r, 5), { size: 12, h: 'left' });
-      for (let c = 7; c <= 9; c++) ws.getCell(r, c).border = { bottom: THIN };
-    }
-    ws.getRow(sig2 + 1).height = 15;
+    applyStyle(ws.getCell(sig2, 5), { fontName: 'Angsana New', size: 48, bold: false, h: 'left', v: 'bottom' });
+    ws.mergeCells(`G${sig2}:I${sig2}`);
+    for (let c = 7; c <= 9; c++) ws.getCell(sig2, c).border = { bottom: THIN };
+
+    ws.mergeCells(`F${sig2 + 1}:H${sig2 + 1}`);
     return ws;
   }
 
@@ -352,84 +691,162 @@
 
     const cleanBase = cleanSheetTitle(baseName, 'ใบบันทึก');
     let pageNo = startPageNo;
+    // ต้นฉบับรัน prevDate ต่อเนื่องข้ามแผ่นต่อ (2), (3) ของสายเดียวกัน และรีเซ็ตเมื่อเริ่มสายใหม่
+    let prevDate = '';
+
     chunks.forEach((chunk, k) => {
       const suffix = k === 0 ? '' : ` (${k + 1})`;
       const raw = k === 0 ? cleanBase : `${cleanBase.slice(0, 31 - suffix.length).trim()}${suffix}`;
       const ws = wb.addWorksheet(namer(raw, 'ใบบันทึก'));
-      pageSetup(ws);
-      [7, 12, 13, 22, 9, 10, 8, 8, 9, 9, 18, 20].forEach((w, i) => {
+
+      ws.properties.defaultRowHeight = 14.5;
+      ws.views = [{ state: 'normal', zoomScale: 26, zoomScaleNormal: 26, showGridLines: true }];
+      ws.pageSetup = {
+        paperSize: 9, // A4
+        orientation: 'portrait',
+        fitToPage: true,
+        fitToWidth: 1,
+        fitToHeight: 1,
+        margins: { left: 0.7, right: 0.7, top: 0.32, bottom: 0.38, header: 0.18, footer: 0.3 }
+      };
+
+      // ความกว้างคอลัมน์ตรงต้นฉบับ 100% (A..L)
+      [37.91, 49.36, 56.63, 109, 37.91, 32.18, 36.54, 36.91, 29.63, 39, 39, 70.45].forEach((w, i) => {
         ws.getColumn(i + 1).width = w;
       });
 
+      // แถวที่ 1: หัวกระดาษ (Angsana New 55pt Bold)
       ws.mergeCells('A1:K1');
       ws.getCell('A1').value = 'ใบบันทึกการปฏิบัติงานรถ 6 ล้อ รับ - ส่งพนักงาน';
-      style(ws.getCell('A1'), { size: 16, bold: true });
-      ws.getRow(1).height = 28;
+      applyStyle(ws.getCell('A1'), { fontName: 'Angsana New', size: 55, bold: true, h: 'center', v: 'bottom' });
+      ws.getRow(1).height = 78.5;
 
+      // แถวที่ 2: แผ่นที่ (K2:L2 เส้นประใต้)
+      ws.getRow(2).height = 86;
       ws.getCell('J2').value = 'แผ่นที่';
+      applyStyle(ws.getCell('J2'), { fontName: 'Angsana New', size: 48, bold: true, h: 'center', v: 'bottom' });
       ws.mergeCells('K2:L2');
       ws.getCell('K2').value = pageNo;
+      applyStyle(ws.getCell('K2'), { fontName: 'Angsana New', size: 60, bold: true, h: 'center', v: 'bottom' });
+      ws.getCell('K2').border = { bottom: DOTTED };
+      ws.getCell('L2').border = { bottom: DOTTED };
 
+      // แถวที่ 3: สถานที่ปฏิบัติงานโครงการ + ระหว่างวันที่ + ถึงวันที่
+      ws.getRow(3).height = 81.5;
       ws.getCell('A3').value = 'สถานที่ปฏิบัติงานโครงการ :-';
+      applyStyle(ws.getCell('A3'), { fontName: 'Angsana New', size: 48, bold: true, h: 'left', v: 'bottom' });
+
       ws.mergeCells('D3:E3');
       ws.getCell('D3').value = ctx.siteName;
+      applyStyle(ws.getCell('D3'), { fontName: 'Tahoma', size: 60, bold: true, h: 'center', v: 'bottom' });
+      ws.getCell('D3').border = { bottom: DOTTED };
+      ws.getCell('E3').border = { bottom: DOTTED };
+
       ws.mergeCells('F3:G3');
       ws.getCell('F3').value = 'ระหว่างวันที่';
+      applyStyle(ws.getCell('F3'), { fontName: 'Angsana New', size: 48, bold: true, h: 'center', v: 'bottom' });
+
       ws.mergeCells('H3:I3');
       ws.getCell('H3').value = toBE(ctx.start);
+      applyStyle(ws.getCell('H3'), { fontName: 'Arial', size: 55, bold: true, h: 'center', v: 'bottom', numFmt: '@' });
+
       ws.getCell('J3').value = 'ถึงวันที่ ';
+      applyStyle(ws.getCell('J3'), { fontName: 'Angsana New', size: 50, bold: true, h: 'center', v: 'bottom' });
+
       ws.mergeCells('K3:L3');
       ws.getCell('K3').value = toBE(ctx.end);
-      for (const addr of ['J2', 'K2', 'A3', 'D3', 'F3', 'H3', 'J3', 'K3']) {
-        style(ws.getCell(addr), { size: 11, bold: true, h: addr === 'A3' ? 'left' : 'center' });
-      }
+      applyStyle(ws.getCell('K3'), { fontName: 'Arial', size: 55, bold: true, h: 'center', v: 'bottom', numFmt: '@' });
 
-      // หัวตาราง 2 ชั้น
+      // แถวที่ 4: เว้นว่าง + เส้นบนตาราง
+      ws.getRow(4).height = 27.5;
+
+      // แถวที่ 5-6: หัวตาราง 2 ชั้น ตรงตามฟอนต์และขนาดต้นฉบับ 100%
+      ws.getRow(5).height = 116.5;
+      ws.getRow(6).height = 117.5;
       ws.mergeCells('A5:A6');
       ws.mergeCells('B5:B6');
       ws.mergeCells('C5:C6');
       ws.mergeCells('D5:D6');
       ws.mergeCells('F5:H6');
       ws.mergeCells('L5:L6');
-      const heads = {
-        A5: 'ลำดับ', B5: 'ว/ด/ป', C5: 'ทะเบียนรถ', D5: 'จาก', E5: 'เวลา', E6: '( น. )', F5: 'ถึง',
-        I5: 'เวลา', I6: '( น. )', J5: 'จำนวน', J6: '(คน)', K5: 'ลงชื่อผู้ตรวจ', K6: 'แคมป์ Boss /รปภ.', L5: 'หมายเหตุ'
-      };
-      for (const [addr, text] of Object.entries(heads)) ws.getCell(addr).value = text;
-      for (let r = 5; r <= 6; r++) for (let c = 1; c <= 12; c++) style(ws.getCell(r, c), { size: 11, bold: true, border: true });
+      borderBox(ws, 5, 1, 6, 12, BORDER_ALL);
 
-      // ตารางข้อมูล 30 แถว (แถว 7-36) — ใส่เลขลำดับ/ตีเส้นครบ 30 แถวเสมอ
-      let prevDate = '';
+      const headerSpecs = [
+        ['A5', 'ลำดับ', 'Tahoma', 42],
+        ['B5', 'ว/ด/ป', 'Tahoma', 42],
+        ['C5', 'ทะเบียนรถ', 'Tahoma', 42],
+        ['D5', 'จาก', 'Tahoma', 42],
+        ['E5', 'เวลา', 'Tahoma', 42],
+        ['E6', '( น. )', 'Angsana New', 42],
+        ['F5', 'ถึง', 'Tahoma', 42],
+        ['I5', 'เวลา', 'Tahoma', 42],
+        ['I6', '( น. )', 'Angsana New', 42],
+        ['J5', 'จำนวน', 'Calibri', 40],
+        ['J6', '(คน)', 'Calibri', 44],
+        ['K5', 'ลงชื่อผู้ตรวจ', 'Tahoma', 30],
+        ['K6', 'แคมป์ Boss /รปภ.', 'Angsana New', 30],
+        ['L5', 'หมายเหตุ', 'Tahoma', 45]
+      ];
+      for (const [addr, text, fontName, size] of headerSpecs) {
+        const cell = ws.getCell(addr);
+        cell.value = text;
+        applyStyle(cell, { fontName, size, bold: true, h: 'center', v: 'middle', border: BORDER_ALL });
+      }
+
+      // แถวที่ 7-36: ตารางข้อมูล 30 แถวพอดี (Arial 42pt Bold กึ่งกลาง ตีกรอบและ Merge F:H ครบทุกแถว)
       for (let i = 0; i < OP_ROWS_PER_SHEET; i++) {
         const r = 7 + i;
         ws.mergeCells(`F${r}:H${r}`);
-        ws.getRow(r).height = 20;
-        for (let c = 1; c <= 12; c++) style(ws.getCell(r, c), { size: 11, border: true, h: c === 4 || c === 12 ? 'left' : 'center' });
+        ws.getRow(r).height = 124;
+        for (let c = 1; c <= 12; c++) {
+          applyStyle(ws.getCell(r, c), {
+            fontName: 'Arial',
+            size: 42,
+            bold: true,
+            h: 'center',
+            v: 'middle',
+            border: BORDER_ALL,
+            numFmt: c === 2 || c === 3 || c === 5 || c === 9 || c === 10 ? '@' : null
+          });
+        }
         ws.getCell(r, 1).value = k * OP_ROWS_PER_SHEET + i + 1;
+
         const log = chunk[i];
         if (!log) continue;
+
         const showDate = log.trip_date !== prevDate;
         prevDate = log.trip_date;
         if (showDate) ws.getCell(r, 2).value = toBE(log.trip_date);
-        if (log.license_plate) ws.getCell(r, 3).value = log.license_plate;
-        if (log.origin) ws.getCell(r, 4).value = log.origin;
+        if (log.license_plate) ws.getCell(r, 3).value = String(log.license_plate);
+        if (log.origin) ws.getCell(r, 4).value = String(log.origin);
         if (log.dep_time) ws.getCell(r, 5).value = showTime(log.dep_time);
-        if (log.destination) ws.getCell(r, 6).value = log.destination;
+        if (log.destination) ws.getCell(r, 6).value = String(log.destination);
         if (log.arr_time) ws.getCell(r, 9).value = showTime(log.arr_time);
         if (log.passengers !== null && log.passengers !== undefined && log.passengers !== '') {
-          ws.getCell(r, 10).value = Number(log.passengers);
+          ws.getCell(r, 10).value = String(Number(log.passengers));
         }
-        if (log.remark) ws.getCell(r, 12).value = log.remark;
+        if (log.remark) ws.getCell(r, 12).value = String(log.remark);
       }
 
-      // ส่วนท้ายสำหรับเซ็นรับรอง
+      // แถวที่ 37-38: ส่วนท้ายสำหรับเซ็นรับรอง (ตรงฟอนต์/ขนาดต้นฉบับ 100%)
+      ws.getRow(37).height = 124;
+      ws.getRow(38).height = 111;
+      ws.getRow(39).height = 27.5;
+
       ws.getCell('H37').value = 'ผู้ตรวจ / Checked by';
+      applyStyle(ws.getCell('H37'), { fontName: 'Angsana New', size: 48, bold: true, h: 'left', v: 'bottom' });
       ws.mergeCells('K37:L37');
       ws.getCell('K37').value = '…........................................................................';
+      applyStyle(ws.getCell('K37'), { fontName: 'Arial', size: 22, bold: true, h: 'center', v: 'bottom', border: { top: THIN } });
+      ws.getCell('L37').border = { top: THIN };
+
       ws.getCell('H38').value = 'วันที่ / Date';
+      applyStyle(ws.getCell('H38'), { fontName: 'Angsana New', size: 48, bold: true, h: 'left', v: 'bottom' });
       ws.mergeCells('K38:L38');
       ws.getCell('K38').value = '…............../…..................../…............';
-      for (const addr of ['H37', 'K37', 'H38', 'K38']) style(ws.getCell(addr), { size: 11, h: addr.startsWith('H') ? 'right' : 'left' });
+      applyStyle(ws.getCell('K38'), { fontName: 'Angsana New', size: 48, bold: true, h: 'center', v: 'bottom' });
+
+      ws.mergeCells('I39:K39');
 
       pageNo += 1;
     });
@@ -452,7 +869,7 @@
     addBillingSummarySheet(wb, normal, charter, ctx);
 
     const namer = createSheetNamer();
-    namer('ใบเบิก'); // จองชื่อชีตแรกไว้
+    namer('ใบเบิก');
     let pageNo = 1;
     for (const [key, rows] of groupBy(normal, (l) => l.route_sheet_name || `${l.origin} - ${l.destination}`)) {
       pageNo = addOperationSheets(wb, namer, key, rows, pageNo, ctx);
@@ -466,7 +883,9 @@
     return wb;
   }
 
-  // ============================================================ ชื่อไฟล์
+  // ============================================================================
+  // ชื่อไฟล์
+  // ============================================================================
   function thaiRange(start, end) {
     const a = parseIso(start);
     const b = parseIso(end);
