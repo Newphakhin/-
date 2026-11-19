@@ -5,6 +5,10 @@
   // 1. State & Constants
   // ==========================================================================
   const TOKEN_KEY = 'ckp_auth_token_v3';
+  const AUTO_SYNC_KEY = 'ckp_auto_sync_v3';
+  const BOUND_BILLING_SITE_KEY = 'ckp_bound_billing_site_v3';
+  const IDB_NAME = 'ckp_bound_excel_v3';
+  const IDB_STORE = 'handles';
 
   const state = {
     token: localStorage.getItem(TOKEN_KEY) || '',
@@ -28,7 +32,13 @@
     editingLogId: null,
     isSwapped: false,
     routeMetaExpanded: false,
-    searchTimer: null
+    searchTimer: null,
+
+    // Bound local Excel file handles (File System Access API + IndexedDB)
+    boundZoneHandle: null,
+    boundBillingHandle: null,
+    boundBillingSite: localStorage.getItem(BOUND_BILLING_SITE_KEY) || '',
+    autoSync: localStorage.getItem(AUTO_SYNC_KEY) !== 'false'
   };
 
   const $ = (id) => document.getElementById(id);
@@ -891,6 +901,7 @@
         resetForm({ keepDateAndSite: true });
       }
       await loadLogs();
+      await autoSyncBoundFiles();
     } catch (err) {
       if (err.data && err.data.storageQuota) renderQuotaUI(err.data.storageQuota);
       showToast(err.message || 'ไม่สามารถบันทึกข้อมูลได้', 'error', 5000);
@@ -962,6 +973,7 @@
               4500
             );
             await loadLogs();
+            await autoSyncBoundFiles();
           } catch (err) {
             if (err.data && err.data.storageQuota) renderQuotaUI(err.data.storageQuota);
             showToast(err.message || 'ไม่สามารถคัดลอกคิววิ่งได้', 'error', 4500);
@@ -1169,6 +1181,7 @@
         if (state.editingLogId === id) resetForm({ keepDateAndSite: true });
         showToast('ลบรายการเดินทางเรียบร้อยแล้ว', 'success');
         await loadLogs();
+        await autoSyncBoundFiles();
       } catch (err) {
         showToast(err.message || 'ไม่สามารถลบรายการได้', 'error');
       }
@@ -1188,14 +1201,135 @@
       if (res && res.storageQuota) renderQuotaUI(res.storageQuota);
       showToast(res.message || 'ล้างรายการเดินทางทั้งหมดแล้ว', 'success');
       await loadLogs();
+      await autoSyncBoundFiles();
     } catch (err) {
       showToast(err.message || 'ไม่สามารถล้างข้อมูลได้', 'error');
     }
   }
 
   // ==========================================================================
-  // 9. Dual ExcelJS Export Engine (สำเนาโซน & ใบเบิกโครงการ)
+  // 9. Dual ExcelJS Export & Local File Binding (ผูกไฟล์สำเนา & ผูกไฟล์ใบเบิก)
   // ==========================================================================
+  const supportsFileBinding = () =>
+    typeof window.showOpenFilePicker === 'function' && typeof window.showSaveFilePicker === 'function';
+
+  function openHandleDb() {
+    return new Promise((resolve, reject) => {
+      if (!window.indexedDB) return resolve(null);
+      const req = window.indexedDB.open(IDB_NAME, 1);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains(IDB_STORE)) {
+          db.createObjectStore(IDB_STORE);
+        }
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  async function saveHandleToDb(key, handle) {
+    try {
+      const db = await openHandleDb();
+      if (!db) return;
+      await new Promise((resolve, reject) => {
+        const tx = db.transaction(IDB_STORE, 'readwrite');
+        const store = tx.objectStore(IDB_STORE);
+        if (handle) store.put(handle, key);
+        else store.delete(key);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
+      db.close();
+    } catch {
+      // ignore IndexedDB errors
+    }
+  }
+
+  async function loadHandleFromDb(key) {
+    try {
+      const db = await openHandleDb();
+      if (!db) return null;
+      const val = await new Promise((resolve, reject) => {
+        const tx = db.transaction(IDB_STORE, 'readonly');
+        const req = tx.objectStore(IDB_STORE).get(key);
+        req.onsuccess = () => resolve(req.result || null);
+        req.onerror = () => reject(req.error);
+      });
+      db.close();
+      return val;
+    } catch {
+      return null;
+    }
+  }
+
+  async function restoreBoundHandles() {
+    if (!supportsFileBinding()) {
+      const note = $('fs-api-unsupported-note');
+      if (note) note.classList.remove('hidden');
+      updateBindingUI();
+      return;
+    }
+    const [zoneHandle, billingHandle] = await Promise.all([
+      loadHandleFromDb('zone'),
+      loadHandleFromDb('billing')
+    ]);
+    state.boundZoneHandle = zoneHandle;
+    state.boundBillingHandle = billingHandle;
+    await updateBindingUI();
+  }
+
+  async function updateBindingUI() {
+    const autoCheck = $('toggle-auto-sync');
+    if (autoCheck) autoCheck.checked = Boolean(state.autoSync);
+
+    const updateOne = async (kind, handle, labelId, dotId, unbindId) => {
+      const label = $(labelId);
+      const dot = $(dotId);
+      const unbindBtn = $(unbindId);
+      if (!label) return;
+
+      if (!handle) {
+        label.textContent = 'ยังไม่ได้เลือก (คลิกเพื่อผูกไฟล์)';
+        if (dot) dot.classList.add('hidden');
+        if (unbindBtn) {
+          unbindBtn.classList.add('hidden');
+          unbindBtn.classList.remove('inline-flex');
+        }
+        return;
+      }
+
+      const siteSuffix =
+        kind === 'billing' && state.boundBillingSite ? ` [${state.boundBillingSite}]` : '';
+      label.textContent = `${handle.name}${siteSuffix}`;
+      if (unbindBtn) {
+        unbindBtn.classList.remove('hidden');
+        unbindBtn.classList.add('inline-flex');
+      }
+      if (dot) {
+        dot.classList.remove('hidden');
+        let perm = 'prompt';
+        try {
+          perm = await handle.queryPermission({ mode: 'readwrite' });
+        } catch {
+          perm = 'prompt';
+        }
+        dot.className = `w-2.5 h-2.5 rounded-full ml-auto shrink-0 ${
+          perm === 'granted' ? 'bg-emerald-500' : 'bg-amber-400'
+        }`;
+        dot.title =
+          perm === 'granted'
+            ? 'พร้อมเขียนไฟล์อัตโนมัติ'
+            : 'คลิกปุ่ม "บันทึกไฟล์..." 1 ครั้งเพื่ออนุญาตสิทธิ์เขียนไฟล์';
+      }
+    };
+
+    await Promise.all([
+      updateOne('zone', state.boundZoneHandle, 'bind-zone-label', 'bind-zone-dot', 'btn-unbind-zone'),
+      updateOne('billing', state.boundBillingHandle, 'bind-billing-label', 'bind-billing-dot', 'btn-unbind-billing')
+    ]);
+  }
+
   async function downloadWorkbook(wb, filename) {
     const buffer = await wb.xlsx.writeBuffer();
     const blob = new Blob([buffer], {
@@ -1215,47 +1349,27 @@
     return state.sites.find((s) => s.site_name === siteName) || null;
   }
 
-  async function handleExportZoneCopy() {
-    if (typeof window.ExcelJS === 'undefined' || !window.CkpExcel) {
-      showToast('ไม่พบไลบรารี ExcelJS กรุณารีเฟรชหน้าเว็บ', 'error');
-      return;
-    }
+  async function buildZonePayloadFromFilters() {
+    const f = getFilterParams();
+    const params = new URLSearchParams();
+    if (f.date_from) params.set('date_from', f.date_from);
+    if (f.date_to) params.set('date_to', f.date_to);
+    if (f.site_name) params.set('site_name', f.site_name);
+    if (f.trip_type) params.set('trip_type', f.trip_type);
+    const logs = await apiFetch(`/api/logs${params.toString() ? `?${params.toString()}` : ''}`);
 
-    const btn = $('btn-export-zone');
-    btn.disabled = true;
-    try {
-      const f = getFilterParams();
-      // ดึงข้อมูลจาก travel_logs ตามช่วงวันที่ (และไซต์งานหากกรองไว้)
-      const params = new URLSearchParams();
-      if (f.date_from) params.set('date_from', f.date_from);
-      if (f.date_to) params.set('date_to', f.date_to);
-      if (f.site_name) params.set('site_name', f.site_name);
-      if (f.trip_type) params.set('trip_type', f.trip_type);
-      const logs = await apiFetch(`/api/logs${params.toString() ? `?${params.toString()}` : ''}`);
+    const distinctSites = [...new Set(logs.map((l) => (l.site_name || '').trim()).filter(Boolean))];
+    const siteName = f.site_name || (distinctSites.length === 1 ? distinctSites[0] : '');
+    const siteMeta = siteName ? findSiteMeta(siteName) : null;
+    const zoneName = siteMeta ? siteMeta.zone_name : '';
 
-      const distinctSites = [...new Set(logs.map((l) => (l.site_name || '').trim()).filter(Boolean))];
-      const siteName = f.site_name || (distinctSites.length === 1 ? distinctSites[0] : '');
-      const siteMeta = siteName ? findSiteMeta(siteName) : null;
-      const zoneName = siteMeta ? siteMeta.zone_name : '';
-
-      const wb = window.CkpExcel.buildZoneCopyWorkbook(window.ExcelJS, logs, { siteName, zoneName });
-      const { start, end } = window.CkpExcel.dateRangeOf(logs, f.date_from, f.date_to);
-      const filename = window.CkpExcel.zoneCopyFilename({ zoneName, siteName, start, end });
-
-      await downloadWorkbook(wb, filename);
-      showToast(
-        `ส่งออกไฟล์สำเนาโซนสำเร็จ: ${filename} (${wb.worksheets.length} ชีต, ${logs.length} เที่ยว)`,
-        'success',
-        4500
-      );
-    } catch (err) {
-      showToast(`ส่งออกไฟล์สำเนาโซนไม่สำเร็จ: ${err.message}`, 'error', 5000);
-    } finally {
-      btn.disabled = false;
-    }
+    const wb = window.CkpExcel.buildZoneCopyWorkbook(window.ExcelJS, logs, { siteName, zoneName });
+    const { start, end } = window.CkpExcel.dateRangeOf(logs, f.date_from, f.date_to);
+    const filename = window.CkpExcel.zoneCopyFilename({ zoneName, siteName, start, end });
+    return { wb, filename, logs };
   }
 
-  async function runBillingExport({ siteName, dateFrom, dateTo, issueDate }) {
+  async function buildBillingPayload({ siteName, dateFrom, dateTo, issueDate }) {
     const params = new URLSearchParams();
     if (siteName) params.set('site_name', siteName);
     if (dateFrom) params.set('date_from', dateFrom);
@@ -1270,7 +1384,436 @@
     });
     const { start, end } = window.CkpExcel.dateRangeOf(logs, dateFrom, dateTo);
     const filename = window.CkpExcel.billingFilename({ siteName, start, end });
+    return { wb, filename, logs };
+  }
 
+  function isFileLockedError(err) {
+    if (!err) return false;
+    const name = String(err.name || '');
+    const msg = String(err.message || '').toLowerCase();
+    return (
+      name === 'NoModificationAllowedError' ||
+      name === 'InvalidStateError' ||
+      name === 'NotReadableError' ||
+      msg.includes('lock') ||
+      msg.includes('in use') ||
+      msg.includes('busy') ||
+      msg.includes('modified') ||
+      msg.includes('permission')
+    );
+  }
+
+  function showFileLockedModal({ kind, handle, wb, suggestedName, onRetry }) {
+    const typeLabel = kind === 'billing' ? 'ใบเบิกโครงการ' : 'สำเนาโซน';
+    openModal(
+      `
+      <div class="p-5 sm:p-6 space-y-4">
+        <div class="flex items-start gap-3">
+          <div class="w-11 h-11 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0">
+            <i class="fa-solid fa-file-circle-exclamation text-lg"></i>
+          </div>
+          <div>
+            <h3 class="text-base font-bold text-slate-900">ไฟล์ Excel (${escapeHtml(typeLabel)}) กำลังเปิดค้างอยู่ในโปรแกรม Excel</h3>
+            <p class="text-xs sm:text-sm text-slate-600 mt-1 leading-relaxed">
+              กรุณาปิดโปรแกรม Microsoft Excel ที่เปิดไฟล์ <strong class="text-slate-900">"${escapeHtml(handle.name)}"</strong> ค้างไว้ก่อน แล้วกดปุ่ม <strong>"ลองบันทึกอีกครั้ง"</strong> หรือเลือกบันทึกเป็นไฟล์ใหม่ครับ
+            </p>
+          </div>
+        </div>
+        <div class="flex flex-wrap items-center justify-end gap-2 pt-2 border-t border-slate-100">
+          <button type="button" id="modal-lock-close" class="min-h-[40px] px-4 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 text-xs sm:text-sm font-medium cursor-pointer">ปิดหน้าต่าง</button>
+          <button type="button" id="modal-lock-saveas" class="min-h-[40px] px-4 py-2 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs sm:text-sm font-semibold cursor-pointer">
+            <i class="fa-solid fa-floppy-disk mr-1"></i>บันทึกเป็นไฟล์ใหม่
+          </button>
+          <button type="button" id="modal-lock-retry" class="min-h-[40px] px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs sm:text-sm font-semibold cursor-pointer">
+            <i class="fa-solid fa-rotate-right mr-1"></i>ลองบันทึกอีกครั้ง
+          </button>
+        </div>
+      </div>
+      `,
+      (box) => {
+        box.querySelector('#modal-lock-close').addEventListener('click', closeModal);
+        box.querySelector('#modal-lock-retry').addEventListener('click', async () => {
+          closeModal();
+          if (typeof onRetry === 'function') await onRetry();
+        });
+        box.querySelector('#modal-lock-saveas').addEventListener('click', async () => {
+          try {
+            const newHandle = await window.showSaveFilePicker({
+              suggestedName: suggestedName || handle.name,
+              types: [
+                {
+                  description: 'Excel Workbook (.xlsx)',
+                  accept: { 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'] }
+                }
+              ]
+            });
+            const buffer = await wb.xlsx.writeBuffer();
+            const writable = await newHandle.createWritable();
+            await writable.write(buffer);
+            await writable.close();
+            if (kind === 'zone') state.boundZoneHandle = newHandle;
+            else state.boundBillingHandle = newHandle;
+            await saveHandleToDb(kind, newHandle);
+            await updateBindingUI();
+            closeModal();
+            showToast(`บันทึกและผูกไฟล์ใหม่ "${newHandle.name}" เรียบร้อยแล้ว`, 'success', 4500);
+          } catch (e) {
+            if (e && e.name === 'AbortError') return;
+            showToast(`ไม่สามารถบันทึกไฟล์ใหม่ได้: ${e.message}`, 'error');
+          }
+        });
+      }
+    );
+  }
+
+  async function writeWorkbookToHandle(kind, handle, wb, suggestedName, { interactive = true } = {}) {
+    let perm = 'prompt';
+    try {
+      perm = await handle.queryPermission({ mode: 'readwrite' });
+    } catch {
+      perm = 'prompt';
+    }
+
+    if (perm !== 'granted') {
+      if (!interactive) {
+        return { status: 'need_permission' };
+      }
+      perm = await handle.requestPermission({ mode: 'readwrite' });
+      if (perm !== 'granted') {
+        showToast('ไม่ได้รับสิทธิ์เขียนไฟล์ กรุณากดอนุญาตเมื่อเบราว์เซอร์สอบถาม', 'warning', 4500);
+        return { status: 'denied' };
+      }
+    }
+
+    try {
+      const buffer = await wb.xlsx.writeBuffer();
+      const writable = await handle.createWritable();
+      await writable.write(buffer);
+      await writable.close();
+      await updateBindingUI();
+      return { status: 'ok' };
+    } catch (err) {
+      if (isFileLockedError(err)) {
+        showFileLockedModal({
+          kind,
+          handle,
+          wb,
+          suggestedName,
+          onRetry: () => syncToBoundFile(kind, { interactive: true })
+        });
+        return { status: 'locked' };
+      }
+      throw err;
+    }
+  }
+
+  function openBindFileModal(kind) {
+    const isBilling = kind === 'billing';
+    const title = isBilling
+      ? 'ผูกไฟล์ที่ 2: ใบเบิกโครงการ (.xlsx)'
+      : 'ผูกไฟล์ที่ 1: สำเนาโซน (.xlsx)';
+    const desc = isBilling
+      ? 'เลือกไฟล์ใบเบิกเดิมบนเครื่อง หรือสร้างไฟล์ใหม่ไว้ผูกกับระบบ เพื่อให้กดบันทึกข้อมูล (พร้อมโลโก้และสูตรคำนวณ) ลงไฟล์ได้ทันที'
+      : 'เลือกไฟล์สำเนาโซนเดิมบนเครื่อง หรือสร้างไฟล์ใหม่ไว้ผูกกับระบบ เพื่อให้กดบันทึกข้อมูล (พร้อมสรุปเที่ยว COUNTIF/SUM) ลงไฟล์ได้ทันที';
+
+    if (!supportsFileBinding()) {
+      openModal(
+        `
+        <div class="p-5 sm:p-6 space-y-4">
+          <h3 class="text-base font-bold text-slate-900">${escapeHtml(title)}</h3>
+          <p class="text-xs sm:text-sm text-slate-600 leading-relaxed">
+            เบราว์เซอร์นี้ยังไม่รองรับการผูกและเขียนทับไฟล์บนเครื่องโดยตรง (File System Access API) กรุณาใช้งานผ่าน <strong>Google Chrome</strong> หรือ <strong>Microsoft Edge</strong> บนคอมพิวเตอร์ หรือกดปุ่ม <strong>ส่งออกไฟล์ (.xlsx)</strong> เพื่อดาวน์โหลดไฟล์ตามปกติครับ
+          </p>
+          <div class="flex justify-end gap-2 pt-2 border-t border-slate-100">
+            <button type="button" id="m-bind-close" class="min-h-[40px] px-4 py-2 rounded-xl border border-slate-300 text-xs sm:text-sm cursor-pointer">ปิด</button>
+            <button type="button" id="m-bind-dl" class="min-h-[40px] px-4 py-2 rounded-xl bg-zinc-900 text-white text-xs sm:text-sm font-semibold cursor-pointer">ดาวน์โหลดไฟล์ (.xlsx) แทน</button>
+          </div>
+        </div>
+        `,
+        (box) => {
+          box.querySelector('#m-bind-close').addEventListener('click', closeModal);
+          box.querySelector('#m-bind-dl').addEventListener('click', () => {
+            closeModal();
+            if (isBilling) handleExportBilling();
+            else handleExportZoneCopy();
+          });
+        }
+      );
+      return;
+    }
+
+    const siteSet = new Set(state.sites.map((s) => s.site_name).filter(Boolean));
+    for (const l of state.logs) if (l.site_name) siteSet.add(l.site_name);
+    const siteOptions = [...siteSet];
+    const currentSite = state.boundBillingSite || $('filter-site').value.trim();
+
+    openModal(
+      `
+      <div class="p-5 sm:p-6 space-y-4">
+        <div class="flex items-start gap-3">
+          <div class="w-10 h-10 rounded-xl ${isBilling ? 'bg-sky-100 text-sky-700' : 'bg-amber-100 text-amber-700'} flex items-center justify-center shrink-0">
+            <i class="fa-solid fa-link"></i>
+          </div>
+          <div>
+            <h3 class="text-base font-bold text-slate-900">${escapeHtml(title)}</h3>
+            <p class="text-xs text-slate-500 mt-0.5 leading-relaxed">${escapeHtml(desc)}</p>
+          </div>
+        </div>
+
+        ${
+          isBilling
+            ? `
+          <div>
+            <label for="m-bind-billing-site" class="block text-xs font-semibold text-slate-700 mb-1">
+              ผูกกับโครงการ (ไม่บังคับ — หากเว้นว่างจะใช้ตามตัวกรองโครงการบนหน้าเว็บ)
+            </label>
+            <select id="m-bind-billing-site" class="w-full min-h-[40px] px-3 py-2 rounded-xl border border-slate-300 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-sky-600">
+              <option value="">-- ใช้ตามตัวกรองโครงการบนหน้าเว็บ --</option>
+              ${siteOptions
+                .map(
+                  (s) =>
+                    `<option value="${escapeHtml(s)}" ${s === currentSite ? 'selected' : ''}>${escapeHtml(s)}</option>`
+                )
+                .join('')}
+            </select>
+          </div>
+        `
+            : ''
+        }
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+          <button type="button" id="m-pick-existing"
+            class="p-4 rounded-2xl border-2 border-slate-200 hover:border-indigo-500 hover:bg-indigo-50/40 text-left transition cursor-pointer space-y-1.5">
+            <div class="w-9 h-9 rounded-xl bg-indigo-100 text-indigo-700 flex items-center justify-center">
+              <i class="fa-solid fa-folder-open"></i>
+            </div>
+            <p class="text-sm font-bold text-slate-900">เลือกไฟล์ที่มีอยู่แล้ว</p>
+            <p class="text-[11px] text-slate-500 leading-snug">เลือกไฟล์ .xlsx เดิมบนเครื่องเพื่อผูกไว้สำหรับกดบันทึกอัปเดต</p>
+          </button>
+
+          <button type="button" id="m-create-new"
+            class="p-4 rounded-2xl border-2 border-slate-200 hover:border-emerald-500 hover:bg-emerald-50/40 text-left transition cursor-pointer space-y-1.5">
+            <div class="w-9 h-9 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center">
+              <i class="fa-solid fa-file-circle-plus"></i>
+            </div>
+            <p class="text-sm font-bold text-slate-900">สร้างไฟล์ใหม่แล้วผูกเลย</p>
+            <p class="text-[11px] text-slate-500 leading-snug">สร้างไฟล์ .xlsx ฟอร์มบริษัทใหม่ลงเครื่องพร้อมเขียนข้อมูลทันที</p>
+          </button>
+        </div>
+
+        <div class="flex justify-end pt-2 border-t border-slate-100">
+          <button type="button" id="m-bind-cancel" class="min-h-[38px] px-4 py-1.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 text-xs font-medium cursor-pointer">ปิดหน้าต่าง</button>
+        </div>
+      </div>
+      `,
+      (box) => {
+        const readChosenSite = () => {
+          if (!isBilling) return '';
+          const sel = box.querySelector('#m-bind-billing-site');
+          const val = sel ? sel.value.trim() : '';
+          state.boundBillingSite = val;
+          localStorage.setItem(BOUND_BILLING_SITE_KEY, val);
+          return val;
+        };
+
+        box.querySelector('#m-bind-cancel').addEventListener('click', closeModal);
+
+        box.querySelector('#m-pick-existing').addEventListener('click', async () => {
+          readChosenSite();
+          try {
+            const [handle] = await window.showOpenFilePicker({
+              multiple: false,
+              types: [
+                {
+                  description: 'Excel Workbook (.xlsx)',
+                  accept: { 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'] }
+                }
+              ]
+            });
+            if (!handle) return;
+            await handle.requestPermission({ mode: 'readwrite' });
+            if (isBilling) state.boundBillingHandle = handle;
+            else state.boundZoneHandle = handle;
+            await saveHandleToDb(kind, handle);
+            await updateBindingUI();
+            closeModal();
+            showToast(
+              `ผูกไฟล์ "${handle.name}" เรียบร้อยแล้ว — กดปุ่ม "${isBilling ? 'บันทึกไฟล์ใบเบิก' : 'บันทึกไฟล์สำเนา'}" เพื่อเขียนข้อมูลลงไฟล์ได้ทันที`,
+              'success',
+              4500
+            );
+          } catch (err) {
+            if (err && err.name === 'AbortError') return;
+            showToast(`ไม่สามารถผูกไฟล์ได้: ${err.message}`, 'error');
+          }
+        });
+
+        box.querySelector('#m-create-new').addEventListener('click', async () => {
+          const chosenSite = readChosenSite();
+          try {
+            const f = getFilterParams();
+            const payload = isBilling
+              ? await buildBillingPayload({
+                  siteName: chosenSite || f.site_name,
+                  dateFrom: f.date_from,
+                  dateTo: f.date_to,
+                  issueDate: todayIso()
+                })
+              : await buildZonePayloadFromFilters();
+
+            const handle = await window.showSaveFilePicker({
+              suggestedName: payload.filename,
+              types: [
+                {
+                  description: 'Excel Workbook (.xlsx)',
+                  accept: { 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'] }
+                }
+              ]
+            });
+            const buffer = await payload.wb.xlsx.writeBuffer();
+            const writable = await handle.createWritable();
+            await writable.write(buffer);
+            await writable.close();
+
+            if (isBilling) state.boundBillingHandle = handle;
+            else state.boundZoneHandle = handle;
+            await saveHandleToDb(kind, handle);
+            await updateBindingUI();
+            closeModal();
+            showToast(
+              `สร้างและผูกไฟล์ "${handle.name}" สำเร็จ (${payload.wb.worksheets.length} ชีต, ${payload.logs.length} เที่ยว)`,
+              'success',
+              4500
+            );
+          } catch (err) {
+            if (err && err.name === 'AbortError') return;
+            showToast(`ไม่สามารถสร้างไฟล์ได้: ${err.message}`, 'error', 5000);
+          }
+        });
+      }
+    );
+  }
+
+  async function unbindFile(kind) {
+    const handle = kind === 'billing' ? state.boundBillingHandle : state.boundZoneHandle;
+    if (!handle) return;
+    const label = kind === 'billing' ? 'ใบเบิกโครงการ' : 'สำเนาโซน';
+    const ok = await confirmModal({
+      title: `ยกเลิกการผูกไฟล์${label}`,
+      message: `ต้องการยกเลิกการผูกไฟล์ "${handle.name}" ออกจากหน้าเว็บใช่หรือไม่? (ไฟล์บนเครื่องของคุณจะไม่ถูกลบ)`,
+      confirmText: 'ยกเลิกการผูก'
+    });
+    if (!ok) return;
+    if (kind === 'billing') {
+      state.boundBillingHandle = null;
+      state.boundBillingSite = '';
+      localStorage.removeItem(BOUND_BILLING_SITE_KEY);
+    } else {
+      state.boundZoneHandle = null;
+    }
+    await saveHandleToDb(kind, null);
+    await updateBindingUI();
+    showToast(`ยกเลิกการผูกไฟล์${label}เรียบร้อยแล้ว`, 'info');
+  }
+
+  async function syncToBoundFile(kind, { interactive = true, billingOpts = null } = {}) {
+    if (typeof window.ExcelJS === 'undefined' || !window.CkpExcel) {
+      if (interactive) showToast('ไม่พบไลบรารี ExcelJS กรุณารีเฟรชหน้าเว็บ', 'error');
+      return { status: 'error' };
+    }
+
+    const isBilling = kind === 'billing';
+    const handle = isBilling ? state.boundBillingHandle : state.boundZoneHandle;
+    if (!handle) {
+      if (interactive) openBindFileModal(kind);
+      return { status: 'unbound' };
+    }
+
+    const btn = $(isBilling ? 'btn-sync-billing' : 'btn-sync-zone');
+    if (btn && interactive) btn.disabled = true;
+
+    try {
+      const f = getFilterParams();
+      let payload;
+      if (isBilling) {
+        const opts = billingOpts || {
+          siteName: f.site_name || state.boundBillingSite || '',
+          dateFrom: f.date_from,
+          dateTo: f.date_to,
+          issueDate: todayIso()
+        };
+        payload = await buildBillingPayload(opts);
+      } else {
+        payload = await buildZonePayloadFromFilters();
+      }
+
+      const res = await writeWorkbookToHandle(kind, handle, payload.wb, payload.filename, { interactive });
+      if (res.status === 'ok' && interactive) {
+        showToast(
+          `บันทึกลงไฟล์ "${handle.name}" สำเร็จ (${payload.wb.worksheets.length} ชีต, ${payload.logs.length} เที่ยว)`,
+          'success',
+          4200
+        );
+      }
+      return { ...res, name: handle.name, sheets: payload.wb.worksheets.length, count: payload.logs.length };
+    } catch (err) {
+      if (interactive) showToast(`บันทึกไฟล์ไม่สำเร็จ: ${err.message}`, 'error', 5000);
+      return { status: 'error', error: err };
+    } finally {
+      if (btn && interactive) btn.disabled = false;
+    }
+  }
+
+  async function autoSyncBoundFiles() {
+    if (!state.autoSync || !supportsFileBinding()) return;
+    if (!state.boundZoneHandle && !state.boundBillingHandle) return;
+
+    const syncedNames = [];
+    let needsPerm = false;
+
+    if (state.boundZoneHandle) {
+      const r = await syncToBoundFile('zone', { interactive: false });
+      if (r.status === 'ok') syncedNames.push(r.name);
+      else if (r.status === 'need_permission') needsPerm = true;
+    }
+    if (state.boundBillingHandle) {
+      const r = await syncToBoundFile('billing', { interactive: false });
+      if (r.status === 'ok') syncedNames.push(r.name);
+      else if (r.status === 'need_permission') needsPerm = true;
+    }
+
+    if (syncedNames.length > 0) {
+      showToast(`ซิงค์ลงไฟล์ที่ผูกไว้อัตโนมัติแล้ว: ${syncedNames.join(', ')}`, 'info', 3500);
+    } else if (needsPerm) {
+      showToast('กดปุ่ม "บันทึกไฟล์สำเนา / ใบเบิก" 1 ครั้งเพื่ออนุญาตสิทธิ์เขียนไฟล์อัตโนมัติหลังรีเฟรชหน้า', 'warning', 4500);
+    }
+  }
+
+  async function handleExportZoneCopy() {
+    if (typeof window.ExcelJS === 'undefined' || !window.CkpExcel) {
+      showToast('ไม่พบไลบรารี ExcelJS กรุณารีเฟรชหน้าเว็บ', 'error');
+      return;
+    }
+
+    const btn = $('btn-export-zone');
+    btn.disabled = true;
+    try {
+      const { wb, filename, logs } = await buildZonePayloadFromFilters();
+      await downloadWorkbook(wb, filename);
+      showToast(
+        `ส่งออกไฟล์สำเนาโซนสำเร็จ: ${filename} (${wb.worksheets.length} ชีต, ${logs.length} เที่ยว)`,
+        'success',
+        4500
+      );
+    } catch (err) {
+      showToast(`ส่งออกไฟล์สำเนาโซนไม่สำเร็จ: ${err.message}`, 'error', 5000);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  async function runBillingExport({ siteName, dateFrom, dateTo, issueDate }) {
+    const { wb, filename, logs } = await buildBillingPayload({ siteName, dateFrom, dateTo, issueDate });
     await downloadWorkbook(wb, filename);
     showToast(
       `ส่งออกไฟล์ใบเบิกโครงการสำเร็จ: ${filename} (${wb.worksheets.length} ชีต, ${logs.length} เที่ยว)`,
@@ -1286,15 +1829,12 @@
     }
 
     const f = getFilterParams();
-    // รวมรายชื่อโครงการจากข้อมูลหลักและจากบันทึกปัจจุบัน
     const siteSet = new Set(state.sites.map((s) => s.site_name).filter(Boolean));
     for (const l of state.logs) {
       if (l.site_name) siteSet.add(l.site_name);
     }
     const siteOptions = [...siteSet];
-
-    // หากเลือกไซต์งานในตัวกรองแล้ว หรือเปิด Modal เพื่อยืนยันโครงการและวันที่ออกใบเบิก
-    const preselected = f.site_name || (siteOptions.length === 1 ? siteOptions[0] : '');
+    const preselected = f.site_name || state.boundBillingSite || (siteOptions.length === 1 ? siteOptions[0] : '');
 
     openModal(
       `
@@ -1306,7 +1846,7 @@
           <div>
             <h3 class="text-base font-bold text-slate-900">ส่งออกไฟล์ใบเบิกโครงการ (.xlsx)</h3>
             <p class="text-xs text-slate-500 mt-0.5">
-              สร้างชีต "ใบเบิก" พร้อมสูตรคำนวณ และชีตแนบท้ายตัดหน้าอัตโนมัติแผ่นละ 30 แถว (A4 แนวตั้ง)
+              สร้างชีต "ใบเบิก" พร้อมโลโก้ CKP สูตรคำนวณ และชีตแนบท้ายตัดหน้าอัตโนมัติแผ่นละ 30 แถว (A4 แนวตั้ง)
             </p>
           </div>
         </div>
@@ -1346,8 +1886,13 @@
               class="w-full min-h-[42px] px-3 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-zinc-900" />
           </div>
 
-          <div class="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+          <div class="flex flex-wrap items-center justify-end gap-2 pt-2 border-t border-slate-100">
             <button type="button" id="modal-billing-cancel" class="min-h-[40px] px-4 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 text-xs sm:text-sm font-medium cursor-pointer">ยกเลิก</button>
+            ${
+              state.boundBillingHandle
+                ? `<button type="button" id="modal-billing-sync-bound" class="min-h-[40px] px-4 py-2 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs sm:text-sm font-semibold cursor-pointer"><i class="fa-solid fa-link mr-1.5"></i>บันทึกเข้าไฟล์ที่ผูกไว้</button>`
+                : ''
+            }
             <button type="submit" id="modal-billing-submit" class="min-h-[40px] px-5 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-white text-xs sm:text-sm font-semibold cursor-pointer">
               <i class="fa-solid fa-download text-amber-400 mr-1.5"></i>สร้างและดาวน์โหลด (.xlsx)
             </button>
@@ -1356,18 +1901,32 @@
       </div>
       `,
       (box) => {
+        const readOpts = () => ({
+          siteName: box.querySelector('#modal-billing-site').value.trim(),
+          dateFrom: box.querySelector('#modal-billing-from').value.trim(),
+          dateTo: box.querySelector('#modal-billing-to').value.trim(),
+          issueDate: box.querySelector('#modal-billing-issue').value.trim()
+        });
         box.querySelector('#modal-billing-cancel').addEventListener('click', closeModal);
+        const syncBoundBtn = box.querySelector('#modal-billing-sync-bound');
+        if (syncBoundBtn) {
+          syncBoundBtn.addEventListener('click', async () => {
+            syncBoundBtn.disabled = true;
+            try {
+              const opts = readOpts();
+              closeModal();
+              await syncToBoundFile('billing', { interactive: true, billingOpts: opts });
+            } catch (err) {
+              showToast(`บันทึกไฟล์ใบเบิกไม่สำเร็จ: ${err.message}`, 'error', 5000);
+            }
+          });
+        }
         box.querySelector('#modal-billing-form').addEventListener('submit', async (e) => {
           e.preventDefault();
           const btn = box.querySelector('#modal-billing-submit');
           btn.disabled = true;
           try {
-            await runBillingExport({
-              siteName: box.querySelector('#modal-billing-site').value.trim(),
-              dateFrom: box.querySelector('#modal-billing-from').value.trim(),
-              dateTo: box.querySelector('#modal-billing-to').value.trim(),
-              issueDate: box.querySelector('#modal-billing-issue').value.trim()
-            });
+            await runBillingExport(readOpts());
             closeModal();
           } catch (err) {
             showToast(`ส่งออกไฟล์ใบเบิกไม่สำเร็จ: ${err.message}`, 'error', 5000);
@@ -2098,9 +2657,23 @@
     $('btn-period-today').addEventListener('click', () => applyQuickPeriod('today'));
     $('btn-period-all').addEventListener('click', () => applyQuickPeriod('all'));
 
-    // Exports & Logs Actions
+    // Exports, File Binding & Logs Actions
     $('btn-export-zone').addEventListener('click', handleExportZoneCopy);
     $('btn-export-billing').addEventListener('click', handleExportBilling);
+    $('btn-bind-zone').addEventListener('click', () => openBindFileModal('zone'));
+    $('btn-unbind-zone').addEventListener('click', () => unbindFile('zone'));
+    $('btn-sync-zone').addEventListener('click', () => syncToBoundFile('zone', { interactive: true }));
+    $('btn-bind-billing').addEventListener('click', () => openBindFileModal('billing'));
+    $('btn-unbind-billing').addEventListener('click', () => unbindFile('billing'));
+    $('btn-sync-billing').addEventListener('click', () => syncToBoundFile('billing', { interactive: true }));
+    $('toggle-auto-sync').addEventListener('change', (e) => {
+      state.autoSync = Boolean(e.target.checked);
+      localStorage.setItem(AUTO_SYNC_KEY, state.autoSync ? 'true' : 'false');
+      showToast(
+        state.autoSync ? 'เปิดซิงค์ลงไฟล์ที่ผูกไว้อัตโนมัติแล้ว' : 'ปิดซิงค์อัตโนมัติแล้ว (กดปุ่มบันทึกไฟล์เองได้ตลอด)',
+        'info'
+      );
+    });
     $('btn-clear-all-logs').addEventListener('click', handleClearAllLogs);
     $('logs-table-body').addEventListener('click', handleLogsActionClick);
     $('logs-mobile-cards').addEventListener('click', handleLogsActionClick);
@@ -2121,6 +2694,7 @@
     updateFormDatePreview();
     updateDurationPreview();
     updateRouteMetaPreview();
+    await restoreBoundHandles();
 
     if (!state.token) {
       showLoginScreen();

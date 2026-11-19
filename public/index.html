@@ -839,6 +839,92 @@
             </div>
           </div>
 
+          <!-- Excel Local File Binding Bar (ผูกไฟล์สำเนา & ผูกไฟล์ใบเบิก — File System Access API) -->
+          <div id="file-binding-bar" class="px-5 sm:px-6 py-3.5 bg-gradient-to-r from-amber-50/60 via-white to-sky-50/60 border-b border-slate-200 space-y-2.5">
+            <div class="grid grid-cols-1 xl:grid-cols-2 gap-2.5">
+
+              <!-- 1. ผูกไฟล์สำเนาโซน -->
+              <div class="flex flex-wrap items-center gap-2 p-2 rounded-2xl bg-amber-50/80 border border-amber-200">
+                <button
+                  type="button"
+                  id="btn-bind-zone"
+                  class="flex-1 min-w-[200px] min-h-[40px] px-3.5 py-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100/80 border border-emerald-300 text-left text-xs sm:text-sm font-semibold text-emerald-900 flex items-center gap-2 transition cursor-pointer"
+                >
+                  <i class="fa-solid fa-link text-amber-600 shrink-0"></i>
+                  <span class="shrink-0">ผูกไฟล์สำเนา:</span>
+                  <span id="bind-zone-label" class="truncate text-amber-800">ยังไม่ได้เลือก (คลิกเพื่อผูกไฟล์)</span>
+                  <span id="bind-zone-dot" class="hidden w-2 h-2 rounded-full bg-emerald-500 ml-auto shrink-0"></span>
+                </button>
+
+                <button
+                  type="button"
+                  id="btn-unbind-zone"
+                  title="ยกเลิกการผูกไฟล์สำเนา"
+                  class="hidden w-9 h-9 rounded-xl bg-white hover:bg-rose-50 text-slate-500 hover:text-rose-600 border border-slate-300 items-center justify-center transition cursor-pointer shrink-0"
+                >
+                  <i class="fa-solid fa-link-slash text-xs"></i>
+                </button>
+
+                <button
+                  type="button"
+                  id="btn-sync-zone"
+                  class="min-h-[40px] px-4 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 active:bg-amber-800 text-white text-xs sm:text-sm font-semibold shadow-sm flex items-center gap-1.5 transition cursor-pointer shrink-0"
+                >
+                  <i class="fa-solid fa-file-arrow-down"></i>
+                  <span>บันทึกไฟล์สำเนา</span>
+                </button>
+              </div>
+
+              <!-- 2. ผูกไฟล์ใบเบิกโครงการ -->
+              <div class="flex flex-wrap items-center gap-2 p-2 rounded-2xl bg-sky-50/80 border border-sky-200">
+                <button
+                  type="button"
+                  id="btn-bind-billing"
+                  class="flex-1 min-w-[200px] min-h-[40px] px-3.5 py-1.5 rounded-xl bg-white hover:bg-sky-100/60 border border-sky-300 text-left text-xs sm:text-sm font-semibold text-sky-900 flex items-center gap-2 transition cursor-pointer"
+                >
+                  <i class="fa-solid fa-link text-sky-600 shrink-0"></i>
+                  <span class="shrink-0">ผูกไฟล์ใบเบิก:</span>
+                  <span id="bind-billing-label" class="truncate text-sky-700">ยังไม่ได้เลือก (คลิกเพื่อผูกไฟล์)</span>
+                  <span id="bind-billing-dot" class="hidden w-2 h-2 rounded-full bg-emerald-500 ml-auto shrink-0"></span>
+                </button>
+
+                <button
+                  type="button"
+                  id="btn-unbind-billing"
+                  title="ยกเลิกการผูกไฟล์ใบเบิก"
+                  class="hidden w-9 h-9 rounded-xl bg-white hover:bg-rose-50 text-slate-500 hover:text-rose-600 border border-slate-300 items-center justify-center transition cursor-pointer shrink-0"
+                >
+                  <i class="fa-solid fa-link-slash text-xs"></i>
+                </button>
+
+                <button
+                  type="button"
+                  id="btn-sync-billing"
+                  class="min-h-[40px] px-4 py-1.5 rounded-xl bg-sky-600 hover:bg-sky-700 active:bg-sky-800 text-white text-xs sm:text-sm font-semibold shadow-sm flex items-center gap-1.5 transition cursor-pointer shrink-0"
+                >
+                  <i class="fa-solid fa-file-invoice"></i>
+                  <span>บันทึกไฟล์ใบเบิก</span>
+                </button>
+              </div>
+
+            </div>
+
+            <div class="flex flex-wrap items-center justify-between gap-2 text-xs">
+              <label class="inline-flex items-center gap-2 text-slate-600 font-medium cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  id="toggle-auto-sync"
+                  class="w-4 h-4 rounded border-slate-300 text-zinc-900 focus:ring-zinc-900 cursor-pointer"
+                />
+                <span>ซิงค์ลงไฟล์ที่ผูกไว้อัตโนมัติทันทีเมื่อเพิ่ม / แก้ไข / ลบเที่ยววิ่ง</span>
+              </label>
+
+              <span id="fs-api-unsupported-note" class="hidden text-[11px] text-amber-700 font-medium">
+                <i class="fa-solid fa-circle-info mr-1"></i>เบราว์เซอร์นี้ไม่รองรับการผูกไฟล์บนเครื่องโดยตรง (แนะนำ Google Chrome หรือ Microsoft Edge บน PC — หรือกดปุ่ม "ส่งออกไฟล์ (.xlsx)" ด้านบนแทน)
+              </span>
+            </div>
+          </div>
+
           <!-- Filter Controls -->
           <div class="px-5 sm:px-6 py-4 bg-white border-b border-slate-200 space-y-3">
             <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-12 gap-3">
@@ -1344,6 +1430,6 @@
   <!-- Vendored ExcelJS + Dual Export Engine + Main Frontend Logic -->
   <script src="/vendor/exceljs.min.js?v=6"></script>
   <script src="/excel-export.js?v=6"></script>
-  <script src="/app.js?v=3"></script>
+  <script src="/app.js?v=4"></script>
 </body>
 </html>
