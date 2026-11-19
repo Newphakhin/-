@@ -1631,17 +1631,25 @@
               ]
             });
             if (!handle) return;
-            await handle.requestPermission({ mode: 'readwrite' });
+            const perm = await handle.requestPermission({ mode: 'readwrite' });
             if (isBilling) state.boundBillingHandle = handle;
             else state.boundZoneHandle = handle;
             await saveHandleToDb(kind, handle);
             await updateBindingUI();
             closeModal();
-            showToast(
-              `ผูกไฟล์ "${handle.name}" เรียบร้อยแล้ว — กดปุ่ม "${isBilling ? 'บันทึกไฟล์ใบเบิก' : 'บันทึกไฟล์สำเนา'}" เพื่อเขียนข้อมูลลงไฟล์ได้ทันที`,
-              'success',
-              4500
-            );
+            if (perm !== 'granted') {
+              showToast(
+                `ผูกไฟล์ "${handle.name}" แล้ว แต่ยังไม่ได้อนุญาตสิทธิ์เขียนไฟล์ — กดปุ่ม "${isBilling ? 'บันทึกไฟล์ใบเบิก' : 'บันทึกไฟล์สำเนา'}" เพื่อขอสิทธิ์อีกครั้ง`,
+                'warning',
+                4800
+              );
+            } else {
+              showToast(
+                `ผูกไฟล์ "${handle.name}" เรียบร้อยแล้ว — กดปุ่ม "${isBilling ? 'บันทึกไฟล์ใบเบิก' : 'บันทึกไฟล์สำเนา'}" เพื่อเขียนข้อมูลลงไฟล์ได้ทันที`,
+                'success',
+                4500
+              );
+            }
           } catch (err) {
             if (err && err.name === 'AbortError') return;
             showToast(`ไม่สามารถผูกไฟล์ได้: ${err.message}`, 'error');
@@ -1651,7 +1659,26 @@
         box.querySelector('#m-create-new').addEventListener('click', async () => {
           const chosenSite = readChosenSite();
           try {
+            // คำนวณชื่อไฟล์แนะนำแบบ synchronous และเปิด showSaveFilePicker ทันทีเพื่อรักษา User Gesture ใน Chrome/Edge
             const f = getFilterParams();
+            const targetSite = isBilling ? chosenSite || f.site_name : f.site_name;
+            const siteMeta = targetSite ? findSiteMeta(targetSite) : null;
+            const zoneName = siteMeta ? siteMeta.zone_name : '';
+            const { start, end } = window.CkpExcel.dateRangeOf(state.logs, f.date_from, f.date_to);
+            const suggestedName = isBilling
+              ? window.CkpExcel.billingFilename({ siteName: targetSite, start, end })
+              : window.CkpExcel.zoneCopyFilename({ zoneName, siteName: targetSite, start, end });
+
+            const handle = await window.showSaveFilePicker({
+              suggestedName,
+              types: [
+                {
+                  description: 'Excel Workbook (.xlsx)',
+                  accept: { 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'] }
+                }
+              ]
+            });
+
             const payload = isBilling
               ? await buildBillingPayload({
                   siteName: chosenSite || f.site_name,
@@ -1661,15 +1688,6 @@
                 })
               : await buildZonePayloadFromFilters();
 
-            const handle = await window.showSaveFilePicker({
-              suggestedName: payload.filename,
-              types: [
-                {
-                  description: 'Excel Workbook (.xlsx)',
-                  accept: { 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'] }
-                }
-              ]
-            });
             const buffer = await payload.wb.xlsx.writeBuffer();
             const writable = await handle.createWritable();
             await writable.write(buffer);
@@ -1737,7 +1755,7 @@
       let payload;
       if (isBilling) {
         const opts = billingOpts || {
-          siteName: f.site_name || state.boundBillingSite || '',
+          siteName: state.boundBillingSite || f.site_name || '',
           dateFrom: f.date_from,
           dateTo: f.date_to,
           issueDate: todayIso()
@@ -2318,13 +2336,19 @@
         box.querySelector('#modal-edit-form').addEventListener('submit', async (e) => {
           e.preventDefault();
           try {
+            const newSiteName = box.querySelector('#m-site-name').value.trim();
             await apiFetch(`/api/master/sites/${s.id}`, {
               method: 'PUT',
               body: JSON.stringify({
-                site_name: box.querySelector('#m-site-name').value.trim(),
+                site_name: newSiteName,
                 zone_name: box.querySelector('#m-zone-name').value.trim()
               })
             });
+            if (state.boundBillingSite && state.boundBillingSite === s.site_name && newSiteName) {
+              state.boundBillingSite = newSiteName;
+              localStorage.setItem(BOUND_BILLING_SITE_KEY, newSiteName);
+              await updateBindingUI();
+            }
             closeModal();
             showToast('อัปเดตไซต์งาน/โครงการเรียบร้อยแล้ว', 'success');
             await refreshAll();
