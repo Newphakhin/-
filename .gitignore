@@ -4,3 +4,4 @@ database.sqlite*
 fallback_storage.json
 *.log
 .DS_Store
+backup_*.json

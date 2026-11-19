@@ -1,7 +1,9 @@
 -- ============================================================================
--- ระบบจัดการบันทึกข้อมูลการเดินทางของคนงาน (Worker Dispatch & Travel Log System)
--- Supabase / PostgreSQL Database Schema & Initial Seed Data (6 Tables)
+-- ระบบจัดการบันทึกข้อมูลการเดินทางพนักงาน — บริษัท จักรพงษ์ ขนส่ง (2003) จำกัด
+-- Supabase / PostgreSQL Database Schema (V3 — No Seed Data)
 -- วิธีใช้งาน: คัดลอกโค้ดทั้งหมดนี้ไปรันในเมนู SQL Editor บน Supabase Dashboard
+-- หมายเหตุ: ตารางข้อมูลหลักและบันทึกการเดินทางเริ่มต้นว่างเปล่าทั้งหมด (No Seed Data)
+--          มีเฉพาะบัญชีผู้ใช้งานระบบ (admin / user) เพื่อให้เข้าสู่ระบบได้
 -- ============================================================================
 
 -- 1. ตารางผู้ใช้งานระบบ (users)
@@ -13,7 +15,8 @@ CREATE TABLE IF NOT EXISTS users (
   role TEXT NOT NULL CHECK (role IN ('admin', 'operator'))
 );
 
--- 2. ตารางรายชื่อคนงานสำหรับ Dropdown (master_workers)
+-- 2. ตารางรายชื่อคนงาน/คนขับ (master_workers)
+--    default_route ใช้เก็บทะเบียนรถประจำตัวคนขับ (default_vehicle) เพื่อ Auto-fill
 CREATE TABLE IF NOT EXISTS master_workers (
   id SERIAL PRIMARY KEY,
   name TEXT UNIQUE NOT NULL,
@@ -21,21 +24,16 @@ CREATE TABLE IF NOT EXISTS master_workers (
   active BOOLEAN DEFAULT TRUE
 );
 
--- 3. ตารางเส้นทาง / ที่หมายสำหรับ Dropdown (master_routes)
-CREATE TABLE IF NOT EXISTS master_routes (
-  id SERIAL PRIMARY KEY,
-  name TEXT UNIQUE NOT NULL,
-  active BOOLEAN DEFAULT TRUE
-);
-
--- 4. ตารางทะเบียนรถสำหรับ Dropdown (master_vehicles)
+-- 3. ตารางทะเบียนรถ (master_vehicles)
 CREATE TABLE IF NOT EXISTS master_vehicles (
   id SERIAL PRIMARY KEY,
   plate TEXT UNIQUE NOT NULL,
   active BOOLEAN DEFAULT TRUE
 );
 
--- 5. ตารางบันทึกข้อมูลการเดินทาง (travel_logs)
+-- 4. ตารางบันทึกการเดินทาง (travel_logs)
+--    worker_name ใช้เก็บ id เฉพาะของแต่ละเที่ยววิ่ง (เช่น T...)
+--    gps_status ใช้เก็บ JSON โครงสร้างเต็มรูปแบบของเที่ยววิ่ง V3
 CREATE TABLE IF NOT EXISTS travel_logs (
   worker_name TEXT PRIMARY KEY,
   travel_date TEXT,
@@ -43,59 +41,30 @@ CREATE TABLE IF NOT EXISTS travel_logs (
   departure_time TEXT,
   arrival_time TEXT,
   vehicle_plate TEXT,
-  passenger_count INTEGER,
   gps_status TEXT DEFAULT '',
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 6. ตารางตั้งค่าการเชื่อมต่อ API และโควต้าข้อมูล (system_settings)
+-- 5. ตารางตั้งค่าระบบและจัดเก็บข้อมูลหลัก V3 (system_settings)
+--    key = 'v3_sites'          -> JSON รายการไซต์งาน/โครงการ (id, site_name, zone_name, active)
+--    key = 'v3_routes'         -> JSON รายการเส้นทาง/ที่หมาย (id, origin, destination, route_sheet_name, billing_title, default_dep_time, default_arr_time, unit_price, display_mode_zone, active)
+--    key = 'max_storage_limit' -> ขีดจำกัดจำนวนรายการสูงสุด
 CREATE TABLE IF NOT EXISTS system_settings (
   key TEXT PRIMARY KEY,
   value TEXT
 );
 
 -- ============================================================================
--- ข้อมูลเริ่มต้น (SEED DATA)
+-- บัญชีผู้ใช้งานระบบเริ่มต้น (รหัสผ่านเริ่มต้น: 1234)
+-- ห้ามใส่ข้อมูลตัวอย่างคนขับ/ทะเบียนรถ/โครงการ/เส้นทาง/บันทึกการเดินทาง
 -- ============================================================================
-
--- Seed 1: users (รหัสผ่านเริ่มต้น: 1234)
 INSERT INTO users (username, password, full_name, role)
 VALUES
   ('admin', '1234', 'แอดมิน', 'admin'),
   ('user', '1234', 'ผู้บันทึกข้อมูล', 'operator')
 ON CONFLICT (username) DO NOTHING;
 
--- Seed 2: master_vehicles (ทะเบียนรถครบทั้ง 20 คัน)
-INSERT INTO master_vehicles (plate, active)
-VALUES
-  ('34-5798', TRUE),
-  ('34-4546', TRUE),
-  ('34-3771', TRUE),
-  ('34-5793', TRUE),
-  ('34-5579', TRUE),
-  ('34-5795', TRUE),
-  ('34-4596', TRUE),
-  ('34-6756', TRUE),
-  ('86-9334', TRUE),
-  ('34-5273', TRUE),
-  ('34-6703', TRUE),
-  ('34-5797', TRUE),
-  ('34-4373', TRUE),
-  ('34-3062', TRUE),
-  ('34-4597', TRUE),
-  ('34-7124', TRUE),
-  ('34-4370', TRUE),
-  ('10-2784', TRUE),
-  ('34-6716', TRUE),
-  ('1นข 1609', TRUE)
-ON CONFLICT (plate) DO NOTHING;
-
--- Seed 3: system_settings
 INSERT INTO system_settings (key, value)
 VALUES
-  ('cartrack_api_url', 'https://fleetapi-th.cartrack.com/rest/vehicles/status'),
-  ('cartrack_username', 'DEMO_FLEET_TH'),
-  ('cartrack_api_key', ''),
-  ('cartrack_mock_mode', 'true'),
-  ('max_storage_limit', '100')
+  ('max_storage_limit', '10000')
 ON CONFLICT (key) DO NOTHING;

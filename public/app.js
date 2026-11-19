@@ -1,1940 +1,1142 @@
-/**
- * ระบบจัดการบันทึกข้อมูลการเดินทางของคนงาน (Worker Dispatch & Travel Log System v2.0)
- * Cloud Supabase + Cartrack GPS API + Storage Quota Alert + Mobile-First Responsive UI
- */
+(() => {
+  'use strict';
 
-const state = {
-  token: localStorage.getItem('dispatch_auth_token') || null,
-  user: JSON.parse(localStorage.getItem('dispatch_auth_user') || 'null'),
-  currentView: 'front', // 'front' | 'back'
-  editingWorkerName: null, // Worker name of the trip currently being edited
-  editingLogId: null, // Unique log_id of the trip currently being edited
-  lastCheckedGps: null, // Stores latest checked GPS object from form button
-  linkedCopyHandle: null, // Persistent FileSystemFileHandle for แบบสำเนา
-  linkedBillingHandle: null, // Persistent FileSystemFileHandle for แบบใบเบิก
+  // ==========================================================================
+  // 1. State & Constants
+  // ==========================================================================
+  const TOKEN_KEY = 'ckp_auth_token_v3';
 
-  // Data from Backend
-  activeWorkers: [],
-  activeSites: [],
-  activeRoutes: [],
-  activeVehicles: [],
-  allWorkers: [],
-  allSites: [],
-  allRoutes: [],
-  allVehicles: [],
-  logs: [],
+  const state = {
+    token: localStorage.getItem(TOKEN_KEY) || '',
+    user: null,
+    storageMode: '',
+    quota: null,
+    activeView: 'front', // 'front' | 'back'
+    activeBoTab: 'vehicles', // 'vehicles' | 'workers' | 'sites' | 'routes'
 
-  // Storage Quota & System Settings
-  storageQuota: {
-    currentCount: 0,
-    maxLimit: 100,
-    usagePercent: 0,
-    statusLevel: 'normal',
-    isFull: false,
-    isWarning: false,
-    dbSizeBytes: 0,
-    supabaseFreeTierBytes: 524288000,
-    storageMode: 'local_fallback'
-  },
-  gpsSettings: {
-    cartrack_api_url: 'https://fleetapi-th.cartrack.com/rest/vehicles/status',
-    cartrack_username: 'DEMO_FLEET_TH',
-    cartrack_api_key: '',
-    cartrack_mock_mode: 'true',
-    max_storage_limit: '100'
-  },
+    // Master data (starts empty — No Seed Data)
+    vehicles: [],
+    workers: [],
+    sites: [],
+    routes: [],
 
-  // Filters
-  filterSite: '',
-  filterDate: '',
-  filterSearch: ''
-};
+    // Travel logs (filtered)
+    logs: [],
+    todayLogsCount: 0,
 
-// ============================================================================
-// UTILITY HELPERS (Date, Duration, GPS Parser, Escaping, API Fetch)
-// ============================================================================
-
-const THAI_MONTHS_SHORT = [
-  'ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.',
-  'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'
-];
-
-const THAI_MONTHS_FULL = [
-  'มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน',
-  'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'
-];
-
-function getTodayISO() {
-  const now = new Date();
-  const y = now.getFullYear();
-  const m = String(now.getMonth() + 1).padStart(2, '0');
-  const d = String(now.getDate()).padStart(2, '0');
-  return `${y}-${m}-${d}`;
-}
-
-function formatThaiDate(isoDate, fullMonth = false) {
-  if (!isoDate || !/^\d{4}-\d{2}-\d{2}$/.test(isoDate)) {
-    return isoDate || '-';
-  }
-  const [yStr, mStr, dStr] = isoDate.split('-');
-  const yearBE = Number(yStr) + 543;
-  const monthIdx = Number(mStr) - 1;
-  const day = Number(dStr);
-  const monthName = fullMonth ? THAI_MONTHS_FULL[monthIdx] : THAI_MONTHS_SHORT[monthIdx];
-  return `${day} ${monthName} ${yearBE}`;
-}
-
-function calculateTravelDuration(departureTime, arrivalTime) {
-  if (!departureTime || !arrivalTime) {
-    return { text: '-', isOvernight: false, totalMinutes: null };
-  }
-  const depMatch = /^(\d{1,2}):(\d{2})$/.exec(departureTime.trim());
-  const arrMatch = /^(\d{1,2}):(\d{2})$/.exec(arrivalTime.trim());
-  if (!depMatch || !arrMatch) {
-    return { text: '-', isOvernight: false, totalMinutes: null };
-  }
-
-  const depMins = Number(depMatch[1]) * 60 + Number(depMatch[2]);
-  const arrMins = Number(arrMatch[1]) * 60 + Number(arrMatch[2]);
-
-  let diffMins = arrMins - depMins;
-  let isOvernight = false;
-
-  if (diffMins < 0) {
-    diffMins = 1440 - depMins + arrMins;
-    isOvernight = true;
-  }
-
-  const hours = Math.floor(diffMins / 60);
-  const mins = diffMins % 60;
-
-  const parts = [];
-  if (hours > 0) parts.push(`${hours} ชม.`);
-  if (mins > 0) parts.push(`${mins} นาที`);
-  if (parts.length === 0) parts.push('0 นาที');
-
-  const label = parts.join(' ') + (isOvernight ? ' (ข้ามวัน)' : '');
-  return {
-    text: label,
-    isOvernight,
-    totalMinutes: diffMins
+    // Form state
+    editingLogId: null,
+    isSwapped: false,
+    routeMetaExpanded: false,
+    searchTimer: null
   };
-}
 
-function parseGpsStatus(rawGps) {
-  if (!rawGps) return null;
-  if (typeof rawGps === 'object') return rawGps;
-  try {
-    const parsed = JSON.parse(rawGps);
-    if (parsed && typeof parsed === 'object') return parsed;
-  } catch {
-    // Plain text fallback
-    return {
-      status: String(rawGps),
-      engine: String(rawGps).includes('ดับ') ? 'OFF' : 'ON',
-      speed: 0,
-      location: '',
-      maps_url: 'https://www.google.com/maps?q=13.7563,100.5018',
-      updated_at: ''
+  const $ = (id) => document.getElementById(id);
+
+  // ==========================================================================
+  // 2. Formatting & Utility Helpers
+  // ==========================================================================
+  function escapeHtml(str) {
+    return String(str ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function todayIso() {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }
+
+  function currentMonthIso() {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  }
+
+  function toBE(iso) {
+    if (window.CkpExcel && typeof window.CkpExcel.toBE === 'function') {
+      return window.CkpExcel.toBE(iso);
+    }
+    const m = String(iso || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+    return m ? `${Number(m[3])}/${Number(m[2])}/${Number(m[1]) + 543}` : '';
+  }
+
+  function formatMoney(n) {
+    const num = Number(n) || 0;
+    return num.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+
+  function formatInt(n) {
+    return (Number(n) || 0).toLocaleString('th-TH');
+  }
+
+  function calcDurationText(dep, arr) {
+    const parse = (t) => {
+      const m = String(t || '').match(/^(\d{1,2}):(\d{2})/);
+      return m ? Number(m[1]) * 60 + Number(m[2]) : null;
     };
-  }
-  return null;
-}
-
-function escapeHtml(str) {
-  return String(str ?? '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
-}
-
-async function apiFetch(url, options = {}) {
-  const headers = {
-    'Content-Type': 'application/json',
-    ...(options.headers || {})
-  };
-  if (state.token) {
-    headers.Authorization = `Bearer ${state.token}`;
+    const d1 = parse(dep);
+    const d2 = parse(arr);
+    if (d1 === null || d2 === null) return '';
+    let diff = d2 - d1;
+    if (diff < 0) diff += 24 * 60;
+    if (diff === 0) return '0 นาที';
+    const hrs = Math.floor(diff / 60);
+    const mins = diff % 60;
+    if (hrs === 0) return `${mins} นาที`;
+    if (mins === 0) return `${hrs} ชม.`;
+    return `${hrs} ชม. ${mins} นาที`;
   }
 
-  const response = await fetch(url, {
-    ...options,
-    headers
-  });
-
-  let data = null;
-  try {
-    data = await response.json();
-  } catch {
-    data = null;
+  function pulseElement(el) {
+    if (!el) return;
+    el.classList.remove('input-highlight-pulse');
+    void el.offsetWidth;
+    el.classList.add('input-highlight-pulse');
   }
 
-  if (response.status === 401 && url !== '/api/login') {
-    handleSessionExpired();
-    throw new Error(data?.error || 'เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่');
+  // ==========================================================================
+  // 3. Toast Notifications & Custom Modals (Zero browser alert/confirm)
+  // ==========================================================================
+  function showToast(message, type = 'info', duration = 3600) {
+    const container = $('toast-container');
+    if (!container) return;
+
+    const palette = {
+      success: 'bg-emerald-900 text-white border-emerald-700',
+      error: 'bg-rose-900 text-white border-rose-700',
+      warning: 'bg-amber-900 text-amber-50 border-amber-700',
+      info: 'bg-zinc-900 text-white border-zinc-700'
+    };
+    const icons = {
+      success: 'fa-circle-check text-emerald-400',
+      error: 'fa-circle-exclamation text-rose-400',
+      warning: 'fa-triangle-exclamation text-amber-400',
+      info: 'fa-circle-info text-sky-400'
+    };
+
+    const toast = document.createElement('div');
+    toast.className = `pointer-events-auto toast-animate flex items-start gap-2.5 px-4 py-3 rounded-xl border shadow-xl text-xs sm:text-sm ${palette[type] || palette.info}`;
+    toast.innerHTML = `
+      <i class="fa-solid ${icons[type] || icons.info} mt-0.5 shrink-0"></i>
+      <span class="flex-1 leading-snug">${escapeHtml(message)}</span>
+      <button type="button" class="text-white/60 hover:text-white ml-1 cursor-pointer" aria-label="ปิด">
+        <i class="fa-solid fa-xmark"></i>
+      </button>
+    `;
+    toast.querySelector('button').addEventListener('click', () => toast.remove());
+    container.appendChild(toast);
+
+    setTimeout(() => {
+      if (toast.isConnected) toast.remove();
+    }, duration);
   }
 
-  return { ok: response.ok, status: response.status, data };
-}
-
-// ============================================================================
-// TOAST NOTIFICATION & CUSTOM MODAL SYSTEM (No alert() / confirm())
-// ============================================================================
-
-function showToast(message, type = 'success', subtitle = '') {
-  const container = document.getElementById('toast-container');
-  if (!container) return;
-
-  const styleMap = {
-    success: {
-      bg: 'bg-white border-emerald-500',
-      iconBg: 'bg-emerald-100 text-emerald-600',
-      icon: 'fa-circle-check',
-      titleColor: 'text-slate-900'
-    },
-    warning: {
-      bg: 'bg-white border-amber-500',
-      iconBg: 'bg-amber-100 text-amber-600',
-      icon: 'fa-triangle-exclamation',
-      titleColor: 'text-slate-900'
-    },
-    error: {
-      bg: 'bg-white border-rose-500',
-      iconBg: 'bg-rose-100 text-rose-600',
-      icon: 'fa-circle-exclamation',
-      titleColor: 'text-slate-900'
-    },
-    info: {
-      bg: 'bg-white border-indigo-500',
-      iconBg: 'bg-indigo-100 text-indigo-600',
-      icon: 'fa-circle-info',
-      titleColor: 'text-slate-900'
+  function closeModal() {
+    const backdrop = $('custom-modal-backdrop');
+    const box = $('custom-modal-box');
+    if (backdrop) {
+      backdrop.classList.add('hidden');
+      backdrop.classList.remove('flex');
     }
-  };
-
-  const cfg = styleMap[type] || styleMap.info;
-  const toastEl = document.createElement('div');
-  toastEl.className = `pointer-events-auto flex items-start gap-3 p-3.5 rounded-2xl shadow-xl border-l-4 border border-slate-200/90 ${cfg.bg} toast-animate`;
-  toastEl.innerHTML = `
-    <div class="w-8 h-8 rounded-xl ${cfg.iconBg} flex items-center justify-center shrink-0 mt-0.5">
-      <i class="fa-solid ${cfg.icon}"></i>
-    </div>
-    <div class="flex-1 min-w-0">
-      <p class="text-xs sm:text-sm font-semibold ${cfg.titleColor} break-words">${escapeHtml(message)}</p>
-      ${subtitle ? `<p class="text-xs text-slate-500 mt-0.5 break-words">${escapeHtml(subtitle)}</p>` : ''}
-    </div>
-    <button type="button" class="text-slate-400 hover:text-slate-600 p-1 cursor-pointer">
-      <i class="fa-solid fa-xmark text-xs"></i>
-    </button>
-  `;
-
-  toastEl.querySelector('button').addEventListener('click', () => {
-    toastEl.remove();
-  });
-
-  container.appendChild(toastEl);
-  setTimeout(() => {
-    if (toastEl.parentNode) {
-      toastEl.style.opacity = '0';
-      toastEl.style.transition = 'opacity 0.25s ease';
-      setTimeout(() => toastEl.remove(), 250);
-    }
-  }, 4200);
-}
-
-function closeCustomModal() {
-  const backdrop = document.getElementById('custom-modal-backdrop');
-  const box = document.getElementById('custom-modal-box');
-  if (backdrop) {
-    backdrop.classList.add('hidden');
-    backdrop.classList.remove('flex');
-  }
-  if (box) {
-    box.innerHTML = '';
-  }
-}
-
-function openCustomModal(htmlContent) {
-  const backdrop = document.getElementById('custom-modal-backdrop');
-  const box = document.getElementById('custom-modal-box');
-  if (!backdrop || !box) return;
-
-  box.innerHTML = htmlContent;
-  backdrop.classList.remove('hidden');
-  backdrop.classList.add('flex');
-}
-
-document.getElementById('custom-modal-backdrop')?.addEventListener('click', (e) => {
-  if (e.target.id === 'custom-modal-backdrop') {
-    closeCustomModal();
-  }
-});
-
-// ============================================================================
-// STORAGE QUOTA METER & 2-LEVEL ALERT SYSTEM (80% Warning / 100% Red Modal)
-// ============================================================================
-
-function renderStorageQuotaUI(triggerFullModal = false) {
-  const q = state.storageQuota;
-  if (!q) return;
-
-  // Update Top Cloud / Local Database Banner
-  const modeDot = document.getElementById('db-mode-dot');
-  const modeText = document.getElementById('db-mode-text');
-  if (modeDot && modeText) {
-    if (q.storageMode === 'supabase_cloud') {
-      modeDot.className = 'w-2 h-2 rounded-full bg-emerald-400';
-      modeText.innerHTML =
-        '<strong>สถานะฐานข้อมูล: เชื่อมต่อ Supabase PostgreSQL Cloud + SQLite เรียบร้อยแล้ว</strong> — ซิงค์ข้อมูลออนไลน์แบบเรียลไทม์';
-    } else {
-      modeDot.className = 'w-2 h-2 rounded-full bg-emerald-400 animate-pulse';
-      modeText.innerHTML =
-        '<strong>สถานะฐานข้อมูล: เชื่อมต่อฐานข้อมูล SQLite จริงเรียบร้อยแล้ว (database.sqlite)</strong> — บันทึกข้อมูลถาวรครบทั้ง 6 ตาราง (พร้อมซิงค์ขึ้น Supabase Cloud ได้ทันทีเมื่อใส่ค่าใน <code>.env</code>)';
-    }
+    if (box) box.innerHTML = '';
   }
 
-  // Update KPI Max Quota
-  const statMaxQuota = document.getElementById('stat-max-quota');
-  if (statMaxQuota) statMaxQuota.textContent = q.maxLimit;
-
-  // Update Storage Usage Meter Card
-  const progressBar = document.getElementById('quota-progress-bar');
-  const progressLabel = document.getElementById('quota-progress-label');
-  const dbSizeLabel = document.getElementById('quota-db-size-label');
-  const statusBadge = document.getElementById('quota-status-badge');
-  const meterIcon = document.getElementById('quota-meter-icon');
-  const warningBanner = document.getElementById('storage-warning-banner');
-  const adminSimControls = document.getElementById('admin-quota-test-controls');
-
-  if (adminSimControls) {
-    if (state.user?.role === 'admin') {
-      adminSimControls.classList.remove('hidden');
-      adminSimControls.classList.add('flex');
-    } else {
-      adminSimControls.classList.add('hidden');
-      adminSimControls.classList.remove('flex');
-    }
+  function openModal(html, onReady) {
+    const backdrop = $('custom-modal-backdrop');
+    const box = $('custom-modal-box');
+    if (!backdrop || !box) return;
+    box.innerHTML = html;
+    backdrop.classList.remove('hidden');
+    backdrop.classList.add('flex');
+    if (typeof onReady === 'function') onReady(box);
   }
 
-  const pct = Math.min(100, Math.max(0, q.usagePercent || 0));
-  if (progressBar) {
-    progressBar.style.width = `${pct}%`;
-  }
-  if (progressLabel) {
-    progressLabel.textContent = `ความจุข้อมูลปัจจุบัน: ${q.currentCount} / ${q.maxLimit} รายการ (${pct}%)`;
-  }
-  if (dbSizeLabel) {
-    const kb = ((q.dbSizeBytes || 0) / 1024).toFixed(1);
-    dbSizeLabel.textContent = `ขนาดฐานข้อมูล: ${kb} KB / Supabase Free Tier 500 MB`;
-  }
+  function confirmModal({ title, message, confirmText = 'ยืนยัน', cancelText = 'ยกเลิก', danger = false }) {
+    return new Promise((resolve) => {
+      const btnCls = danger
+        ? 'bg-rose-600 hover:bg-rose-700 text-white'
+        : 'bg-zinc-900 hover:bg-zinc-800 text-white';
+      const iconCls = danger
+        ? 'bg-rose-100 text-rose-600 fa-triangle-exclamation'
+        : 'bg-indigo-100 text-indigo-600 fa-circle-question';
 
-  // Level styling
-  if (q.isFull || q.statusLevel === 'full') {
-    if (progressBar) progressBar.className = 'h-full bg-rose-600 rounded-full transition-all duration-300';
-    if (statusBadge) {
-      statusBadge.className = 'px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-rose-100 text-rose-800 border border-rose-300';
-      statusBadge.innerHTML = '<i class="fa-solid fa-circle-exclamation mr-1"></i>ข้อมูลเต็ม 100% (บล็อกการบันทึกใหม่)';
-    }
-    if (meterIcon) {
-      meterIcon.className = 'w-10 h-10 rounded-xl bg-rose-100 text-rose-600 flex items-center justify-center shrink-0';
-    }
-
-    if (warningBanner) {
-      warningBanner.className =
-        'rounded-2xl p-4 bg-rose-50 border-2 border-rose-300 text-rose-900 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3';
-      warningBanner.innerHTML = `
-        <div class="flex items-start gap-3">
-          <div class="w-10 h-10 rounded-xl bg-rose-600 text-white flex items-center justify-center shrink-0 mt-0.5">
-            <i class="fa-solid fa-triangle-exclamation text-lg"></i>
+      openModal(
+        `
+        <div class="p-5 sm:p-6 space-y-4">
+          <div class="flex items-start gap-3">
+            <div class="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${iconCls.split(' ').slice(0, 2).join(' ')}">
+              <i class="fa-solid ${iconCls.split(' ')[2]}"></i>
+            </div>
+            <div class="flex-1">
+              <h3 class="text-base font-bold text-slate-900">${escapeHtml(title)}</h3>
+              <p class="text-xs sm:text-sm text-slate-600 mt-1 leading-relaxed">${escapeHtml(message)}</p>
+            </div>
           </div>
-          <div>
-            <h4 class="text-sm font-bold text-rose-950">
-              แจ้งเตือนฉุกเฉิน: พื้นที่เก็บข้อมูลเต็ม 100% (${q.currentCount}/${q.maxLimit} รายการ) — HTTP 507 Insufficient Storage
-            </h4>
-            <p class="text-xs text-rose-800 mt-0.5">
-              ระบบบล็อกการเพิ่มข้อมูลใหม่ชั่วคราว กรุณาส่งออกไฟล์สำรองข้อมูล หรือล้างข้อมูลเก่า/ขยายโควต้าในหน้าตั้งค่าหลังบ้าน
-            </p>
+          <div class="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+            <button type="button" id="modal-btn-cancel" class="min-h-[40px] px-4 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 text-xs sm:text-sm font-medium cursor-pointer">${escapeHtml(cancelText)}</button>
+            <button type="button" id="modal-btn-confirm" class="min-h-[40px] px-4 py-2 rounded-xl ${btnCls} text-xs sm:text-sm font-semibold cursor-pointer">${escapeHtml(confirmText)}</button>
           </div>
         </div>
-        <div class="flex flex-wrap items-center gap-2 shrink-0">
-          <button
-            type="button"
-            id="banner-btn-export-csv"
-            class="min-h-[40px] px-3.5 py-1.5 rounded-xl bg-white hover:bg-rose-100 text-rose-900 border border-rose-300 text-xs font-bold flex items-center gap-1.5 cursor-pointer"
-          >
-            <i class="fa-solid fa-file-csv"></i>
-            <span>ส่งออก CSV สำรองข้อมูล</span>
-          </button>
-          <button
-            type="button"
-            id="banner-btn-open-full-modal"
-            class="min-h-[40px] px-3.5 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
-          >
-            <i class="fa-solid fa-broom"></i>
-            <span>จัดการพื้นที่เก็บข้อมูล</span>
-          </button>
-        </div>
-      `;
-      warningBanner.querySelector('#banner-btn-export-csv')?.addEventListener('click', exportLogsToCSV);
-      warningBanner
-        .querySelector('#banner-btn-open-full-modal')
-        ?.addEventListener('click', () => showStorageFullEmergencyModal());
-    }
-
-    if (triggerFullModal) {
-      showStorageFullEmergencyModal();
-    }
-  } else if (q.isWarning || q.statusLevel === 'warning') {
-    if (progressBar) progressBar.className = 'h-full bg-amber-500 rounded-full transition-all duration-300';
-    if (statusBadge) {
-      statusBadge.className = 'px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-100 text-amber-800 border border-amber-300';
-      statusBadge.innerHTML = `<i class="fa-solid fa-triangle-exclamation mr-1"></i>ใกล้เต็ม (${pct}%)`;
-    }
-    if (meterIcon) {
-      meterIcon.className = 'w-10 h-10 rounded-xl bg-amber-100 text-amber-600 flex items-center justify-center shrink-0';
-    }
-
-    // Level 1 Amber Warning Banner (>= 80%)
-    if (warningBanner) {
-      warningBanner.className =
-        'rounded-2xl p-4 bg-amber-50 border-2 border-amber-300 text-amber-900 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3';
-      warningBanner.innerHTML = `
-        <div class="flex items-start gap-3">
-          <div class="w-10 h-10 rounded-xl bg-amber-500 text-white flex items-center justify-center shrink-0 mt-0.5">
-            <i class="fa-solid fa-bell text-lg"></i>
-          </div>
-          <div>
-            <h4 class="text-sm font-bold text-amber-950">
-              แจ้งเตือนระดับที่ 1 (Warning): พื้นที่เก็บข้อมูลใกล้เต็ม (${q.currentCount}/${q.maxLimit} รายการ — ${pct}%)
-            </h4>
-            <p class="text-xs text-amber-800 mt-0.5">
-              ความจุข้อมูลเกิน 80% แล้ว แนะนำให้กดส่งออกแบบฟอร์มไฟล์ Excel เพื่อสำรองข้อมูลไว้ล่วงหน้าก่อนที่พื้นที่เก็บข้อมูลจะเต็ม
-            </p>
-          </div>
-        </div>
-        <div class="flex flex-wrap items-center gap-2 shrink-0">
-          <button
-            type="button"
-            id="banner-warn-export-excel"
-            class="min-h-[40px] px-4 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
-          >
-            <i class="fa-solid fa-file-excel"></i>
-            <span>ส่งออกแบบฟอร์ม Excel (ครบทั้ง 2 แบบฟอร์ม)</span>
-          </button>
-        </div>
-      `;
-      warningBanner
-        .querySelector('#banner-warn-export-excel')
-        ?.addEventListener('click', exportLogsToExcel);
-    }
-  } else {
-    if (progressBar) progressBar.className = 'h-full bg-indigo-600 rounded-full transition-all duration-300';
-    if (statusBadge) {
-      statusBadge.className = 'px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800';
-      statusBadge.textContent = `ปกติ (${pct}%)`;
-    }
-    if (meterIcon) {
-      meterIcon.className = 'w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0';
-    }
-    if (warningBanner) {
-      warningBanner.className = 'hidden';
-      warningBanner.innerHTML = '';
-    }
-  }
-}
-
-function showStorageFullEmergencyModal(customMessage = '') {
-  const q = state.storageQuota;
-  const isAdmin = state.user?.role === 'admin';
-
-  openCustomModal(`
-    <div class="border-t-8 border-rose-600 p-6 bg-white">
-      <div class="flex items-start gap-4">
-        <div class="w-14 h-14 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center text-2xl shrink-0 animate-bounce">
-          <i class="fa-solid fa-database"></i>
-        </div>
-        <div class="flex-1">
-          <span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-rose-100 text-rose-800 border border-rose-300 text-[11px] font-bold mb-1.5">
-            HTTP 507 Insufficient Storage — Storage Full Alert
-          </span>
-          <h3 class="text-lg font-bold text-rose-950">
-            แจ้งเตือนฉุกเฉิน: พื้นที่เก็บข้อมูลเต็ม 100%!
-          </h3>
-          <p class="text-sm text-slate-600 mt-1 leading-relaxed">
-            ${escapeHtml(
-              customMessage ||
-                `ขณะนี้มีข้อมูลบันทึกการเดินทางครบขีดจำกัดแล้ว (${q.currentCount} / ${q.maxLimit} รายการ) ระบบจึงบล็อกการบันทึกข้อมูลใหม่ชั่วคราว`
-            )}
-          </p>
-        </div>
-      </div>
-
-      <div class="mt-5 p-4 rounded-xl bg-rose-50 border border-rose-200 space-y-2.5">
-        <p class="text-xs font-bold text-rose-900 uppercase tracking-wider">
-          <i class="fa-solid fa-bolt mr-1"></i>ทางเลือกดำเนินการฉุกเฉิน:
-        </p>
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-          <button
-            type="button"
-            id="modal-full-export-excel"
-            class="sm:col-span-2 min-h-[44px] px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center justify-center gap-2 shadow-sm transition cursor-pointer"
-          >
-            <i class="fa-solid fa-file-excel text-base"></i>
-            <span>ส่งออกแบบฟอร์ม Excel (ครบทั้ง 2 แบบฟอร์ม) ทันที</span>
-          </button>
-
-          ${
-            isAdmin
-              ? `
-            <button
-              type="button"
-              id="modal-full-clear-old"
-              class="min-h-[44px] px-3.5 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold flex items-center justify-center gap-2 shadow-sm transition cursor-pointer"
-            >
-              <i class="fa-solid fa-broom text-base"></i>
-              <span>ล้างข้อมูลเก่าเพื่อเพิ่มพื้นที่</span>
-            </button>
-
-            <button
-              type="button"
-              id="modal-full-expand-quota"
-              class="min-h-[44px] px-3.5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold flex items-center justify-center gap-2 shadow-sm transition cursor-pointer"
-            >
-              <i class="fa-solid fa-sliders text-base"></i>
-              <span>ขยายโควต้าในหน้าตั้งค่า (100)</span>
-            </button>
-          `
-              : ''
-          }
-        </div>
-      </div>
-
-      <div class="mt-5 pt-3 border-t border-slate-100 flex justify-end">
-        <button
-          type="button"
-          id="modal-full-close"
-          class="min-h-[42px] px-5 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 text-sm font-semibold cursor-pointer"
-        >
-          ปิดหน้าต่าง
-        </button>
-      </div>
-    </div>
-  `);
-
-  document.getElementById('modal-full-close')?.addEventListener('click', closeCustomModal);
-  document.getElementById('modal-full-export-excel')?.addEventListener('click', () => {
-    exportLogsToExcel();
-  });
-  document.getElementById('modal-full-clear-old')?.addEventListener('click', async () => {
-    closeCustomModal();
-    const res = await apiFetch('/api/logs/clear-old', {
-      method: 'POST',
-      body: JSON.stringify({ mode: 'all' })
-    });
-    if (res.ok) {
-      showToast(res.data?.message || 'ล้างข้อมูลเก่าเพื่อเพิ่มพื้นที่สำเร็จ', 'success');
-      await loadAllData();
-    } else {
-      showToast(res.data?.error || 'ไม่สามารถล้างข้อมูลเก่าได้', 'error');
-    }
-  });
-  document.getElementById('modal-full-expand-quota')?.addEventListener('click', async () => {
-    closeCustomModal();
-    await quickSetQuotaLimit(100);
-  });
-}
-
-async function quickSetQuotaLimit(newLimit) {
-  try {
-    const res = await apiFetch('/api/settings/gps', {
-      method: 'PUT',
-      body: JSON.stringify({
-        ...state.gpsSettings,
-        max_storage_limit: newLimit
-      })
-    });
-    if (res.ok) {
-      state.gpsSettings = res.data.settings;
-      state.storageQuota = res.data.storageQuota;
-      const triggerFull = state.storageQuota.isFull;
-      renderStorageQuotaUI(triggerFull);
-      showToast(
-        `ปรับขีดจำกัดโควต้าพื้นที่เป็น ${newLimit} รายการแล้ว`,
-        state.storageQuota.isFull
-          ? 'error'
-          : state.storageQuota.isWarning
-          ? 'warning'
-          : 'success'
+        `,
+        (box) => {
+          box.querySelector('#modal-btn-cancel').addEventListener('click', () => {
+            closeModal();
+            resolve(false);
+          });
+          box.querySelector('#modal-btn-confirm').addEventListener('click', () => {
+            closeModal();
+            resolve(true);
+          });
+        }
       );
+    });
+  }
+
+  // ==========================================================================
+  // 4. API Helper
+  // ==========================================================================
+  async function apiFetch(url, options = {}) {
+    const headers = { ...(options.headers || {}) };
+    if (options.body && !headers['Content-Type']) {
+      headers['Content-Type'] = 'application/json';
     }
-  } catch (err) {
-    showToast(err.message || 'ไม่สามารถปรับโควต้าได้', 'error');
-  }
-}
+    if (state.token) {
+      headers.Authorization = `Bearer ${state.token}`;
+    }
 
-// ============================================================================
-// AUTHENTICATION & NAVIGATION
-// ============================================================================
+    const res = await fetch(url, { ...options, headers });
+    let data = null;
+    try {
+      data = await res.json();
+    } catch {
+      data = null;
+    }
 
-function saveSession(token, user) {
-  state.token = token;
-  state.user = user;
-  localStorage.setItem('dispatch_auth_token', token);
-  localStorage.setItem('dispatch_auth_user', JSON.stringify(user));
-}
-
-function clearSession() {
-  state.token = null;
-  state.user = null;
-  localStorage.removeItem('dispatch_auth_token');
-  localStorage.removeItem('dispatch_auth_user');
-}
-
-function handleSessionExpired() {
-  clearSession();
-  renderAuthView();
-  showToast('กรุณาเข้าสู่ระบบใหม่อีกครั้ง', 'warning');
-}
-
-function renderAuthView() {
-  const loginScreen = document.getElementById('login-screen');
-  const appScreen = document.getElementById('app-screen');
-
-  if (!state.token || !state.user) {
-    loginScreen.classList.remove('hidden');
-    appScreen.classList.add('hidden');
-    appScreen.classList.remove('flex');
-    return;
+    if (res.status === 401 && url !== '/api/login') {
+      handleForceLogout('เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่อีกครั้ง');
+      throw new Error((data && data.error) || 'Unauthorized');
+    }
+    if (!res.ok) {
+      const err = new Error((data && data.error) || `เกิดข้อผิดพลาด (${res.status})`);
+      err.status = res.status;
+      err.data = data;
+      throw err;
+    }
+    return data;
   }
 
-  loginScreen.classList.add('hidden');
-  appScreen.classList.remove('hidden');
-  appScreen.classList.add('flex');
+  // ==========================================================================
+  // 5. Auth & Navigation
+  // ==========================================================================
+  function showLoginScreen() {
+    $('app-screen').classList.add('hidden');
+    $('app-screen').classList.remove('flex');
+    $('login-screen').classList.remove('hidden');
+    $('login-screen').classList.add('flex');
+  }
 
-  const fullNameEl = document.getElementById('nav-user-fullname');
-  const roleBadgeEl = document.getElementById('nav-user-role-badge');
-  const navTabBack = document.getElementById('nav-tab-back');
-  const mobNavBack = document.getElementById('mob-nav-backoffice');
+  function showAppScreen() {
+    $('login-screen').classList.add('hidden');
+    $('login-screen').classList.remove('flex');
+    $('app-screen').classList.remove('hidden');
+    $('app-screen').classList.add('flex');
 
-  fullNameEl.textContent = state.user.full_name || state.user.username;
+    const isAdmin = state.user && state.user.role === 'admin';
+    $('nav-user-fullname').textContent = state.user ? state.user.full_name : '';
 
-  if (state.user.role === 'admin') {
-    fullNameEl.textContent = '';
-    fullNameEl.classList.add('hidden');
-    roleBadgeEl.className =
-      'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-zinc-900 text-amber-400 border border-zinc-800 shadow-sm';
-    roleBadgeEl.innerHTML = '<i class="fa-solid fa-user-shield text-[11px]"></i> แอดมิน';
+    const badge = $('nav-user-role-badge');
+    if (isAdmin) {
+      badge.className =
+        'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-100 text-amber-900 border border-amber-300';
+      badge.innerHTML = '<i class="fa-solid fa-crown text-[10px] text-amber-600"></i><span>แอดมิน</span>';
+    } else {
+      badge.className =
+        'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-sky-100 text-sky-900 border border-sky-200';
+      badge.innerHTML = '<i class="fa-solid fa-user-pen text-[10px]"></i><span>ผู้บันทึกข้อมูล</span>';
+    }
 
-    navTabBack.classList.remove('hidden');
-    navTabBack.classList.add('flex');
-    mobNavBack.classList.remove('hidden');
-    mobNavBack.classList.add('flex');
-  } else {
-    fullNameEl.classList.remove('hidden');
-    roleBadgeEl.className =
-      'inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200';
-    roleBadgeEl.innerHTML = '<i class="fa-solid fa-user-check text-[10px]"></i> ผู้บันทึกข้อมูล (Operator)';
+    // Toggle Admin controls
+    const toggleAdminEl = (id, displayCls = 'flex') => {
+      const el = $(id);
+      if (!el) return;
+      if (isAdmin) {
+        el.classList.remove('hidden');
+        el.classList.add(displayCls);
+      } else {
+        el.classList.add('hidden');
+        el.classList.remove(displayCls);
+      }
+    };
+    toggleAdminEl('nav-tab-back', 'flex');
+    toggleAdminEl('mobile-nav-back', 'flex');
+    toggleAdminEl('btn-clear-all-logs', 'flex');
+    toggleAdminEl('btn-goto-backoffice-hint', 'flex');
 
-    navTabBack.classList.add('hidden');
-    navTabBack.classList.remove('flex');
-    mobNavBack.classList.add('hidden');
-    mobNavBack.classList.remove('flex');
+    switchView('front');
+  }
 
-    if (state.currentView === 'back') {
-      state.currentView = 'front';
+  function handleForceLogout(msg) {
+    state.token = '';
+    state.user = null;
+    localStorage.removeItem(TOKEN_KEY);
+    showLoginScreen();
+    if (msg) showToast(msg, 'warning');
+  }
+
+  function switchView(view) {
+    if (view === 'back' && (!state.user || state.user.role !== 'admin')) {
+      showToast('เฉพาะแอดมินเท่านั้นที่เข้าใช้งานระบบหลังบ้านได้', 'warning');
+      return;
+    }
+    state.activeView = view;
+    const isFront = view === 'front';
+
+    $('view-front-office').classList.toggle('hidden', !isFront);
+    $('view-back-office').classList.toggle('hidden', isFront);
+
+    // Desktop nav button styles
+    const activeDesk = 'bg-zinc-900 text-white shadow-sm';
+    const inactiveDesk = 'text-zinc-600 hover:text-zinc-900';
+    $('nav-tab-front').className = `min-h-[40px] px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold transition flex items-center gap-1.5 cursor-pointer ${isFront ? activeDesk : inactiveDesk}`;
+    if (state.user && state.user.role === 'admin') {
+      $('nav-tab-back').className = `min-h-[40px] px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold transition flex items-center gap-1.5 cursor-pointer ${!isFront ? activeDesk : inactiveDesk}`;
+    }
+
+    // Mobile nav button styles
+    $('mobile-nav-front').className = `flex-1 min-h-[44px] rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer ${isFront ? 'bg-zinc-900 text-white' : 'bg-slate-100 text-slate-700'}`;
+    if (state.user && state.user.role === 'admin') {
+      $('mobile-nav-back').className = `flex-1 min-h-[44px] rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer ${!isFront ? 'bg-zinc-900 text-white' : 'bg-slate-100 text-slate-700'}`;
     }
   }
 
-  switchView(state.currentView);
-}
-
-function switchView(viewName) {
-  if (viewName === 'back' && state.user?.role !== 'admin') {
-    showToast('เฉพาะผู้ดูแลระบบ (Admin) เท่านั้นที่เข้าถึงระบบหลังบ้านได้', 'error');
-    return;
-  }
-
-  state.currentView = viewName;
-  const viewFront = document.getElementById('view-front-office');
-  const viewBack = document.getElementById('view-back-office');
-  const tabFront = document.getElementById('nav-tab-front');
-  const tabBack = document.getElementById('nav-tab-back');
-  const mobForm = document.getElementById('mob-nav-form');
-  const mobTable = document.getElementById('mob-nav-table');
-  const mobBack = document.getElementById('mob-nav-backoffice');
-
-  if (viewName === 'front') {
-    viewFront.classList.remove('hidden');
-    viewBack.classList.add('hidden');
-
-    tabFront.className =
-      'min-h-[40px] px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold transition flex items-center gap-1.5 bg-zinc-900 text-white shadow-sm cursor-pointer';
-    tabBack.className =
-      state.user?.role === 'admin'
-        ? 'flex min-h-[40px] px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold transition items-center gap-1.5 text-zinc-600 hover:text-zinc-900 cursor-pointer'
-        : 'hidden';
-
-    if (mobForm) mobForm.className = 'flex-1 min-h-[46px] flex flex-col items-center justify-center rounded-xl text-zinc-900 font-semibold text-[11px] gap-0.5 cursor-pointer';
-    if (mobTable) mobTable.className = 'flex-1 min-h-[46px] flex flex-col items-center justify-center rounded-xl text-slate-600 font-medium text-[11px] gap-0.5 cursor-pointer';
-    if (mobBack && state.user?.role === 'admin') {
-      mobBack.className = 'flex flex-1 min-h-[46px] flex-col items-center justify-center rounded-xl text-slate-600 font-medium text-[11px] gap-0.5 cursor-pointer';
+  function switchBoTab(tab) {
+    state.activeBoTab = tab;
+    const tabs = ['vehicles', 'workers', 'sites', 'routes'];
+    for (const t of tabs) {
+      const btn = $(`bo-tab-${t}`);
+      const panel = $(`bo-panel-${t}`);
+      const countBadge = $(`count-${t}`);
+      const active = t === tab;
+      if (panel) panel.classList.toggle('hidden', !active);
+      if (btn) {
+        btn.className = `min-h-[40px] px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold transition flex items-center gap-2 cursor-pointer ${
+          active ? 'bg-zinc-900 text-white shadow-sm' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+        }`;
+      }
+      if (countBadge) {
+        countBadge.className = `px-2 py-0.5 rounded-full text-[11px] ${
+          active ? 'bg-white/15 text-amber-300' : 'bg-slate-200 text-slate-700'
+        }`;
+      }
     }
-  } else {
-    viewFront.classList.add('hidden');
-    viewBack.classList.remove('hidden');
-
-    tabFront.className =
-      'min-h-[40px] px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold transition flex items-center gap-1.5 text-zinc-600 hover:text-zinc-900 cursor-pointer';
-    tabBack.className =
-      'flex min-h-[40px] px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold transition items-center gap-1.5 bg-zinc-900 text-white shadow-sm cursor-pointer';
-
-    if (mobForm) mobForm.className = 'flex-1 min-h-[46px] flex flex-col items-center justify-center rounded-xl text-slate-600 font-medium text-[11px] gap-0.5 cursor-pointer';
-    if (mobTable) mobTable.className = 'flex-1 min-h-[46px] flex flex-col items-center justify-center rounded-xl text-slate-600 font-medium text-[11px] gap-0.5 cursor-pointer';
-    if (mobBack) mobBack.className = 'flex flex-1 min-h-[46px] flex-col items-center justify-center rounded-xl text-zinc-900 font-semibold text-[11px] gap-0.5 cursor-pointer';
-
-    loadBackOfficeData();
   }
-}
 
-// ============================================================================
-// DATA LOADING & SYNCHRONIZATION
-// ============================================================================
+  // ==========================================================================
+  // 6. Data Loading & Status Rendering
+  // ==========================================================================
+  function renderDbStatusBanner(quota) {
+    const mode = (quota && quota.storageMode) || state.storageMode;
+    const dot = $('db-mode-dot');
+    const text = $('db-mode-text');
+    if (!text) return;
 
-async function loadAllData() {
-  try {
-    const requests = [
-      apiFetch('/api/master/workers?active=1'),
-      apiFetch('/api/master/sites?active=1'),
-      apiFetch('/api/master/routes?active=1'),
-      apiFetch('/api/master/vehicles?active=1'),
-      apiFetch('/api/logs'),
+    if (mode === 'supabase_cloud') {
+      if (dot) dot.className = 'w-2 h-2 rounded-full bg-emerald-400 animate-pulse';
+      text.innerHTML =
+        '<strong>สถานะฐานข้อมูล: เชื่อมต่อ Supabase PostgreSQL Cloud เรียบร้อยแล้ว</strong> — บันทึกและซิงค์ข้อมูลออนไลน์แบบเรียลไทม์';
+    } else {
+      if (dot) dot.className = 'w-2 h-2 rounded-full bg-amber-400 animate-pulse';
+      text.innerHTML =
+        '<strong>สถานะฐานข้อมูล: ฐานข้อมูล SQLite ในเครื่อง (database.sqlite)</strong> — บันทึกข้อมูลถาวรในเครื่อง';
+    }
+  }
+
+  function renderQuotaUI(quota) {
+    if (!quota) return;
+    state.quota = quota;
+    renderDbStatusBanner(quota);
+
+    $('stat-total-logs').textContent = formatInt(quota.currentCount);
+    $('stat-max-quota').textContent = formatInt(quota.maxLimit);
+
+    const pct = Math.min(100, Number(quota.usagePercent) || 0);
+    const label = $('quota-progress-label');
+    const bar = $('quota-progress-bar');
+    const badge = $('quota-status-badge');
+    const limitInput = $('input-max-storage-limit');
+    if (label) {
+      label.textContent = `ใช้งานแล้ว ${formatInt(quota.currentCount)} / ${formatInt(quota.maxLimit)} รายการ (${pct}%)`;
+    }
+    if (bar) {
+      bar.style.width = `${pct}%`;
+      bar.className = `h-full rounded-full transition-all duration-300 ${
+        quota.isFull ? 'bg-rose-600' : quota.isWarning ? 'bg-amber-500' : 'bg-indigo-600'
+      }`;
+    }
+    if (badge) {
+      if (quota.isFull) {
+        badge.className = 'px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-rose-100 text-rose-800';
+        badge.textContent = 'เต็มโควต้า (100%)';
+      } else if (quota.isWarning) {
+        badge.className = 'px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-100 text-amber-800';
+        badge.textContent = 'ใกล้เต็ม (>= 80%)';
+      } else {
+        badge.className = 'px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800';
+        badge.textContent = 'ปกติ';
+      }
+    }
+    if (limitInput && document.activeElement !== limitInput) {
+      limitInput.value = quota.maxLimit;
+    }
+
+    const banner = $('storage-warning-banner');
+    if (banner) {
+      if (quota.isFull) {
+        banner.className = 'rounded-2xl p-4 border shadow-sm bg-rose-50 border-rose-300 text-rose-900 text-xs sm:text-sm flex items-center gap-3';
+        banner.innerHTML = `
+          <i class="fa-solid fa-circle-exclamation text-rose-600 text-lg shrink-0"></i>
+          <div><strong>พื้นที่จัดเก็บข้อมูลเต็มแล้ว (${formatInt(quota.currentCount)}/${formatInt(quota.maxLimit)} รายการ)</strong> — กรุณาส่งออกไฟล์ Excel สำรองข้อมูลแล้วล้างข้อมูลเก่า หรือเพิ่มขีดจำกัดในระบบหลังบ้าน</div>
+        `;
+      } else if (quota.isWarning) {
+        banner.className = 'rounded-2xl p-4 border shadow-sm bg-amber-50 border-amber-300 text-amber-900 text-xs sm:text-sm flex items-center gap-3';
+        banner.innerHTML = `
+          <i class="fa-solid fa-triangle-exclamation text-amber-600 text-lg shrink-0"></i>
+          <div><strong>แจ้งเตือนพื้นที่จัดเก็บข้อมูลใกล้เต็ม (${pct}%)</strong> — ใช้งานแล้ว ${formatInt(quota.currentCount)} จาก ${formatInt(quota.maxLimit)} รายการ แนะนำให้ส่งออกไฟล์ Excel สำรองข้อมูลไว้</div>
+        `;
+      } else {
+        banner.className = 'hidden rounded-2xl p-4 border shadow-sm transition-all';
+        banner.innerHTML = '';
+      }
+    }
+  }
+
+  async function loadMasterData() {
+    const [vehicles, workers, sites, routes, quota] = await Promise.all([
+      apiFetch('/api/master/vehicles'),
       apiFetch('/api/master/workers'),
       apiFetch('/api/master/sites'),
       apiFetch('/api/master/routes'),
-      apiFetch('/api/master/vehicles'),
       apiFetch('/api/storage-status')
-    ];
-
-    if (state.user?.role === 'admin') {
-      requests.push(apiFetch('/api/settings/gps'));
-    }
-
-    const [
-      workersRes,
-      sitesRes,
-      routesRes,
-      vehiclesRes,
-      logsRes,
-      allWorkersRes,
-      allSitesRes,
-      allRoutesRes,
-      allVehiclesRes,
-      quotaRes,
-      gpsSettingsRes
-    ] = await Promise.all(requests);
-
-    if (workersRes.ok) state.activeWorkers = workersRes.data || [];
-    if (sitesRes.ok) state.activeSites = sitesRes.data || [];
-    if (routesRes.ok) state.activeRoutes = routesRes.data || [];
-    if (vehiclesRes.ok) state.activeVehicles = vehiclesRes.data || [];
-    if (logsRes.ok) state.logs = logsRes.data || [];
-    if (allWorkersRes.ok) state.allWorkers = allWorkersRes.data || [];
-    if (allSitesRes.ok) state.allSites = allSitesRes.data || [];
-    if (allRoutesRes.ok) state.allRoutes = allRoutesRes.data || [];
-    if (allVehiclesRes.ok) state.allVehicles = allVehiclesRes.data || [];
-    if (quotaRes.ok && quotaRes.data) state.storageQuota = quotaRes.data;
-    if (gpsSettingsRes?.ok && gpsSettingsRes.data?.settings) {
-      state.gpsSettings = gpsSettingsRes.data.settings;
-      populateGpsSettingsForm();
-    }
-
-    renderWorkerDropdown();
-    renderSiteDropdown();
-    renderVehicleDropdown();
-    renderRouteComboboxMenu();
-    renderSharedRoutesDatalist();
-    renderLogsTable();
-    updateSummaryKPIs();
-    updateRouteSmartControls();
-    renderStorageQuotaUI(false);
-
-    if (state.currentView === 'back' && state.user?.role === 'admin') {
-      renderBackOfficeLists();
-    }
-  } catch (err) {
-    console.error('Error loading data:', err);
-  }
-}
-
-async function loadBackOfficeData() {
-  await loadAllData();
-  renderBackOfficeLists();
-}
-
-function updateSummaryKPIs() {
-  const today = getTodayISO();
-  const totalLogs = state.logs.length;
-  const todayLogs = state.logs.filter((l) => l.travel_date === today).length;
-  const loggedWorkerNames = new Set(state.logs.map((l) => l.worker_name));
-  const availableActiveWorkers = state.activeWorkers.filter(
-    (w) => !loggedWorkerNames.has(w.name)
-  ).length;
-
-  document.getElementById('stat-total-logs').textContent = totalLogs;
-  document.getElementById('stat-today-logs').textContent = todayLogs;
-  document.getElementById('stat-available-workers').textContent = availableActiveWorkers;
-  document.getElementById('stat-active-workers').textContent = state.activeWorkers.length;
-  document.getElementById('stat-active-routes').textContent = state.activeRoutes.length;
-  document.getElementById('stat-active-vehicles').textContent = state.activeVehicles.length;
-}
-
-// ============================================================================
-// FRONT-OFFICE DROPDOWNS, SMART COMBO BOX & CARTRACK GPS CHECKER
-// ============================================================================
-
-function renderWorkerDropdown() {
-  const select = document.getElementById('form-worker');
-  if (!select) return;
-
-  const currentVal = select.value || state.editingWorkerName || '';
-  const tripCountMap = new Map();
-  for (const l of state.logs) {
-    if (l.worker_name) {
-      tripCountMap.set(l.worker_name, (tripCountMap.get(l.worker_name) || 0) + 1);
-    }
-  }
-
-  let html = '<option value="">-- เลือกชื่อคนขับ / พนักงาน (บังคับเลือก) --</option>';
-
-  const listToRender = [...state.activeWorkers];
-  if (
-    currentVal &&
-    !listToRender.some((w) => w.name === currentVal)
-  ) {
-    const foundInAll = state.allWorkers.find((w) => w.name === currentVal);
-    listToRender.unshift(
-      foundInAll || { id: 0, name: currentVal, default_route: '', active: false }
-    );
-  }
-
-  for (const w of listToRender) {
-    const routeSuffix = w.default_route
-      ? ` (ไซต์ประจำ: ${w.default_route})`
-      : '';
-    const count = tripCountMap.get(w.name) || 0;
-    const countSuffix = count > 0 ? ` [บันทึกสะสม ${count} เที่ยว]` : '';
-    const isSelected = w.name === currentVal ? 'selected' : '';
-    html += `<option value="${escapeHtml(w.name)}" ${isSelected}>${escapeHtml(
-      w.name + routeSuffix + countSuffix
-    )}</option>`;
-  }
-
-  select.innerHTML = html;
-  select.disabled = false;
-}
-
-function renderSiteDropdown() {
-  const select = document.getElementById('form-site');
-  if (select) {
-    const currentVal = select.value;
-    let html = '<option value="">-- เลือกไซต์งาน / โครงการ --</option>';
-
-    const listToRender = [...state.activeSites];
-    if (currentVal && !listToRender.some((s) => s.name === currentVal)) {
-      listToRender.unshift({ id: 0, name: currentVal, active: false });
-    }
-
-    for (const s of listToRender) {
-      const isSelected = s.name === currentVal ? 'selected' : '';
-      html += `<option value="${escapeHtml(s.name)}" ${isSelected}>${escapeHtml(s.name)}</option>`;
-    }
-
-    select.innerHTML = html;
-  }
-
-  const filterSelect = document.getElementById('filter-site');
-  if (filterSelect) {
-    const currentFilter = state.filterSite || filterSelect.value || '';
-    const allSiteNames = new Set([
-      ...state.activeSites.map((s) => s.name),
-      ...state.logs.map((l) => (l.site_name || '').trim()).filter(Boolean)
     ]);
-    let filterHtml = '<option value="">ทุกไซต์งาน / โครงการ</option>';
-    for (const sName of allSiteNames) {
-      const isSel = sName === currentFilter ? 'selected' : '';
-      filterHtml += `<option value="${escapeHtml(sName)}" ${isSel}>${escapeHtml(sName)}</option>`;
+    state.vehicles = vehicles || [];
+    state.workers = workers || [];
+    state.sites = sites || [];
+    state.routes = routes || [];
+
+    renderQuotaUI(quota);
+    renderMasterSummaryAndHint();
+    populateFrontDropdowns();
+    renderBackOfficeLists();
+  }
+
+  function getFilterParams() {
+    return {
+      site_name: $('filter-site').value.trim(),
+      trip_type: $('filter-trip-type').value.trim(),
+      date_from: $('filter-date-from').value.trim(),
+      date_to: $('filter-date-to').value.trim(),
+      search: $('filter-search').value.trim()
+    };
+  }
+
+  async function loadLogs() {
+    const params = new URLSearchParams();
+    const f = getFilterParams();
+    for (const [k, v] of Object.entries(f)) {
+      if (v) params.set(k, v);
     }
-    filterSelect.innerHTML = filterHtml;
-  }
-}
+    const qs = params.toString();
+    const today = todayIso();
 
-function renderVehicleDropdown() {
-  const select = document.getElementById('form-vehicle');
-  if (!select) return;
+    const [logs, todayLogs] = await Promise.all([
+      apiFetch(`/api/logs${qs ? `?${qs}` : ''}`),
+      apiFetch(`/api/logs?date_from=${encodeURIComponent(today)}&date_to=${encodeURIComponent(today)}`)
+    ]);
 
-  const currentVal = select.value;
-  let html = '<option value="">-- เลือกทะเบียนรถ --</option>';
-
-  const listToRender = [...state.activeVehicles];
-  if (currentVal && !listToRender.some((v) => v.plate === currentVal)) {
-    listToRender.unshift({ id: 0, plate: currentVal, active: false });
+    state.logs = logs || [];
+    state.todayLogsCount = (todayLogs || []).length;
+    renderLogs();
+    renderFilterSummaryLabel();
   }
 
-  for (const v of listToRender) {
-    const isSelected = v.plate === currentVal ? 'selected' : '';
-    html += `<option value="${escapeHtml(v.plate)}" ${isSelected}>${escapeHtml(v.plate)}</option>`;
+  async function refreshAll() {
+    await loadMasterData();
+    await loadLogs();
   }
 
-  select.innerHTML = html;
-}
+  function renderMasterSummaryAndHint() {
+    const activeW = state.workers.filter((x) => x.active).length;
+    const activeV = state.vehicles.filter((x) => x.active).length;
+    const activeS = state.sites.filter((x) => x.active).length;
+    const activeR = state.routes.filter((x) => x.active).length;
 
-function renderSharedRoutesDatalist() {
-  const datalist = document.getElementById('datalist-master-routes');
-  if (!datalist) return;
-  datalist.innerHTML = state.activeRoutes
-    .map((r) => `<option value="${escapeHtml(r.name)}"></option>`)
-    .join('');
-}
+    $('stat-master-summary').textContent = `คนขับ ${activeW} • รถ ${activeV} • โครงการ ${activeS} • เส้นทาง ${activeR}`;
+    $('count-vehicles').textContent = String(state.vehicles.length);
+    $('count-workers').textContent = String(state.workers.length);
+    $('count-sites').textContent = String(state.sites.length);
+    $('count-routes').textContent = String(state.routes.length);
 
-function renderRouteComboboxMenu(filterText = '') {
-  const menu = document.getElementById('route-combobox-menu');
-  if (!menu) return;
+    const missing = [];
+    if (activeV === 0) missing.push('ทะเบียนรถ');
+    if (activeW === 0) missing.push('รายชื่อคนขับ');
+    if (activeS === 0) missing.push('ไซต์งาน/โครงการ');
+    if (activeR === 0) missing.push('เส้นทาง');
 
-  const q = filterText.trim().toLowerCase();
-  const filtered = q
-    ? state.activeRoutes.filter((r) => r.name.toLowerCase().includes(q))
-    : state.activeRoutes;
-
-  if (filtered.length === 0) {
-    menu.innerHTML = `
-      <div class="px-3.5 py-3 text-xs text-slate-500">
-        ไม่พบในรายการที่หมายเดิม (สามารถใช้ข้อความที่พิมพ์เองได้ หรือกด "+ เพิ่มในรายการที่หมาย")
-      </div>
-    `;
-    return;
-  }
-
-  const selectedWorker = getSelectedWorkerObject();
-  const workerDefault = selectedWorker?.default_route || '';
-
-  menu.innerHTML = filtered
-    .map((r) => {
-      const isDefault = workerDefault && r.name === workerDefault;
-      return `
-        <button
-          type="button"
-          data-route-name="${escapeHtml(r.name)}"
-          class="w-full min-h-[42px] text-left px-3.5 py-2.5 text-xs sm:text-sm hover:bg-indigo-50 text-slate-800 flex items-center justify-between gap-2 transition cursor-pointer"
-        >
-          <span class="flex items-center gap-2 truncate">
-            <i class="fa-solid fa-location-dot text-indigo-500 text-xs"></i>
-            <span class="truncate font-medium">${escapeHtml(r.name)}</span>
-          </span>
-          ${
-            isDefault
-              ? '<span class="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-semibold shrink-0">ไซต์งานประจำ</span>'
-              : ''
-          }
-        </button>
-      `;
-    })
-    .join('');
-
-  menu.querySelectorAll('button[data-route-name]').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      const chosen = btn.getAttribute('data-route-name');
-      const routeInput = document.getElementById('form-route');
-      routeInput.value = chosen;
-      menu.classList.add('hidden');
-      updateRouteSmartControls();
-    });
-  });
-}
-
-function getSelectedWorkerObject() {
-  const workerName = document.getElementById('form-worker')?.value || '';
-  if (!workerName) return null;
-  return (
-    state.allWorkers.find((w) => w.name === workerName) ||
-    state.activeWorkers.find((w) => w.name === workerName) ||
-    null
-  );
-}
-
-function updateRouteSmartControls() {
-  const routeInput = document.getElementById('form-route');
-  const badgeDefault = document.getElementById('badge-default-route');
-  const btnResetDefault = document.getElementById('btn-reset-default-route');
-  const btnAddToRoutes = document.getElementById('btn-add-to-routes');
-  const btnSetWorkerDefault = document.getElementById('btn-set-worker-default-route');
-
-  if (!routeInput) return;
-
-  const currentRoute = routeInput.value.trim();
-  const worker = getSelectedWorkerObject();
-  const workerDefault = (worker?.default_route || '').trim();
-
-  if (worker && workerDefault && currentRoute === workerDefault) {
-    badgeDefault.classList.remove('hidden');
-    badgeDefault.classList.add('inline-flex');
-  } else {
-    badgeDefault.classList.add('hidden');
-    badgeDefault.classList.remove('inline-flex');
-  }
-
-  if (worker && workerDefault && currentRoute !== workerDefault) {
-    btnResetDefault.classList.remove('hidden');
-    btnResetDefault.classList.add('inline-flex');
-    btnResetDefault.title = `รีเซ็ตกลับเป็น: ${workerDefault}`;
-  } else {
-    btnResetDefault.classList.add('hidden');
-    btnResetDefault.classList.remove('inline-flex');
-  }
-
-  const existsInActiveRoutes = state.activeRoutes.some(
-    (r) => r.name.toLowerCase() === currentRoute.toLowerCase()
-  );
-  if (!currentRoute || existsInActiveRoutes) {
-    btnAddToRoutes.disabled = true;
-    btnAddToRoutes.innerHTML = existsInActiveRoutes
-      ? '<i class="fa-solid fa-check text-[11px]"></i><span>มีในรายการที่หมายแล้ว</span>'
-      : '<i class="fa-solid fa-plus text-[11px]"></i><span>+ เพิ่มในรายการที่หมาย</span>';
-  } else {
-    btnAddToRoutes.disabled = false;
-    btnAddToRoutes.innerHTML =
-      '<i class="fa-solid fa-plus text-[11px]"></i><span>+ เพิ่มในรายการที่หมาย</span>';
-  }
-
-  if (!worker || !worker.id || !currentRoute || currentRoute === workerDefault) {
-    btnSetWorkerDefault.disabled = true;
-    btnSetWorkerDefault.innerHTML =
-      worker && workerDefault && currentRoute === workerDefault
-        ? '<i class="fa-solid fa-check text-[11px]"></i><span>เป็นไซต์งานประจำแล้ว</span>'
-        : '<i class="fa-solid fa-thumbtack text-[11px]"></i><span>ตั้งเป็นไซต์งานประจำคนนี้</span>';
-  } else {
-    btnSetWorkerDefault.disabled = false;
-    btnSetWorkerDefault.innerHTML =
-      '<i class="fa-solid fa-thumbtack text-[11px]"></i><span>ตั้งเป็นไซต์งานประจำคนนี้</span>';
-  }
-}
-
-function updateDateAndDurationPreview() {
-  const dateVal = document.getElementById('form-date')?.value || '';
-  const datePreview = document.getElementById('form-date-thai-preview');
-  if (datePreview) {
-    datePreview.textContent = dateVal ? `วันที่ไทย: ${formatThaiDate(dateVal, true)}` : 'ยังไม่ได้ระบุวันที่';
-  }
-
-  const depVal = document.getElementById('form-departure')?.value || '';
-  const arrVal = document.getElementById('form-arrival')?.value || '';
-  const durPreview = document.getElementById('form-duration-preview');
-  if (durPreview) {
-    const dur = calculateTravelDuration(depVal, arrVal);
-    if (dur.totalMinutes !== null) {
-      durPreview.className = dur.isOvernight
-        ? 'mt-1.5 text-[11px] text-amber-700 font-semibold flex items-center gap-1'
-        : 'mt-1.5 text-[11px] text-emerald-700 font-semibold flex items-center gap-1';
-      durPreview.innerHTML = `<i class="fa-solid fa-stopwatch"></i><span>ระยะเวลาเดินทาง: ${escapeHtml(
-        dur.text
-      )}</span>`;
+    const hintBox = $('empty-master-hint');
+    const hintText = $('empty-master-hint-text');
+    if (missing.length > 0) {
+      hintBox.classList.remove('hidden');
+      hintText.textContent = `ยังไม่ได้เพิ่มข้อมูลหลัก: ${missing.join(', ')} — กรุณาเพิ่มในระบบหลังบ้านเพื่อให้ Dropdown พร้อมใช้งาน`;
     } else {
-      durPreview.className = 'mt-1.5 text-[11px] text-slate-500 flex items-center gap-1';
-      durPreview.innerHTML =
-        '<i class="fa-solid fa-stopwatch text-slate-400"></i><span>คำนวณระยะเวลาอัตโนมัติ (รองรับข้ามวัน)</span>';
+      hintBox.classList.add('hidden');
     }
   }
-}
 
-async function checkVehicleGpsFromForm() {
-  const plate = document.getElementById('form-vehicle')?.value || '';
-  const previewCard = document.getElementById('form-gps-preview-card');
-  if (!plate) {
-    showToast('กรุณาเลือกหมายเลขทะเบียนรถก่อนกดเช็กพิกัด GPS', 'warning');
-    document.getElementById('form-vehicle')?.focus();
-    return;
-  }
-
-  try {
-    const res = await apiFetch(`/api/gps/vehicle/${encodeURIComponent(plate)}`);
-    if (!res.ok) {
-      showToast(res.data?.error || 'ไม่สามารถดึงพิกัด GPS ได้', 'error');
-      return;
+  function populateSelect(selectEl, options, placeholder, preserveValue = true) {
+    if (!selectEl) return;
+    const prev = preserveValue ? selectEl.value : '';
+    const html = [`<option value="">${escapeHtml(placeholder)}</option>`];
+    let matched = false;
+    for (const opt of options) {
+      const val = String(opt.value);
+      if (val === prev && prev !== '') matched = true;
+      html.push(`<option value="${escapeHtml(val)}">${escapeHtml(opt.label)}</option>`);
     }
-
-    const gps = res.data;
-    state.lastCheckedGps = gps;
-
-    if (previewCard) {
-      previewCard.classList.remove('hidden');
-      const isMoving = Number(gps.speed) > 0;
-      previewCard.innerHTML = `
-        <div class="flex items-start justify-between gap-2">
-          <div class="space-y-1">
-            <div class="flex flex-wrap items-center gap-1.5">
-              <span class="font-bold text-slate-900">
-                <i class="fa-solid fa-satellite-dish text-emerald-600 mr-1"></i>${escapeHtml(gps.plate)}
-              </span>
-              <span class="px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                isMoving
-                  ? 'bg-emerald-600 text-white'
-                  : gps.engine === 'ON'
-                  ? 'bg-amber-100 text-amber-800 border border-amber-300'
-                  : 'bg-slate-200 text-slate-700'
-              }">
-                ${escapeHtml(gps.status)}
-              </span>
-            </div>
-            <p class="text-[11px] text-slate-700">
-              <i class="fa-solid fa-location-dot text-rose-500 mr-1"></i>${escapeHtml(gps.location || '-')}
-            </p>
-          </div>
-          <a
-            href="${escapeHtml(gps.maps_url)}"
-            target="_blank"
-            rel="noopener noreferrer"
-            class="px-2.5 py-1.5 rounded-lg bg-white hover:bg-emerald-100 text-emerald-800 border border-emerald-300 text-[11px] font-bold flex items-center gap-1 shrink-0 shadow-sm"
-          >
-            <i class="fa-solid fa-map-location-dot text-emerald-600"></i>
-            <span>เปิดแผนที่</span>
-          </a>
-        </div>
-      `;
+    if (preserveValue && prev && !matched) {
+      html.push(`<option value="${escapeHtml(prev)}">${escapeHtml(prev)} (รายการเดิม)</option>`);
     }
-
-    showToast(`ดึงพิกัด GPS รถทะเบียน "${plate}" สำเร็จ`, 'success', `${gps.status} — ${gps.location}`);
-    await loadAllData();
-  } catch (err) {
-    showToast(err.message || 'เกิดข้อผิดพลาดในการเช็กพิกัด GPS', 'error');
-  }
-}
-
-async function refreshSingleVehicleGps(plate) {
-  if (!plate) return;
-  try {
-    const res = await apiFetch(`/api/gps/vehicle/${encodeURIComponent(plate)}`);
-    if (!res.ok) {
-      showToast(res.data?.error || 'ไม่สามารถรีเฟรชพิกัด GPS ได้', 'error');
-      return;
-    }
-    const gps = res.data;
-    showToast(`อัปเดตพิกัดรถ "${plate}" ล่าสุดแล้ว`, 'success', `${gps.status} • ${gps.location}`);
-    await loadAllData();
-  } catch (err) {
-    showToast(err.message || 'เกิดข้อผิดพลาดในการรีเฟรชพิกัด', 'error');
-  }
-}
-
-async function syncAllVehiclesGps() {
-  const icon = document.getElementById('sync-all-gps-icon');
-  icon?.classList.add('fa-spin');
-  try {
-    const res = await apiFetch('/api/gps/sync-all', { method: 'POST' });
-    if (!res.ok) {
-      showToast(res.data?.error || 'ไม่สามารถอัปเดตพิกัด GPS ทั้งหมดได้', 'error');
-      return;
-    }
-    showToast(res.data?.message || 'อัปเดตพิกัด GPS รถทุกคันสำเร็จ', 'success');
-    await loadAllData();
-  } catch (err) {
-    showToast(err.message || 'เกิดข้อผิดพลาดในการซิงค์พิกัด GPS', 'error');
-  } finally {
-    icon?.classList.remove('fa-spin');
-  }
-}
-
-// ============================================================================
-// CREATE / EDIT MODE & FORM SUBMISSION WITH CUSTOM MODALS
-// ============================================================================
-
-function enterEditMode(logId) {
-  const log = state.logs.find((l) => (l.log_id || l.worker_name) === logId);
-  if (!log) {
-    showToast(`ไม่พบข้อมูลรายการที่ต้องการแก้ไข`, 'error');
-    return;
+    selectEl.innerHTML = html.join('');
+    if (preserveValue && prev) selectEl.value = prev;
   }
 
-  state.editingLogId = log.log_id || log.worker_name;
-  state.editingWorkerName = log.worker_name;
-  state.lastCheckedGps = parseGpsStatus(log.gps_status);
-  renderWorkerDropdown();
+  function populateFrontDropdowns() {
+    const activeWorkers = state.workers.filter((w) => w.active);
+    const activeVehicles = state.vehicles.filter((v) => v.active);
+    const activeSites = state.sites.filter((s) => s.active);
+    const activeRoutes = state.routes.filter((r) => r.active);
 
-  const workerSelect = document.getElementById('form-worker');
-  workerSelect.value = log.worker_name;
-  workerSelect.disabled = false;
-
-  document.getElementById('form-date').value = log.travel_date || '';
-  document.getElementById('form-route').value = log.route || '';
-  document.getElementById('form-departure').value = log.departure_time || '';
-  document.getElementById('form-arrival').value = log.arrival_time || '';
-
-  renderSiteDropdown();
-  const siteEl = document.getElementById('form-site');
-  if (siteEl) {
-    siteEl.value = log.site_name || '';
-    renderSiteDropdown();
-    siteEl.value = log.site_name || '';
-  }
-
-  renderVehicleDropdown();
-  document.getElementById('form-vehicle').value = log.vehicle_plate || '';
-  const passengersEl = document.getElementById('form-passengers');
-  if (passengersEl) {
-    passengersEl.value =
-      log.passenger_count !== null && log.passenger_count !== undefined ? log.passenger_count : '';
-  }
-  const noteEl = document.getElementById('form-note');
-  if (noteEl) {
-    noteEl.value = log.note || '';
-  }
-
-  const formCard = document.getElementById('form-card-container');
-  const formHeaderBar = document.getElementById('form-header-bar');
-  const modeIcon = document.getElementById('form-mode-icon');
-  const modeTitle = document.getElementById('form-mode-title');
-  const editBadgeGroup = document.getElementById('edit-mode-badge-group');
-  const editWorkerLabel = document.getElementById('edit-mode-worker-label');
-  const btnCancelEdit = document.getElementById('btn-cancel-edit');
-  const btnSubmit = document.getElementById('btn-submit-log');
-  const btnSubmitIcon = document.getElementById('btn-submit-icon');
-  const btnSubmitText = document.getElementById('btn-submit-text');
-
-  formCard.classList.add('ring-2', 'ring-amber-400');
-  formHeaderBar.className =
-    'px-5 sm:px-6 py-4 bg-amber-50/90 border-b border-amber-200 flex flex-wrap items-center justify-between gap-3';
-  modeIcon.className =
-    'w-8 h-8 rounded-lg bg-amber-600 text-white flex items-center justify-center text-sm shrink-0';
-  modeIcon.innerHTML = '<i class="fa-solid fa-pen-to-square"></i>';
-  modeTitle.textContent = `แก้ไขรายการเดินทางของ: ${log.worker_name}`;
-
-  editWorkerLabel.textContent = `${log.worker_name} (${formatShortThaiDateBE(log.travel_date) || 'ไม่ระบุวัน'})`;
-  editBadgeGroup.classList.remove('hidden');
-  editBadgeGroup.classList.add('flex');
-
-  btnCancelEdit.classList.remove('hidden');
-  btnCancelEdit.classList.add('flex');
-
-  btnSubmit.className =
-    'flex-1 sm:flex-initial min-h-[44px] px-6 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 active:bg-amber-800 text-white text-sm font-semibold shadow-md shadow-amber-600/20 flex items-center justify-center gap-2 transition cursor-pointer';
-  btnSubmitIcon.className = 'fa-solid fa-check-double';
-  btnSubmitText.textContent = 'บันทึกการแก้ไขข้อมูล';
-
-  updateDateAndDurationPreview();
-  updateRouteSmartControls();
-  renderLogsTable();
-
-  formCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
-}
-
-function exitEditModeAndResetForm() {
-  state.editingLogId = null;
-  state.editingWorkerName = null;
-  state.lastCheckedGps = null;
-  renderWorkerDropdown();
-
-  const workerSelect = document.getElementById('form-worker');
-  workerSelect.value = '';
-  workerSelect.disabled = false;
-
-  document.getElementById('form-date').value = getTodayISO();
-  const siteEl = document.getElementById('form-site');
-  if (siteEl) siteEl.value = '';
-  renderSiteDropdown();
-  document.getElementById('form-route').value = '';
-  document.getElementById('form-departure').value = '';
-  document.getElementById('form-arrival').value = '';
-  document.getElementById('form-vehicle').value = '';
-  const passengersEl = document.getElementById('form-passengers');
-  if (passengersEl) passengersEl.value = '';
-  const noteEl = document.getElementById('form-note');
-  if (noteEl) noteEl.value = '';
-  document.getElementById('form-gps-preview-card')?.classList.add('hidden');
-
-  const formCard = document.getElementById('form-card-container');
-  const formHeaderBar = document.getElementById('form-header-bar');
-  const modeIcon = document.getElementById('form-mode-icon');
-  const modeTitle = document.getElementById('form-mode-title');
-  const editBadgeGroup = document.getElementById('edit-mode-badge-group');
-  const btnCancelEdit = document.getElementById('btn-cancel-edit');
-  const btnSubmit = document.getElementById('btn-submit-log');
-  const btnSubmitIcon = document.getElementById('btn-submit-icon');
-  const btnSubmitText = document.getElementById('btn-submit-text');
-
-  formCard.classList.remove('ring-2', 'ring-amber-400');
-  formHeaderBar.className =
-    'px-5 sm:px-6 py-4 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3';
-  modeIcon.className =
-    'w-8 h-8 rounded-lg bg-zinc-900 text-amber-400 flex items-center justify-center text-sm shrink-0';
-  modeIcon.innerHTML = '<i class="fa-solid fa-plus"></i>';
-  modeTitle.textContent = 'บันทึกข้อมูลการเดินทางพนักงาน (สะสมรายเที่ยว)';
-
-  editBadgeGroup.classList.add('hidden');
-  editBadgeGroup.classList.remove('flex');
-
-  btnCancelEdit.classList.add('hidden');
-  btnCancelEdit.classList.remove('flex');
-
-  btnSubmit.className =
-    'flex-1 sm:flex-initial min-h-[44px] px-6 py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 active:bg-black text-white text-sm font-semibold shadow-md shadow-zinc-900/20 flex items-center justify-center gap-2 transition cursor-pointer';
-  btnSubmitIcon.className = 'fa-solid fa-floppy-disk text-amber-400';
-  btnSubmitText.textContent = 'บันทึกข้อมูลการเดินทาง';
-
-  updateDateAndDurationPreview();
-  updateRouteSmartControls();
-  renderLogsTable();
-}
-
-function showDuplicateWorkerModal(workerName, serverMessage) {
-  openCustomModal(`
-    <div class="p-6">
-      <div class="flex items-start gap-4">
-        <div class="w-12 h-12 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center text-xl shrink-0">
-          <i class="fa-solid fa-triangle-exclamation"></i>
-        </div>
-        <div class="flex-1">
-          <div class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-200 text-[11px] font-bold mb-1.5">
-            HTTP 409 Conflict — Primary Key ซ้ำ
-          </div>
-          <h3 class="text-lg font-bold text-slate-900">
-            ไม่สามารถบันทึกซ้ำได้: "${escapeHtml(workerName)}"
-          </h3>
-          <p class="text-sm text-slate-600 mt-1 leading-relaxed">
-            ${escapeHtml(
-              serverMessage ||
-                `รายชื่อคนงาน "${workerName}" มีข้อมูลการเดินทางอยู่ในฐานข้อมูลแล้ว กรุณากดปุ่ม "แก้ไข" แทนการบันทึกซ้ำ`
-            )}
-          </p>
-        </div>
-      </div>
-
-      <div class="mt-6 pt-4 border-t border-slate-100 flex flex-wrap items-center justify-end gap-2.5">
-        <button
-          type="button"
-          id="modal-btn-close-dup"
-          class="min-h-[42px] px-4 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 text-sm font-medium transition cursor-pointer"
-        >
-          ปิดหน้าต่าง
-        </button>
-        <button
-          type="button"
-          id="modal-btn-switch-edit"
-          class="min-h-[42px] px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-sm font-semibold shadow-sm flex items-center gap-1.5 transition cursor-pointer"
-        >
-          <i class="fa-solid fa-pen-to-square"></i>
-          <span>สลับไปโหมดแก้ไขของ "${escapeHtml(workerName)}" ทันที</span>
-        </button>
-      </div>
-    </div>
-  `);
-
-  document.getElementById('modal-btn-close-dup')?.addEventListener('click', closeCustomModal);
-  document.getElementById('modal-btn-switch-edit')?.addEventListener('click', () => {
-    closeCustomModal();
-    enterEditMode(workerName);
-  });
-}
-
-function showIncompleteFieldsModal(missingFields, payload) {
-  const listItemsHtml = missingFields
-    .map(
-      (f) => `
-      <li class="flex items-center gap-2 text-sm text-amber-900 py-1">
-        <i class="fa-solid fa-circle-dot text-amber-500 text-[10px]"></i>
-        <span class="font-medium">${escapeHtml(f)}</span>
-      </li>
-    `
-    )
-    .join('');
-
-  openCustomModal(`
-    <div class="p-6">
-      <div class="flex items-start gap-4">
-        <div class="w-12 h-12 rounded-2xl bg-amber-100 text-amber-600 flex items-center justify-center text-xl shrink-0">
-          <i class="fa-solid fa-clipboard-question"></i>
-        </div>
-        <div class="flex-1">
-          <h3 class="text-lg font-bold text-slate-900">
-            แจ้งเตือน: กรอกข้อมูลยังไม่ครบทุกช่อง
-          </h3>
-          <p class="text-sm text-slate-600 mt-1">
-            คุณกำลังจะบันทึกข้อมูลของ <strong>"${escapeHtml(payload.worker_name)}"</strong> โดยยังไม่ได้ระบุข้อมูลในช่องต่อไปนี้:
-          </p>
-          <ul class="mt-3 p-3.5 rounded-xl bg-amber-50/90 border border-amber-200 divide-y divide-amber-200/50">
-            ${listItemsHtml}
-          </ul>
-          <p class="text-xs text-slate-500 mt-3">
-            คุณต้องการยืนยันการบันทึกข้อมูลลงฐานข้อมูลโดยเว้นว่างช่องเหล่านี้หรือไม่?
-          </p>
-        </div>
-      </div>
-
-      <div class="mt-6 pt-4 border-t border-slate-100 flex flex-wrap items-center justify-end gap-2.5">
-        <button
-          type="button"
-          id="modal-btn-back-to-fill"
-          class="min-h-[42px] px-4 py-2.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 text-sm font-medium transition cursor-pointer"
-        >
-          กลับไปกรอกข้อมูล
-        </button>
-        <button
-          type="button"
-          id="modal-btn-confirm-save"
-          class="min-h-[42px] px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold shadow-md shadow-indigo-600/20 flex items-center gap-2 transition cursor-pointer"
-        >
-          <i class="fa-solid fa-check"></i>
-          <span>ยืนยันการบันทึก</span>
-        </button>
-      </div>
-    </div>
-  `);
-
-  document.getElementById('modal-btn-back-to-fill')?.addEventListener('click', closeCustomModal);
-  document.getElementById('modal-btn-confirm-save')?.addEventListener('click', async () => {
-    closeCustomModal();
-    await executeSaveLog(payload);
-  });
-}
-
-async function executeSaveLog(payload) {
-  try {
-    const isEdit = Boolean(state.editingLogId);
-    const url = isEdit
-      ? `/api/logs/${encodeURIComponent(state.editingLogId)}`
-      : '/api/logs';
-    const method = isEdit ? 'PUT' : 'POST';
-
-    const res = await apiFetch(url, {
-      method,
-      body: JSON.stringify(payload)
-    });
-
-    // HTTP 507 Insufficient Storage (Storage Quota Full)
-    if (res.status === 507) {
-      if (res.data?.storageQuota) {
-        state.storageQuota = res.data.storageQuota;
-      }
-      renderStorageQuotaUI(false);
-      showStorageFullEmergencyModal(res.data?.error);
-      return;
-    }
-
-    if (!res.ok) {
-      showToast(res.data?.error || 'ไม่สามารถบันทึกข้อมูลได้', 'error');
-      return;
-    }
-
-    showToast(
-      isEdit
-        ? `อัปเดตข้อมูลการเดินทางของ "${payload.worker_name}" สำเร็จ`
-        : `บันทึกข้อมูลการเดินทางของ "${payload.worker_name}" สำเร็จ`,
-      'success'
+    populateSelect(
+      $('form-worker'),
+      activeWorkers.map((w) => ({
+        value: w.name,
+        label: w.default_vehicle ? `${w.name} (${w.default_vehicle})` : w.name
+      })),
+      '-- เลือกชื่อคนขับ --'
     );
 
-    exitEditModeAndResetForm();
-    await loadAllData();
-  } catch (err) {
-    showToast(err.message || 'เกิดข้อผิดพลาดในการบันทึกข้อมูล', 'error');
+    populateSelect(
+      $('form-vehicle'),
+      activeVehicles.map((v) => ({ value: v.license_plate, label: v.license_plate })),
+      '-- เลือกทะเบียนรถ --'
+    );
+
+    populateSelect(
+      $('form-site'),
+      activeSites.map((s) => ({
+        value: s.site_name,
+        label: s.zone_name ? `${s.site_name} [โซน: ${s.zone_name}]` : s.site_name
+      })),
+      '-- เลือกไซต์งาน / โครงการ --'
+    );
+
+    populateSelect(
+      $('form-route-select'),
+      activeRoutes.map((r) => ({
+        value: String(r.id),
+        label: `${r.origin} → ${r.destination}${r.unit_price ? ` (${formatMoney(r.unit_price)} บ.)` : ''}`
+      })),
+      '-- เลือกเส้นทางมาตรฐาน (Auto-fill) --'
+    );
+
+    // Filter site dropdown (include all sites + any historical site_name)
+    populateSelect(
+      $('filter-site'),
+      state.sites.map((s) => ({
+        value: s.site_name,
+        label: s.zone_name ? `${s.site_name} (โซน ${s.zone_name})` : s.site_name
+      })),
+      '-- ทุกไซต์งาน / โครงการ --'
+    );
+
+    // Back-office worker form default_vehicle dropdown
+    populateSelect(
+      $('input-worker-default-vehicle'),
+      state.vehicles.map((v) => ({
+        value: v.license_plate,
+        label: v.active ? v.license_plate : `${v.license_plate} (ปิดใช้งาน)`
+      })),
+      '-- ยังไม่ผูกทะเบียนรถ --'
+    );
   }
-}
 
-async function handleTravelLogSubmit(e) {
-  e.preventDefault();
+  // ==========================================================================
+  // 7. Front-Office Form Logic
+  // ==========================================================================
+  function setTripType(type) {
+    const isCharter = type === 'charter';
+    $('form-trip-type').value = isCharter ? 'charter' : 'normal';
 
-  const worker_name = (document.getElementById('form-worker')?.value || '').trim();
-  const site_name = (document.getElementById('form-site')?.value || '').trim();
-  const travel_date = (document.getElementById('form-date')?.value || '').trim();
-  const route = (document.getElementById('form-route')?.value || '').trim();
-  const departure_time = (document.getElementById('form-departure')?.value || '').trim();
-  const arrival_time = (document.getElementById('form-arrival')?.value || '').trim();
-  const vehicle_plate = (document.getElementById('form-vehicle')?.value || '').trim();
-  const passenger_count_raw = (document.getElementById('form-passengers')?.value || '').trim();
-  const passenger_count =
-    passenger_count_raw === '' ? null : Math.max(0, Number.parseInt(passenger_count_raw, 10));
-  const note = (document.getElementById('form-note')?.value || '').trim();
+    const btnNormal = $('trip-type-normal');
+    const btnCharter = $('trip-type-charter');
+    if (isCharter) {
+      btnNormal.className = 'min-h-[38px] px-2.5 py-1.5 rounded-lg text-xs font-semibold transition flex items-center justify-center gap-1 text-slate-600 hover:text-slate-900 cursor-pointer';
+      btnCharter.className = 'min-h-[38px] px-2.5 py-1.5 rounded-lg text-xs font-semibold transition flex items-center justify-center gap-1 bg-amber-500 text-zinc-950 shadow-sm cursor-pointer';
+      $('form-trip-type-hint').textContent = 'งานเหมา / ขนย้าย — แยกเข้าชีต "งานเหมา" และ "เหมา" อัตโนมัติ';
+      $('form-passengers-hint').textContent = 'เว้นว่างหรือใส่ 0 ได้สำหรับงานเหมาขนย้าย';
+      $('form-price-hint').textContent = 'ระบุราคาเหมาสำหรับคำนวณในใบเบิกและสำเนาโซน';
+    } else {
+      btnNormal.className = 'min-h-[38px] px-2.5 py-1.5 rounded-lg text-xs font-semibold transition flex items-center justify-center gap-1 bg-zinc-900 text-white shadow-sm cursor-pointer';
+      btnCharter.className = 'min-h-[38px] px-2.5 py-1.5 rounded-lg text-xs font-semibold transition flex items-center justify-center gap-1 text-slate-600 hover:text-slate-900 cursor-pointer';
+      $('form-trip-type-hint').textContent = 'รับ-ส่งพนักงานประจำสายวิ่ง';
+      $('form-passengers-hint').textContent = 'ไม่บังคับสำหรับงานเหมา';
+      $('form-price-hint').textContent = 'ดึงจากเส้นทาง หรือกรอกราคาเองได้';
+    }
+    updateRouteMetaPreview();
+  }
 
-  if (!worker_name) {
-    openCustomModal(`
-      <div class="p-6">
-        <div class="flex items-start gap-4">
-          <div class="w-12 h-12 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center text-xl shrink-0">
-            <i class="fa-solid fa-user-xmark"></i>
+  function updateFormDatePreview() {
+    const val = $('form-date').value;
+    const be = toBE(val);
+    $('form-date-thai-preview').textContent = be ? `วันที่ พ.ศ.: ${be}` : '';
+  }
+
+  function updateDurationPreview() {
+    const dep = $('form-dep-time').value;
+    const arr = $('form-arr-time').value;
+    const dur = calcDurationText(dep, arr);
+    const el = $('form-duration-preview');
+    if (!el) return;
+    if (dur) {
+      el.innerHTML = `<i class="fa-solid fa-stopwatch text-emerald-600"></i><span class="text-emerald-700 font-semibold">ใช้เวลา ${escapeHtml(dur)}</span>`;
+    } else {
+      el.innerHTML = '<i class="fa-solid fa-stopwatch text-slate-400"></i><span>คำนวณระยะเวลาอัตโนมัติ</span>';
+    }
+  }
+
+  function updateRouteMetaPreview() {
+    const origin = $('form-origin').value.trim();
+    const dest = $('form-destination').value.trim();
+    const tripType = $('form-trip-type').value;
+    const sheet = $('form-route-sheet-name').value.trim() || (origin && dest ? `${origin} - ${dest}` : '-');
+    const billing = $('form-billing-title').value.trim() || sheet;
+    const mode = $('form-display-mode-zone').value === 'license_plate' ? 'ทะเบียนรถ' : 'ชื่อคนขับ';
+    const el = $('form-route-meta-preview');
+    if (!el) return;
+
+    if (tripType === 'charter') {
+      el.innerHTML = `ชีต Excel: <strong class="text-amber-700">งานเหมา / เหมา</strong> • รายการใบเบิก: <strong class="text-slate-700">${escapeHtml(billing)}</strong>`;
+    } else {
+      el.innerHTML = `ชีต Excel: <strong class="text-indigo-700">${escapeHtml(sheet)}</strong> • ใบเบิก: <strong class="text-slate-700">${escapeHtml(billing)}</strong> • โซนคอลัมน์ C: <strong>${escapeHtml(mode)}</strong>`;
+    }
+  }
+
+  function toggleRouteMetaBox(forceOpen) {
+    state.routeMetaExpanded = typeof forceOpen === 'boolean' ? forceOpen : !state.routeMetaExpanded;
+    const box = $('route-meta-advanced-box');
+    const btn = $('btn-toggle-route-meta');
+    box.classList.toggle('hidden', !state.routeMetaExpanded);
+    btn.textContent = state.routeMetaExpanded ? 'ซ่อนการตั้งค่าชีต/ใบเบิก' : 'กำหนดชื่อชีต/ใบเบิกเอง';
+  }
+
+  function onWorkerSelectChange() {
+    const workerName = $('form-worker').value;
+    const worker = state.workers.find((w) => w.name === workerName);
+    const hint = $('form-worker-vehicle-hint');
+    if (worker && worker.default_vehicle) {
+      const vehSelect = $('form-vehicle');
+      if (![...vehSelect.options].some((o) => o.value === worker.default_vehicle)) {
+        const opt = document.createElement('option');
+        opt.value = worker.default_vehicle;
+        opt.textContent = worker.default_vehicle;
+        vehSelect.appendChild(opt);
+      }
+      vehSelect.value = worker.default_vehicle;
+      pulseElement(vehSelect);
+      hint.innerHTML = `<span class="text-emerald-700 font-semibold"><i class="fa-solid fa-wand-magic-sparkles mr-1"></i>Auto-fill ทะเบียนประจำตัว: ${escapeHtml(worker.default_vehicle)}</span>`;
+    } else {
+      hint.textContent = 'เลือกคนขับเพื่อ Auto-fill ทะเบียนรถประจำตัว';
+    }
+  }
+
+  function onRouteSelectChange() {
+    const id = Number($('form-route-select').value);
+    const route = state.routes.find((r) => r.id === id);
+    if (!route) {
+      updateRouteMetaPreview();
+      return;
+    }
+
+    $('form-origin').value = route.origin || '';
+    $('form-destination').value = route.destination || '';
+    $('form-dep-time').value = route.default_dep_time || '';
+    $('form-arr-time').value = route.default_arr_time || '';
+    $('form-unit-price').value = route.unit_price ? String(route.unit_price) : '';
+    $('form-route-sheet-name').value = route.route_sheet_name || `${route.origin} - ${route.destination}`;
+    $('form-billing-title').value = route.billing_title || route.route_sheet_name || `${route.origin} - ${route.destination}`;
+    $('form-display-mode-zone').value = route.display_mode_zone || 'worker_name';
+
+    state.isSwapped = false;
+    $('swap-status-badge').classList.add('hidden');
+    $('swap-status-badge').classList.remove('inline-flex');
+
+    pulseElement($('form-origin'));
+    pulseElement($('form-destination'));
+    pulseElement($('form-unit-price'));
+    updateDurationPreview();
+    updateRouteMetaPreview();
+  }
+
+  function onSwapRouteClick() {
+    const origEl = $('form-origin');
+    const destEl = $('form-destination');
+    const orig = origEl.value.trim();
+    const dest = destEl.value.trim();
+
+    if (!orig && !dest) {
+      showToast('กรุณาเลือกเส้นทาง หรือกรอกต้นทางและปลายทางก่อนกดสลับ', 'warning');
+      return;
+    }
+
+    // คง route_sheet_name และ billing_title ไว้ตามขาไปเดิมเสมอ (แม้ไม่ได้เลือกจาก dropdown)
+    const sheetEl = $('form-route-sheet-name');
+    const billingEl = $('form-billing-title');
+    if (!sheetEl.value.trim() && orig && dest) {
+      sheetEl.value = `${orig} - ${dest}`;
+    }
+    if (!billingEl.value.trim() && sheetEl.value.trim()) {
+      billingEl.value = sheetEl.value.trim();
+    }
+
+    origEl.value = dest;
+    destEl.value = orig;
+    state.isSwapped = !state.isSwapped;
+
+    const badge = $('swap-status-badge');
+    if (state.isSwapped) {
+      badge.classList.remove('hidden');
+      badge.classList.add('inline-flex');
+    } else {
+      badge.classList.add('hidden');
+      badge.classList.remove('inline-flex');
+    }
+
+    pulseElement(origEl);
+    pulseElement(destEl);
+    updateRouteMetaPreview();
+  }
+
+  function resetForm({ keepDateAndSite = false } = {}) {
+    const prevDate = $('form-date').value || todayIso();
+    const prevSite = $('form-site').value;
+
+    state.editingLogId = null;
+    state.isSwapped = false;
+
+    $('travel-log-form').reset();
+    setTripType('normal');
+    $('form-date').value = keepDateAndSite ? prevDate : todayIso();
+    if (keepDateAndSite && prevSite) $('form-site').value = prevSite;
+    $('form-route-sheet-name').value = '';
+    $('form-billing-title').value = '';
+    $('form-display-mode-zone').value = 'worker_name';
+    $('form-worker-vehicle-hint').textContent = 'เลือกคนขับเพื่อ Auto-fill ทะเบียนรถประจำตัว';
+
+    $('swap-status-badge').classList.add('hidden');
+    $('swap-status-badge').classList.remove('inline-flex');
+
+    // Exit edit visuals
+    $('edit-mode-badge-group').classList.add('hidden');
+    $('edit-mode-badge-group').classList.remove('flex');
+    $('btn-cancel-edit').classList.add('hidden');
+    $('btn-cancel-edit').classList.remove('flex');
+    $('form-card-container').classList.remove('ring-2', 'ring-amber-400');
+    $('form-mode-title').textContent = 'บันทึกข้อมูลการเดินทางพนักงาน (สะสมรายเที่ยว)';
+    $('form-mode-icon').innerHTML = '<i class="fa-solid fa-plus"></i>';
+    $('btn-submit-text').textContent = 'บันทึกข้อมูลการเดินทาง';
+    $('btn-submit-icon').className = 'fa-solid fa-floppy-disk text-amber-400';
+
+    updateFormDatePreview();
+    updateDurationPreview();
+    updateRouteMetaPreview();
+  }
+
+  function startEditLog(log) {
+    state.editingLogId = log.id;
+    state.isSwapped = false;
+
+    setTripType(log.trip_type || 'normal');
+    $('form-date').value = log.trip_date || todayIso();
+
+    // Ensure select contains historical values if archived/deleted
+    const ensureOpt = (selectId, val) => {
+      const sel = $(selectId);
+      if (!sel || !val) return;
+      if (![...sel.options].some((o) => o.value === val)) {
+        const opt = document.createElement('option');
+        opt.value = val;
+        opt.textContent = val;
+        sel.appendChild(opt);
+      }
+      sel.value = val;
+    };
+
+    ensureOpt('form-worker', log.worker_name);
+    ensureOpt('form-vehicle', log.license_plate);
+    ensureOpt('form-site', log.site_name);
+    $('form-route-select').value = '';
+    $('form-origin').value = log.origin || '';
+    $('form-destination').value = log.destination || '';
+    $('form-route-sheet-name').value = log.route_sheet_name || '';
+    $('form-billing-title').value = log.billing_title || '';
+    $('form-display-mode-zone').value = log.display_mode_zone || 'worker_name';
+    $('form-dep-time').value = log.dep_time || '';
+    $('form-arr-time').value = log.arr_time || '';
+    $('form-passengers').value = log.passengers === null || log.passengers === undefined ? '' : String(log.passengers);
+    $('form-unit-price').value = log.unit_price ? String(log.unit_price) : '';
+    $('form-remark').value = log.remark || '';
+
+    $('edit-mode-label').textContent = `${log.worker_name} (${toBE(log.trip_date)})`;
+    $('edit-mode-badge-group').classList.remove('hidden');
+    $('edit-mode-badge-group').classList.add('flex');
+    $('btn-cancel-edit').classList.remove('hidden');
+    $('btn-cancel-edit').classList.add('flex');
+    $('form-card-container').classList.add('ring-2', 'ring-amber-400');
+    $('form-mode-title').textContent = 'แก้ไขรายการบันทึกการเดินทาง';
+    $('form-mode-icon').innerHTML = '<i class="fa-solid fa-pen-to-square"></i>';
+    $('btn-submit-text').textContent = 'อัปเดตรายการเดินทาง';
+    $('btn-submit-icon').className = 'fa-solid fa-check text-amber-400';
+
+    updateFormDatePreview();
+    updateDurationPreview();
+    updateRouteMetaPreview();
+
+    $('form-card-container').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  async function handleLogFormSubmit(e) {
+    e.preventDefault();
+
+    const trip_date = $('form-date').value.trim();
+    const trip_type = $('form-trip-type').value;
+    const worker_name = $('form-worker').value.trim();
+    const license_plate = $('form-vehicle').value.trim();
+    const site_name = $('form-site').value.trim();
+    const origin = $('form-origin').value.trim();
+    const destination = $('form-destination').value.trim();
+    const route_sheet_name = $('form-route-sheet-name').value.trim() || (origin && destination ? `${origin} - ${destination}` : '');
+    const billing_title = $('form-billing-title').value.trim() || route_sheet_name;
+    const dep_time = $('form-dep-time').value.trim();
+    const arr_time = $('form-arr-time').value.trim();
+    const passRaw = $('form-passengers').value.trim();
+    const passengers = passRaw === '' ? null : Number(passRaw);
+    const priceRaw = $('form-unit-price').value.trim();
+    const unit_price = priceRaw === '' ? 0 : Number(priceRaw);
+    const display_mode_zone = $('form-display-mode-zone').value || 'worker_name';
+    const remark = $('form-remark').value.trim();
+
+    if (!trip_date) {
+      showToast('กรุณาระบุวันที่เดินทาง', 'error');
+      $('form-date').focus();
+      return;
+    }
+    if (!worker_name) {
+      showToast('กรุณาเลือกชื่อคนขับ', 'error');
+      $('form-worker').focus();
+      return;
+    }
+    if (!origin || !destination) {
+      showToast('กรุณาระบุต้นทาง (จาก) และปลายทาง (ถึง)', 'error');
+      (!origin ? $('form-origin') : $('form-destination')).focus();
+      return;
+    }
+
+    const payload = {
+      trip_date,
+      trip_type,
+      worker_name,
+      license_plate,
+      site_name,
+      route_sheet_name,
+      billing_title,
+      origin,
+      dep_time,
+      destination,
+      arr_time,
+      passengers,
+      unit_price,
+      display_mode_zone,
+      remark
+    };
+
+    const submitBtn = $('btn-submit-log');
+    submitBtn.disabled = true;
+    try {
+      if (state.editingLogId) {
+        await apiFetch(`/api/logs/${encodeURIComponent(state.editingLogId)}`, {
+          method: 'PUT',
+          body: JSON.stringify(payload)
+        });
+        showToast('อัปเดตรายการเดินทางเรียบร้อยแล้ว', 'success');
+        resetForm({ keepDateAndSite: true });
+      } else {
+        const res = await apiFetch('/api/logs', {
+          method: 'POST',
+          body: JSON.stringify(payload)
+        });
+        if (res && res.storageQuota) renderQuotaUI(res.storageQuota);
+        showToast(`บันทึกเที่ยววิ่ง ${worker_name} (${origin} → ${destination}) เรียบร้อยแล้ว`, 'success');
+        resetForm({ keepDateAndSite: true });
+      }
+      await loadLogs();
+    } catch (err) {
+      if (err.data && err.data.storageQuota) renderQuotaUI(err.data.storageQuota);
+      showToast(err.message || 'ไม่สามารถบันทึกข้อมูลได้', 'error', 5000);
+    } finally {
+      submitBtn.disabled = false;
+    }
+  }
+
+  // คัดลอกคิววิ่งจากวันก่อนหน้า
+  function openCopyPreviousDayModal() {
+    const defaultTo = $('form-date').value || todayIso();
+    openModal(
+      `
+      <div class="p-5 sm:p-6 space-y-4">
+        <div class="flex items-start gap-3">
+          <div class="w-10 h-10 rounded-xl bg-indigo-100 text-indigo-700 flex items-center justify-center shrink-0">
+            <i class="fa-solid fa-copy"></i>
           </div>
           <div>
-            <h3 class="text-lg font-bold text-slate-900">กรุณาเลือกชื่อคนขับ / พนักงาน</h3>
-            <p class="text-sm text-slate-600 mt-1">
-              ช่อง <strong>"ชื่อคนขับ / พนักงาน"</strong> เป็นข้อมูลบังคับเลือกก่อนทำการบันทึก
+            <h3 class="text-base font-bold text-slate-900">คัดลอกคิววิ่งจากวันก่อนหน้า</h3>
+            <p class="text-xs text-slate-500 mt-0.5">
+              ดึงรายการเที่ยววิ่งที่เคยบันทึกไว้มาสร้างเป็นรายการของวันที่เลือกโดยอัตโนมัติ (สามารถแก้ไขจำนวนคนหรือเวลาภายหลังได้)
             </p>
           </div>
         </div>
-        <div class="mt-6 pt-4 border-t border-slate-100 flex justify-end">
-          <button
-            type="button"
-            id="modal-btn-ok-worker"
-            class="min-h-[42px] px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold cursor-pointer"
-          >
-            รับทราบ
-          </button>
-        </div>
-      </div>
-    `);
-    document.getElementById('modal-btn-ok-worker')?.addEventListener('click', () => {
-      closeCustomModal();
-      document.getElementById('form-worker')?.focus();
-    });
-    return;
-  }
 
-  const payload = {
-    worker_name,
-    site_name,
-    travel_date,
-    route,
-    departure_time,
-    arrival_time,
-    vehicle_plate,
-    passenger_count: Number.isNaN(passenger_count) ? null : passenger_count,
-    note
-  };
-
-  if (!state.editingLogId && state.storageQuota?.isFull) {
-    await executeSaveLog(payload);
-    return;
-  }
-
-  // Check incomplete optional fields
-  const missingFields = [];
-  if (!site_name) missingFields.push('ไซต์งาน / โครงการ (หัวตาราง)');
-  if (!travel_date) missingFields.push('วันที่หมายที่ต้องไป');
-  if (!route) missingFields.push('เส้นทาง / ที่หมาย');
-  if (!departure_time) missingFields.push('เวลาขับรถ (ออกเดินทาง)');
-  if (!arrival_time) missingFields.push('เวลาที่ต้องไปถึงไซต์งาน');
-  if (!vehicle_plate) missingFields.push('ทะเบียนรถ');
-  if (passenger_count_raw === '') missingFields.push('จำนวนคนโดยสาร');
-
-  if (missingFields.length > 0) {
-    showIncompleteFieldsModal(missingFields, payload);
-    return;
-  }
-
-  await executeSaveLog(payload);
-}
-
-// ============================================================================
-// TRAVEL LOGS RENDERING (Desktop Table + Mobile Responsive Cards) & EXPORTS
-// ============================================================================
-
-function getFilteredLogs() {
-  const siteFilter = (state.filterSite || '').trim();
-  const dateFilter = state.filterDate.trim();
-  const searchFilter = state.filterSearch.trim().toLowerCase();
-
-  return state.logs.filter((row) => {
-    if (siteFilter && (row.site_name || '').trim() !== siteFilter) {
-      return false;
-    }
-    if (dateFilter && (row.travel_date || '') !== dateFilter) {
-      return false;
-    }
-    if (searchFilter) {
-      const thaiDateShort = formatThaiDate(row.travel_date, false).toLowerCase();
-      const thaiDateFull = formatThaiDate(row.travel_date, true).toLowerCase();
-      const haystack = [
-        row.worker_name || '',
-        row.site_name || '',
-        row.travel_date || '',
-        thaiDateShort,
-        thaiDateFull,
-        row.route || '',
-        row.vehicle_plate || '',
-        row.passenger_count !== null && row.passenger_count !== undefined
-          ? `${row.passenger_count} คน`
-          : '',
-        row.note || '',
-        row.departure_time || '',
-        row.arrival_time || ''
-      ]
-        .join(' ')
-        .toLowerCase();
-      if (!haystack.includes(searchFilter)) {
-        return false;
-      }
-    }
-    return true;
-  });
-}
-
-function buildGpsCellHtml(row) {
-  if (!row.vehicle_plate) {
-    return '<span class="text-xs text-slate-400 italic">ไม่ได้ระบุรถ</span>';
-  }
-
-  const gps = parseGpsStatus(row.gps_status);
-  if (!gps) {
-    return `
-      <div class="flex items-center gap-1.5">
-        <span class="text-xs text-slate-400">ยังไม่มีพิกัด</span>
-        <button
-          type="button"
-          data-refresh-gps="${escapeHtml(row.vehicle_plate)}"
-          class="px-2 py-1 rounded-lg bg-slate-100 hover:bg-indigo-50 text-indigo-600 text-xs font-medium cursor-pointer"
-        >
-          <i class="fa-solid fa-rotate"></i> ดึงพิกัด
-        </button>
-      </div>
-    `;
-  }
-
-  const isMoving = Number(gps.speed) > 0 || String(gps.status).includes('กำลังวิ่ง');
-  const badgeClass = isMoving
-    ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
-    : gps.engine === 'ON'
-    ? 'bg-amber-100 text-amber-800 border-amber-300'
-    : 'bg-slate-100 text-slate-700 border-slate-300';
-
-  return `
-    <div class="space-y-1 max-w-[250px]">
-      <div class="flex flex-wrap items-center gap-1.5">
-        <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[11px] font-bold ${badgeClass}">
-          <i class="fa-solid ${isMoving ? 'fa-gauge-high text-emerald-600' : 'fa-circle-pause'} text-[10px]"></i>
-          <span>${escapeHtml(gps.status)}</span>
-        </span>
-
-        ${
-          gps.maps_url
-            ? `<a
-                href="${escapeHtml(gps.maps_url)}"
-                target="_blank"
-                rel="noopener noreferrer"
-                title="เปิด Google Maps นำทาง/ดูพิกัด"
-                class="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 text-[11px] font-semibold transition"
-              >
-                <i class="fa-solid fa-map-location-dot"></i>
-                <span>แผนที่</span>
-              </a>`
-            : ''
-        }
-
-        <button
-          type="button"
-          data-refresh-gps="${escapeHtml(row.vehicle_plate)}"
-          title="รีเฟรชพิกัด GPS รถคันนี้"
-          class="p-1 rounded-lg bg-slate-100 hover:bg-indigo-100 text-slate-600 hover:text-indigo-700 text-[11px] transition cursor-pointer"
-        >
-          <i class="fa-solid fa-rotate"></i>
-        </button>
-      </div>
-      ${
-        gps.location
-          ? `<p class="text-[11px] text-slate-500 truncate" title="${escapeHtml(gps.location)}">
-              <i class="fa-solid fa-location-dot text-rose-500 mr-1 text-[10px]"></i>${escapeHtml(gps.location)}
-            </p>`
-          : ''
-      }
-    </div>
-  `;
-}
-
-function renderLogsTable() {
-  const tbody = document.getElementById('logs-table-body');
-  const mobileCards = document.getElementById('logs-mobile-cards');
-  const countBadge = document.getElementById('table-count-badge');
-  if (!tbody) return;
-
-  const filtered = getFilteredLogs();
-  if (countBadge) {
-    countBadge.textContent = `${filtered.length} รายการ`;
-  }
-
-  if (filtered.length === 0) {
-    const emptyHtml = `
-      <div class="py-10 px-4 text-center">
-        <div class="max-w-sm mx-auto space-y-2">
-          <div class="w-12 h-12 rounded-2xl bg-slate-100 text-slate-400 flex items-center justify-center text-xl mx-auto">
-            <i class="fa-solid fa-folder-open"></i>
+        <form id="modal-copy-form" class="space-y-3.5">
+          <div>
+            <label for="modal-copy-to-date" class="block text-xs font-semibold text-slate-700 mb-1">
+              สร้างรายการสำหรับวันที่ (วันที่ปลายทาง) *
+            </label>
+            <input type="date" id="modal-copy-to-date" value="${escapeHtml(defaultTo)}" required
+              class="w-full min-h-[42px] px-3 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600" />
           </div>
-          <p class="text-sm font-semibold text-slate-700">ไม่พบรายการบันทึกข้อมูลการเดินทาง</p>
-          <p class="text-xs text-slate-500">
-            ${
-              state.filterDate || state.filterSearch
-                ? 'ลองเปลี่ยนตัวกรองวันที่หรือคำค้นหาเพื่อดูรายการทั้งหมด'
-                : 'เริ่มต้นบันทึกข้อมูลการเดินทางของคนงานจากฟอร์มด้านบน'
-            }
-          </p>
-        </div>
+          <div>
+            <label for="modal-copy-from-date" class="block text-xs font-semibold text-slate-700 mb-1">
+              คัดลอกจากวันที่ (ไม่บังคับ — เว้นว่างเพื่อใช้ข้อมูลวันล่าสุดก่อนหน้าอัตโนมัติ)
+            </label>
+            <input type="date" id="modal-copy-from-date"
+              class="w-full min-h-[42px] px-3 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600" />
+          </div>
+          <div class="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+            <button type="button" id="modal-copy-cancel" class="min-h-[40px] px-4 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 text-xs sm:text-sm font-medium cursor-pointer">ยกเลิก</button>
+            <button type="submit" id="modal-copy-submit" class="min-h-[40px] px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs sm:text-sm font-semibold cursor-pointer">
+              <i class="fa-solid fa-copy mr-1"></i>คัดลอกคิววิ่ง
+            </button>
+          </div>
+        </form>
       </div>
-    `;
-    tbody.innerHTML = `<tr><td colspan="9">${emptyHtml}</td></tr>`;
-    if (mobileCards) mobileCards.innerHTML = emptyHtml;
-    return;
+      `,
+      (box) => {
+        box.querySelector('#modal-copy-cancel').addEventListener('click', closeModal);
+        box.querySelector('#modal-copy-form').addEventListener('submit', async (e) => {
+          e.preventDefault();
+          const to_date = box.querySelector('#modal-copy-to-date').value.trim();
+          const from_date = box.querySelector('#modal-copy-from-date').value.trim();
+          const btn = box.querySelector('#modal-copy-submit');
+          btn.disabled = true;
+          try {
+            const res = await apiFetch('/api/logs/copy-previous', {
+              method: 'POST',
+              body: JSON.stringify({ to_date, from_date })
+            });
+            closeModal();
+            if (res.storageQuota) renderQuotaUI(res.storageQuota);
+            showToast(
+              `คัดลอกคิววิ่งจากวันที่ ${toBE(res.from_date)} ไปยัง ${toBE(res.to_date)} สำเร็จ (${res.created} รายการ)`,
+              'success',
+              4500
+            );
+            await loadLogs();
+          } catch (err) {
+            if (err.data && err.data.storageQuota) renderQuotaUI(err.data.storageQuota);
+            showToast(err.message || 'ไม่สามารถคัดลอกคิววิ่งได้', 'error', 4500);
+            btn.disabled = false;
+          }
+        });
+      }
+    );
   }
 
-  const workerDefaultMap = new Map(
-    state.allWorkers.map((w) => [w.name, (w.default_route || '').trim()])
-  );
+  // ==========================================================================
+  // 8. Filters, Quick Periods & Travel Logs Table Rendering
+  // ==========================================================================
+  function applyQuickPeriod(mode) {
+    const monthVal = $('filter-month').value || currentMonthIso();
+    const [yStr, mStr] = monthVal.split('-');
+    const year = Number(yStr);
+    const month = Number(mStr);
 
-  // 1. Render Desktop Table Rows
-  tbody.innerHTML = filtered
-    .map((row) => {
-      const rowKey = row.log_id || row.worker_name;
-      const isEditingThis = state.editingLogId === rowKey;
-      const defaultRoute = workerDefaultMap.get(row.worker_name) || '';
-      const isDefaultRoute = defaultRoute && row.route && row.route.trim() === defaultRoute;
-      const duration = calculateTravelDuration(row.departure_time, row.arrival_time);
+    if (mode === '1-15') {
+      $('filter-date-from').value = `${year}-${String(month).padStart(2, '0')}-01`;
+      $('filter-date-to').value = `${year}-${String(month).padStart(2, '0')}-15`;
+    } else if (mode === '16-end') {
+      const lastDay = new Date(year, month, 0).getDate();
+      $('filter-date-from').value = `${year}-${String(month).padStart(2, '0')}-16`;
+      $('filter-date-to').value = `${year}-${String(month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+    } else if (mode === 'today') {
+      const t = todayIso();
+      $('filter-date-from').value = t;
+      $('filter-date-to').value = t;
+    } else if (mode === 'all') {
+      $('filter-site').value = '';
+      $('filter-trip-type').value = '';
+      $('filter-date-from').value = '';
+      $('filter-date-to').value = '';
+      $('filter-search').value = '';
+    }
+    loadLogs();
+  }
 
-      return `
-        <tr class="${
-          isEditingThis
-            ? 'bg-amber-50/90 ring-1 ring-inset ring-amber-300'
-            : 'hover:bg-slate-50/90'
-        } transition">
-          <td class="py-3.5 px-4 font-semibold text-slate-900 whitespace-nowrap">
-            <div class="flex items-center gap-2.5">
-              <div class="w-8 h-8 rounded-xl ${
-                isEditingThis ? 'bg-amber-600 text-white' : 'bg-indigo-100 text-indigo-700'
-              } flex items-center justify-center text-xs font-bold shrink-0">
-                ${escapeHtml((row.worker_name || '?').slice(0, 1))}
-              </div>
-              <div>
-                <div class="flex items-center gap-1.5">
-                  <span>${escapeHtml(row.worker_name)}</span>
-                </div>
-                ${
-                  defaultRoute
-                    ? `<p class="text-[11px] text-slate-400 font-normal">ประจำ: ${escapeHtml(defaultRoute)}</p>`
-                    : ''
-                }
-              </div>
-            </div>
-          </td>
+  function renderFilterSummaryLabel() {
+    const f = getFilterParams();
+    const parts = [];
+    if (f.site_name) parts.push(`โครงการ: ${f.site_name}`);
+    if (f.date_from || f.date_to) {
+      parts.push(`ช่วงวันที่: ${f.date_from ? toBE(f.date_from) : '...'} - ${f.date_to ? toBE(f.date_to) : '...'}`);
+    }
+    if (f.trip_type === 'normal') parts.push('รับ-ส่งปกติ');
+    if (f.trip_type === 'charter') parts.push('งานเหมา/ขนย้าย');
+    $('filter-period-label').textContent = parts.length ? parts.join(' • ') : 'แสดงทุกงวดวันที่';
+  }
 
-          <td class="py-3.5 px-4 whitespace-nowrap">
-            ${
-              row.site_name
-                ? `<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-50 text-amber-900 border border-amber-200 text-xs font-semibold">
-                    <i class="fa-solid fa-building-user text-amber-600 text-[11px]"></i>
-                    <span>${escapeHtml(row.site_name)}</span>
-                  </span>`
-                : '<span class="text-xs text-slate-400 italic">ไม่ได้ระบุ</span>'
-            }
-          </td>
+  function renderLogs() {
+    const logs = state.logs || [];
+    const totalAmount = logs.reduce((acc, l) => acc + (Number(l.unit_price) || 0), 0);
 
-          <td class="py-3.5 px-4 whitespace-nowrap">
-            ${
-              row.travel_date
-                ? `
-                  <div class="font-medium text-slate-800">${escapeHtml(
-                    formatThaiDate(row.travel_date, false)
-                  )}</div>
-                  <div class="text-[11px] text-slate-400 font-mono">${escapeHtml(row.travel_date)}</div>
-                `
-                : '<span class="text-xs text-slate-400 italic">ไม่ได้ระบุ</span>'
-            }
-          </td>
+    $('stat-filtered-logs').textContent = formatInt(logs.length);
+    $('stat-filtered-amount').textContent = formatMoney(totalAmount);
+    $('stat-today-logs').textContent = formatInt(state.todayLogsCount);
+    $('logs-count-badge').textContent = `${formatInt(logs.length)} รายการ`;
 
-          <td class="py-3.5 px-4">
-            ${
-              row.route
-                ? `
-                  <div class="flex flex-wrap items-center gap-1.5">
-                    <span class="font-medium text-slate-800">${escapeHtml(row.route)}</span>
-                    ${
-                      isDefaultRoute
-                        ? '<span class="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-semibold">ไซต์งานประจำ</span>'
-                        : ''
-                    }
-                  </div>
-                  ${
-                    row.note
-                      ? `<p class="text-[11px] text-amber-700 mt-0.5"><i class="fa-regular fa-note-sticky mr-1"></i>${escapeHtml(
-                          row.note
-                        )}</p>`
-                      : ''
-                  }
-                `
-                : '<span class="text-xs text-slate-400 italic">ไม่ได้ระบุ</span>'
-            }
-          </td>
+    const tbody = $('logs-table-body');
+    const mobile = $('logs-mobile-cards');
+    const empty = $('logs-empty-state');
 
-          <td class="py-3.5 px-3 text-center whitespace-nowrap">
-            <div class="inline-flex items-center gap-1 text-xs font-mono">
-              <span class="px-2 py-0.5 rounded bg-slate-100 text-slate-800 font-semibold">${escapeHtml(
-                row.departure_time || '-'
-              )}</span>
-              <i class="fa-solid fa-arrow-right text-[10px] text-slate-400"></i>
-              <span class="px-2 py-0.5 rounded bg-indigo-50 text-indigo-800 font-semibold">${escapeHtml(
-                row.arrival_time || '-'
-              )}</span>
-            </div>
-          </td>
+    if (logs.length === 0) {
+      tbody.innerHTML = '';
+      mobile.innerHTML = '';
+      empty.classList.remove('hidden');
+      return;
+    }
+    empty.classList.add('hidden');
 
-          <td class="py-3.5 px-3 text-center whitespace-nowrap">
-            ${
-              duration.totalMinutes !== null
-                ? `<span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold ${
-                    duration.isOvernight
-                      ? 'bg-amber-100 text-amber-900 border border-amber-300'
-                      : 'bg-emerald-50 text-emerald-800 border border-emerald-200'
-                  }">
-                    <i class="fa-solid ${duration.isOvernight ? 'fa-moon' : 'fa-stopwatch'} text-[10px]"></i>
-                    <span>${escapeHtml(duration.text)}</span>
-                  </span>`
-                : '<span class="text-xs text-slate-400">-</span>'
-            }
-          </td>
-
-          <td class="py-3.5 px-4 whitespace-nowrap">
-            ${
-              row.vehicle_plate
-                ? `<span class="license-plate-badge"><i class="fa-solid fa-truck text-indigo-600 text-[11px]"></i>${escapeHtml(
-                    row.vehicle_plate
-                  )}</span>`
-                : '<span class="text-xs text-slate-400 italic">ไม่ได้ระบุ</span>'
-            }
-          </td>
-
-          <td class="py-3.5 px-3 text-center whitespace-nowrap">
-            ${
-              row.passenger_count !== null && row.passenger_count !== undefined
-                ? `<span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-sky-50 text-sky-800 border border-sky-200 text-xs font-semibold">
-                    <i class="fa-solid fa-users text-[10px]"></i>
-                    <span>${escapeHtml(row.passenger_count)} คน</span>
-                  </span>`
-                : '<span class="text-xs text-slate-400 italic">ไม่ได้ระบุ</span>'
-            }
-          </td>
-
-          <td class="py-3.5 px-4 text-right whitespace-nowrap">
-            <div class="inline-flex items-center gap-1.5">
-              <button
-                type="button"
-                data-action="edit-log"
-                data-log-id="${escapeHtml(rowKey)}"
-                class="px-2.5 py-1.5 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 text-xs font-semibold inline-flex items-center gap-1 transition cursor-pointer"
-              >
-                <i class="fa-solid fa-pen-to-square"></i>
-                <span>แก้ไข</span>
-              </button>
-              <button
-                type="button"
-                data-action="delete-log"
-                data-log-id="${escapeHtml(rowKey)}"
-                data-worker="${escapeHtml(row.worker_name)}"
-                class="px-2.5 py-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-semibold inline-flex items-center gap-1 transition cursor-pointer"
-              >
-                <i class="fa-solid fa-trash-can"></i>
-                <span>ลบ</span>
-              </button>
-            </div>
-          </td>
-        </tr>
-      `;
-    })
-    .join('');
-
-  // 2. Render Mobile Responsive Cards (Mobile-First Touch UI)
-  if (mobileCards) {
-    mobileCards.innerHTML = filtered
-      .map((row) => {
-        const rowKey = row.log_id || row.worker_name;
-        const defaultRoute = workerDefaultMap.get(row.worker_name) || '';
-        const isDefaultRoute = defaultRoute && row.route && row.route.trim() === defaultRoute;
-        const duration = calculateTravelDuration(row.departure_time, row.arrival_time);
+    tbody.innerHTML = logs
+      .map((l, idx) => {
+        const isCharter = l.trip_type === 'charter';
+        const typeBadge = isCharter
+          ? '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300">งานเหมา</span>'
+          : '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200">รับ-ส่งปกติ</span>';
+        const dur = calcDurationText(l.dep_time, l.arr_time);
+        const passText = l.passengers === null || l.passengers === undefined ? '-' : `${l.passengers} คน`;
 
         return `
-          <div class="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm space-y-3">
+          <tr class="hover:bg-slate-50/90 transition align-top">
+            <td class="py-3 px-3 text-center text-xs font-semibold text-slate-500">${idx + 1}</td>
+            <td class="py-3 px-3 whitespace-nowrap">
+              <div class="font-semibold text-slate-900 text-xs">${escapeHtml(toBE(l.trip_date))}</div>
+              <div class="mt-1">${typeBadge}</div>
+            </td>
+            <td class="py-3 px-3">
+              <div class="font-semibold text-slate-900 text-xs sm:text-sm">${escapeHtml(l.worker_name)}</div>
+              ${
+                l.license_plate
+                  ? `<div class="mt-1"><span class="license-plate-badge !text-[11px] !py-0.5 !px-2">${escapeHtml(l.license_plate)}</span></div>`
+                  : '<div class="text-[11px] text-slate-400 mt-0.5">ไม่ระบุทะเบียน</div>'
+              }
+            </td>
+            <td class="py-3 px-3">
+              <div class="font-semibold text-slate-800 text-xs">${escapeHtml(l.site_name || '-')}</div>
+              <div class="text-[11px] text-slate-500 mt-0.5">ชีต: ${escapeHtml(isCharter ? 'งานเหมา / เหมา' : l.route_sheet_name)}</div>
+            </td>
+            <td class="py-3 px-3">
+              <div class="text-xs font-medium text-slate-900">
+                <span>${escapeHtml(l.origin)}</span>
+                <i class="fa-solid fa-arrow-right text-[10px] text-amber-500 mx-1"></i>
+                <span>${escapeHtml(l.destination)}</span>
+              </div>
+              <div class="text-[11px] text-slate-500 mt-0.5">ใบเบิก: ${escapeHtml(l.billing_title || l.route_sheet_name)}</div>
+            </td>
+            <td class="py-3 px-3 text-center whitespace-nowrap">
+              <div class="text-xs font-semibold text-slate-800">${escapeHtml(l.dep_time || '-')} – ${escapeHtml(l.arr_time || '-')}</div>
+              ${dur ? `<div class="text-[11px] text-emerald-700 font-medium mt-0.5"><i class="fa-solid fa-stopwatch mr-0.5"></i>${escapeHtml(dur)}</div>` : ''}
+            </td>
+            <td class="py-3 px-3 text-center text-xs font-semibold text-slate-700 whitespace-nowrap">${escapeHtml(passText)}</td>
+            <td class="py-3 px-3 text-right text-xs font-bold text-emerald-700 whitespace-nowrap">${formatMoney(l.unit_price)}</td>
+            <td class="py-3 px-3 text-xs text-slate-600 max-w-[160px] break-words">${escapeHtml(l.remark || '-')}</td>
+            <td class="py-3 px-3 text-right whitespace-nowrap">
+              <div class="inline-flex items-center gap-1">
+                <button type="button" data-action="edit-log" data-id="${escapeHtml(l.id)}" title="แก้ไข"
+                  class="w-8 h-8 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 inline-flex items-center justify-center cursor-pointer transition">
+                  <i class="fa-solid fa-pen text-xs"></i>
+                </button>
+                <button type="button" data-action="delete-log" data-id="${escapeHtml(l.id)}" title="ลบ"
+                  class="w-8 h-8 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 inline-flex items-center justify-center cursor-pointer transition">
+                  <i class="fa-solid fa-trash text-xs"></i>
+                </button>
+              </div>
+            </td>
+          </tr>
+        `;
+      })
+      .join('');
+
+    mobile.innerHTML = logs
+      .map((l, idx) => {
+        const isCharter = l.trip_type === 'charter';
+        const dur = calcDurationText(l.dep_time, l.arr_time);
+        const passText = l.passengers === null || l.passengers === undefined ? '-' : `${l.passengers} คน`;
+        return `
+          <div class="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
             <div class="flex items-start justify-between gap-2">
-              <div class="flex items-center gap-2.5">
-                <div class="w-9 h-9 rounded-xl bg-indigo-100 text-indigo-700 flex items-center justify-center font-bold text-sm shrink-0">
-                  ${escapeHtml((row.worker_name || '?').slice(0, 1))}
+              <div>
+                <div class="flex items-center gap-1.5">
+                  <span class="text-xs font-bold text-slate-400">#${idx + 1}</span>
+                  <span class="text-xs font-bold text-slate-900">${escapeHtml(toBE(l.trip_date))}</span>
+                  <span class="px-2 py-0.5 rounded-full text-[10px] font-bold ${isCharter ? 'bg-amber-100 text-amber-900' : 'bg-indigo-100 text-indigo-800'}">
+                    ${isCharter ? 'งานเหมา' : 'รับ-ส่งปกติ'}
+                  </span>
                 </div>
-                <div>
-                  <h4 class="font-bold text-slate-900 text-sm flex items-center gap-1.5">
-                    <span>${escapeHtml(row.worker_name)}</span>
-                  </h4>
-                  <p class="text-xs text-indigo-600 font-medium">
-                    <i class="fa-regular fa-calendar mr-1"></i>${escapeHtml(
-                      formatThaiDate(row.travel_date, false)
-                    )}
-                  </p>
-                </div>
+                <div class="font-bold text-sm text-slate-900 mt-1">${escapeHtml(l.worker_name)}</div>
               </div>
-
-              ${
-                row.vehicle_plate
-                  ? `<span class="license-plate-badge"><i class="fa-solid fa-truck text-indigo-600 text-[11px]"></i>${escapeHtml(
-                      row.vehicle_plate
-                    )}</span>`
-                  : '<span class="text-xs text-slate-400">ไม่ระบุรถ</span>'
-              }
+              ${l.license_plate ? `<span class="license-plate-badge !text-[11px] !py-0.5 !px-2">${escapeHtml(l.license_plate)}</span>` : ''}
             </div>
 
-            <div class="p-2.5 rounded-xl bg-slate-50 border border-slate-100 space-y-1.5 text-xs">
-              <div class="flex items-start justify-between gap-2">
-                <span class="text-slate-500 shrink-0">ไซต์งาน/โครงการ:</span>
-                <span class="font-semibold text-amber-800 text-right">
-                  ${escapeHtml(row.site_name || '-')}
-                </span>
+            <div class="text-xs text-slate-700 bg-white rounded-lg p-2.5 border border-slate-200/80 space-y-1">
+              <div class="font-semibold text-slate-900">
+                ${escapeHtml(l.origin)} <i class="fa-solid fa-arrow-right text-amber-500 text-[10px] mx-1"></i> ${escapeHtml(l.destination)}
               </div>
-              <div class="flex items-start justify-between gap-2">
-                <span class="text-slate-500 shrink-0">เส้นทาง/ที่หมาย:</span>
-                <span class="font-semibold text-slate-800 text-right">
-                  ${escapeHtml(row.route || '-')}
-                  ${
-                    isDefaultRoute
-                      ? '<span class="ml-1 px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 text-[10px]">ไซต์ประจำ</span>'
-                      : ''
-                  }
-                </span>
+              <div class="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-slate-600">
+                <span><i class="fa-solid fa-building text-amber-500 mr-1"></i>${escapeHtml(l.site_name || '-')}</span>
+                <span><i class="fa-regular fa-clock text-indigo-500 mr-1"></i>${escapeHtml(l.dep_time || '-')}–${escapeHtml(l.arr_time || '-')}${dur ? ` (${escapeHtml(dur)})` : ''}</span>
+                <span><i class="fa-solid fa-users text-slate-400 mr-1"></i>${escapeHtml(passText)}</span>
+                <span class="font-bold text-emerald-700">${formatMoney(l.unit_price)} บ.</span>
               </div>
-              <div class="flex items-center justify-between gap-2">
-                <span class="text-slate-500">เวลาเดินทาง:</span>
-                <span class="font-mono font-semibold text-slate-800">
-                  ${escapeHtml(row.departure_time || '-')} <i class="fa-solid fa-arrow-right text-[10px] text-slate-400 mx-1"></i> ${escapeHtml(
-          row.arrival_time || '-'
-        )}
-                  <span class="ml-1 text-indigo-600">(${escapeHtml(duration.text)})</span>
-                </span>
-              </div>
-              <div class="flex items-center justify-between gap-2">
-                <span class="text-slate-500">จำนวนคนโดยสาร:</span>
-                <span class="font-semibold text-sky-800">
-                  ${
-                    row.passenger_count !== null && row.passenger_count !== undefined
-                      ? `${escapeHtml(row.passenger_count)} คน`
-                      : '<span class="text-slate-400 font-normal italic">ไม่ได้ระบุ</span>'
-                  }
-                </span>
-              </div>
-              ${
-                row.note
-                  ? `<div class="flex items-center justify-between gap-2">
-                      <span class="text-slate-500">หมายเหตุ:</span>
-                      <span class="font-medium text-amber-700">${escapeHtml(row.note)}</span>
-                    </div>`
-                  : ''
-              }
+              ${l.remark ? `<div class="text-[11px] text-slate-500"><i class="fa-regular fa-note-sticky mr-1"></i>${escapeHtml(l.remark)}</div>` : ''}
             </div>
 
-            <div class="flex items-center gap-2 pt-1">
-              <button
-                type="button"
-                data-action="edit-log"
-                data-log-id="${escapeHtml(rowKey)}"
-                class="flex-1 min-h-[44px] rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 font-semibold text-xs flex items-center justify-center gap-1.5 cursor-pointer"
-              >
-                <i class="fa-solid fa-pen-to-square"></i>
-                <span>แก้ไขข้อมูล</span>
+            <div class="flex items-center justify-end gap-2">
+              <button type="button" data-action="edit-log" data-id="${escapeHtml(l.id)}"
+                class="min-h-[36px] px-3 py-1 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 text-xs font-semibold cursor-pointer">
+                <i class="fa-solid fa-pen mr-1"></i>แก้ไข
               </button>
-              <button
-                type="button"
-                data-action="delete-log"
-                data-log-id="${escapeHtml(rowKey)}"
-                data-worker="${escapeHtml(row.worker_name)}"
-                class="flex-1 min-h-[44px] rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-semibold text-xs flex items-center justify-center gap-1.5 cursor-pointer"
-              >
-                <i class="fa-solid fa-trash-can"></i>
-                <span>ลบรายการ</span>
+              <button type="button" data-action="delete-log" data-id="${escapeHtml(l.id)}"
+                class="min-h-[36px] px-3 py-1 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-semibold cursor-pointer">
+                <i class="fa-solid fa-trash mr-1"></i>ลบ
               </button>
             </div>
           </div>
@@ -1943,3139 +1145,998 @@ function renderLogsTable() {
       .join('');
   }
 
-  // Bind Edit, Delete & Refresh GPS buttons for both Desktop & Mobile
-  document.querySelectorAll('button[data-action="edit-log"]').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      enterEditMode(btn.getAttribute('data-log-id'));
-    });
-  });
+  async function handleLogsActionClick(e) {
+    const btn = e.target.closest('button[data-action]');
+    if (!btn) return;
+    const action = btn.dataset.action;
+    const id = btn.dataset.id;
+    const log = state.logs.find((l) => l.id === id);
+    if (!log) return;
 
-  document.querySelectorAll('button[data-action="delete-log"]').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      confirmDeleteTravelLog(
-        btn.getAttribute('data-log-id'),
-        btn.getAttribute('data-worker')
-      );
-    });
-  });
-
-  document.querySelectorAll('button[data-refresh-gps]').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      refreshSingleVehicleGps(btn.getAttribute('data-refresh-gps'));
-    });
-  });
-}
-
-function confirmDeleteTravelLog(logId, workerLabel = '') {
-  const displayLabel = workerLabel || logId;
-  openCustomModal(`
-    <div class="p-6">
-      <div class="flex items-start gap-4">
-        <div class="w-12 h-12 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center text-xl shrink-0">
-          <i class="fa-solid fa-trash-can"></i>
-        </div>
-        <div class="flex-1">
-          <h3 class="text-lg font-bold text-slate-900">ยืนยันการลบรายการเดินทาง</h3>
-          <p class="text-sm text-slate-600 mt-1">
-            คุณต้องการลบรายการเดินทางของ <strong>"${escapeHtml(displayLabel)}"</strong> ออกจากฐานข้อมูลใช่หรือไม่?
-          </p>
-        </div>
-      </div>
-
-      <div class="mt-6 pt-4 border-t border-slate-100 flex justify-end gap-2.5">
-        <button
-          type="button"
-          id="modal-btn-cancel-del-log"
-          class="min-h-[42px] px-4 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 text-sm font-medium cursor-pointer"
-        >
-          ยกเลิก
-        </button>
-        <button
-          type="button"
-          id="modal-btn-confirm-del-log"
-          class="min-h-[42px] px-5 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-sm font-semibold shadow-sm flex items-center gap-1.5 cursor-pointer"
-        >
-          <i class="fa-solid fa-trash-can"></i>
-          <span>ยืนยันการลบ</span>
-        </button>
-      </div>
-    </div>
-  `);
-
-  document.getElementById('modal-btn-cancel-del-log')?.addEventListener('click', closeCustomModal);
-  document.getElementById('modal-btn-confirm-del-log')?.addEventListener('click', async () => {
-    closeCustomModal();
-    try {
-      const res = await apiFetch(`/api/logs/${encodeURIComponent(logId)}`, {
-        method: 'DELETE'
+    if (action === 'edit-log') {
+      startEditLog(log);
+    } else if (action === 'delete-log') {
+      const ok = await confirmModal({
+        title: 'ยืนยันการลบรายการเดินทาง',
+        message: `ต้องการลบเที่ยววิ่งของ "${log.worker_name}" วันที่ ${toBE(log.trip_date)} (${log.origin} → ${log.destination}) ใช่หรือไม่?`,
+        confirmText: 'ลบรายการ',
+        danger: true
       });
-      if (!res.ok) {
-        showToast(res.data?.error || 'ไม่สามารถลบข้อมูลได้', 'error');
-        return;
-      }
-      if (state.editingLogId === logId) {
-        exitEditModeAndResetForm();
-      }
-      showToast(`ลบรายการของ "${displayLabel}" เรียบร้อยแล้ว`, 'success');
-      await loadAllData();
-    } catch (err) {
-      showToast(err.message || 'เกิดข้อผิดพลาดในการลบข้อมูล', 'error');
-    }
-  });
-}
-
-// Format YYYY-MM-DD into short Thai Buddhist date (e.g. 18/11/2569)
-function formatShortThaiDateBE(isoDate) {
-  if (!isoDate) return '';
-  const m = String(isoDate).match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (!m) return String(isoDate);
-  const yearBE = Number(m[1]) + 543;
-  const month = Number(m[2]);
-  const day = Number(m[3]);
-  return `${day}/${month}/${yearBE}`;
-}
-
-// Split route string into { from, to } (e.g. "นาคนิวาส48 - ไลฟ์รัชดา-พระราม9")
-function splitRouteParts(routeStr, fallbackSite = '') {
-  const raw = String(routeStr || '').trim();
-  const site = String(fallbackSite || '').trim();
-  if (!raw) return { from: site, to: site };
-  // Prefer splitting on spaced separator (" - ", " -> ", " ถึง ") first so names like "ไลฟ์รัชดา-พระราม9" stay intact
-  const spacedParts = raw.split(/\s+(?:-|->|→|ถึง)\s*|\s*(?:-|->|→|ถึง)\s+/).filter(Boolean);
-  if (spacedParts.length >= 2) {
-    return {
-      from: spacedParts[0].trim(),
-      to: spacedParts.slice(1).join(' - ').trim()
-    };
-  }
-  const parts = raw.split(/\s*(?:-|->|→|ถึง)\s*/).filter(Boolean);
-  if (parts.length >= 2) {
-    return {
-      from: parts[0].trim(),
-      to: parts.slice(1).join('-').trim()
-    };
-  }
-  return {
-    from: raw,
-    to: site || raw
-  };
-}
-
-// Get directional { from, to } based on departure time (เช้า < 12:00 = แคมป์ -> โครงการ, บ่าย/เย็น >= 12:00 = โครงการ -> แคมป์)
-function getDirectionalRouteParts(routeStr, departureTimeStr, fallbackSite = '') {
-  const { from, to } = splitRouteParts(routeStr, fallbackSite);
-  if (!from || !to || from === to) return { from, to };
-  const m = String(departureTimeStr || '').trim().match(/^(\d{1,2}):(\d{2})/);
-  if (m) {
-    const hour = Number(m[1]);
-    if (hour >= 12) {
-      return { from: to, to: from };
-    }
-  }
-  return { from, to };
-}
-
-function formatExcelTimeDisplay(timeStr) {
-  const s = String(timeStr || '').trim();
-  if (!s) return '';
-  const m = s.match(/^0?(\d{1,2}):(\d{2})/);
-  if (m) return `${m[1]}:${m[2]}`;
-  return s;
-}
-
-// ============================================================================
-// INDEXED-DB FILE HANDLE PERSISTENCE (ไหลข้อมูลเข้าไฟล์ Excel ไฟล์เดิมอัตโนมัติ)
-// ============================================================================
-
-const EXCEL_SYNC_DB_NAME = 'ckp_excel_sync_db';
-const EXCEL_SYNC_STORE = 'file_handles';
-const EXCEL_SYNC_KEY_COPY = 'copy_excel_file';
-const EXCEL_SYNC_KEY_BILLING = 'billing_excel_file';
-
-function openExcelSyncIdb() {
-  return new Promise((resolve, reject) => {
-    if (!window.indexedDB) {
-      resolve(null);
-      return;
-    }
-    const req = window.indexedDB.open(EXCEL_SYNC_DB_NAME, 1);
-    req.onupgradeneeded = () => {
-      const db = req.result;
-      if (!db.objectStoreNames.contains(EXCEL_SYNC_STORE)) {
-        db.createObjectStore(EXCEL_SYNC_STORE);
-      }
-    };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-}
-
-async function saveLinkedExcelHandleByType(type, handle) {
-  if (type === 'copy') {
-    state.linkedCopyHandle = handle;
-  } else {
-    state.linkedBillingHandle = handle;
-  }
-  updateLinkedExcelUI();
-  try {
-    const db = await openExcelSyncIdb();
-    if (!db) return;
-    const key = type === 'copy' ? EXCEL_SYNC_KEY_COPY : EXCEL_SYNC_KEY_BILLING;
-    await new Promise((resolve, reject) => {
-      const tx = db.transaction(EXCEL_SYNC_STORE, 'readwrite');
-      tx.objectStore(EXCEL_SYNC_STORE).put(handle, key);
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-    });
-  } catch {
-    // ignore IndexedDB storage errors
-  }
-}
-
-async function loadLinkedExcelHandles() {
-  try {
-    const db = await openExcelSyncIdb();
-    if (!db) return;
-    const [copyHandle, billingHandle] = await Promise.all([
-      new Promise((resolve) => {
-        const tx = db.transaction(EXCEL_SYNC_STORE, 'readonly');
-        const req = tx.objectStore(EXCEL_SYNC_STORE).get(EXCEL_SYNC_KEY_COPY);
-        req.onsuccess = () => resolve(req.result || null);
-        req.onerror = () => resolve(null);
-      }),
-      new Promise((resolve) => {
-        const tx = db.transaction(EXCEL_SYNC_STORE, 'readonly');
-        const req = tx.objectStore(EXCEL_SYNC_STORE).get(EXCEL_SYNC_KEY_BILLING);
-        req.onsuccess = () => resolve(req.result || null);
-        req.onerror = () => resolve(null);
-      })
-    ]);
-    if (copyHandle) state.linkedCopyHandle = copyHandle;
-    if (billingHandle) state.linkedBillingHandle = billingHandle;
-    updateLinkedExcelUI();
-  } catch {
-    // ignore
-  }
-}
-
-function updateLinkedExcelUI() {
-  const copyNameEl = document.getElementById('linked-copy-filename');
-  const billingNameEl = document.getElementById('linked-billing-filename');
-  const btnCopy = document.getElementById('btn-link-copy-excel');
-  const btnBilling = document.getElementById('btn-link-billing-excel');
-
-  const hasCopy = Boolean(state.linkedCopyHandle && state.linkedCopyHandle.name);
-  const hasBilling = Boolean(state.linkedBillingHandle && state.linkedBillingHandle.name);
-
-  if (copyNameEl) {
-    copyNameEl.textContent = hasCopy ? state.linkedCopyHandle.name : 'เลือกไฟล์...';
-  }
-  if (btnCopy) {
-    btnCopy.className = hasCopy
-      ? 'min-h-[40px] px-3 py-1.5 rounded-xl border border-emerald-400 bg-emerald-50 hover:bg-emerald-100 text-emerald-950 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer truncate max-w-[260px]'
-      : 'min-h-[40px] px-3 py-1.5 rounded-xl bg-white hover:bg-amber-100 text-amber-950 border border-amber-300 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer truncate max-w-[260px]';
-  }
-
-  if (billingNameEl) {
-    billingNameEl.textContent = hasBilling ? state.linkedBillingHandle.name : 'เลือกไฟล์...';
-  }
-  if (btnBilling) {
-    btnBilling.className = hasBilling
-      ? 'min-h-[40px] px-3 py-1.5 rounded-xl border border-emerald-400 bg-emerald-50 hover:bg-emerald-100 text-emerald-950 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer truncate max-w-[260px]'
-      : 'min-h-[40px] px-3 py-1.5 rounded-xl bg-white hover:bg-sky-100 text-sky-950 border border-sky-300 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer truncate max-w-[260px]';
-  }
-}
-
-// เลือกผูกไฟล์แยกกัน (ผูกไฟล์เฉยๆ ยังไม่เขียนทับจนกว่าจะกดปุ่ม "บันทึกไฟล์สำเนา" หรือ "บันทึกไฟล์ใบเบิก")
-async function pickAndLinkExcelFileOnly(type) {
-  const isCopy = type === 'copy';
-  const typeLabel = isCopy ? 'สำเนา' : 'ใบเบิก';
-
-  if (typeof window.showOpenFilePicker !== 'function') {
-    openExcelLinkModalByType(type);
-    return;
-  }
-
-  try {
-    const [handle] = await window.showOpenFilePicker({
-      multiple: false,
-      types: [
-        {
-          description: `ไฟล์ Excel แบบ${typeLabel} (.xlsx)`,
-          accept: {
-            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx']
-          }
-        }
-      ]
-    });
-    if (handle) {
-      await saveLinkedExcelHandleByType(type, handle);
-      showToast(
-        `ผูกไฟล์${typeLabel} "${handle.name}" สำเร็จ!`,
-        'success',
-        `เมื่อต้องการให้ข้อมูลไหลเข้าไฟล์นี้ ให้กดปุ่ม "บันทึกไฟล์${typeLabel}" ได้เลยครับ`
-      );
-    }
-  } catch (err) {
-    if (err?.name !== 'AbortError') {
-      showToast(`ยกเลิกการเลือกผูกไฟล์${typeLabel}`, 'info');
-    }
-  }
-}
-
-// ============================================================================
-// EXACT TEMPLATE BUILDERS (ตามแบบฟอร์มต้นฉบับที่ผู้ใช้ระบุ 100%)
-// ============================================================================
-
-// Section 1: ใบเบิกผลงานผู้รับเหมา (มีเว้นบรรทัดคั่นระหว่างรายการ 1, 2, 3... และคำนวณยอดรวมอัตโนมัติ)
-function appendBillingSectionToAoa(
-  aoa,
-  merges,
-  formulas,
-  rows,
-  projectTitle,
-  periodLabel,
-  issueDateBE,
-  existingPricesMap = new Map()
-) {
-  const startR = aoa.length;
-  const pad12 = (arr) => {
-    const copy = [...arr];
-    while (copy.length < 12) copy.push('');
-    return copy;
-  };
-
-  // Group trips by route
-  const routeGroupsMap = new Map();
-  for (const r of rows) {
-    const routeName =
-      (r.route || '').trim() ||
-      (r.site_name ? `${r.site_name}` : 'ไม่ระบุเส้นทาง');
-    if (!routeGroupsMap.has(routeName)) {
-      routeGroupsMap.set(routeName, {
-        route: routeName,
-        trips: 0,
-        note: ''
-      });
-    }
-    const g = routeGroupsMap.get(routeName);
-    g.trips += 1;
-  }
-
-  const routeGroups = Array.from(routeGroupsMap.values());
-
-  // Header rows (0..6 relative to startR)
-  aoa.push(pad12(['ใบเบิกผลงานผู้รับเหมา']));
-  aoa.push(
-    pad12([
-      'ผู้รับเหมาชุด    ',
-      '',
-      'บริษัท จักรพงษ์ ขนส่ง ( 2003 ) จำกัด',
-      '',
-      '',
-      '',
-      '',
-      'วันที่',
-      '',
-      issueDateBE
-    ])
-  );
-  aoa.push(
-    pad12([
-      'โครงการ',
-      '',
-      projectTitle,
-      '',
-      '',
-      '',
-      '',
-      'ประจำงวด',
-      '',
-      periodLabel
-    ])
-  );
-  aoa.push(pad12([]));
-  aoa.push(
-    pad12([
-      'ลำดับ',
-      'รายละเอียดงาน',
-      '',
-      '',
-      'ปริมาณงาน',
-      '',
-      '',
-      'จำนวนเงิน',
-      '',
-      'หมายเหตุ'
-    ])
-  );
-  aoa.push(pad12(['', '', '', '', 'จำนวน', 'หน่วย', 'ราคา/หน่วย', '', '', '']));
-  aoa.push(pad12(['', 'ค่ารถรับ -  ส่ง   ', '', '', '', '', '', '', '', '']));
-
-  merges.push(
-    { s: { r: startR + 0, c: 0 }, e: { r: startR + 0, c: 9 } }, // A1:J1
-    { s: { r: startR + 1, c: 2 }, e: { r: startR + 1, c: 5 } }, // C2:F2
-    { s: { r: startR + 1, c: 7 }, e: { r: startR + 1, c: 8 } }, // H2:I2
-    { s: { r: startR + 2, c: 2 }, e: { r: startR + 2, c: 5 } }, // C3:F3
-    { s: { r: startR + 2, c: 7 }, e: { r: startR + 2, c: 8 } }, // H3:I3
-    { s: { r: startR + 4, c: 0 }, e: { r: startR + 5, c: 0 } }, // A5:A6
-    { s: { r: startR + 4, c: 1 }, e: { r: startR + 5, c: 3 } }, // B5:D6
-    { s: { r: startR + 4, c: 4 }, e: { r: startR + 4, c: 6 } }, // E5:G5
-    { s: { r: startR + 4, c: 7 }, e: { r: startR + 5, c: 8 } }, // H5:I6
-    { s: { r: startR + 4, c: 9 }, e: { r: startR + 5, c: 9 } }, // J5:J6
-    { s: { r: startR + 6, c: 1 }, e: { r: startR + 6, c: 3 } }, // B7:D7
-    { s: { r: startR + 6, c: 7 }, e: { r: startR + 6, c: 8 } }  // H7:I7
-  );
-
-  const firstDetailExcelRow = startR + 8; // 1-based Excel row 8
-  const minDetailRows = Math.max(21, routeGroups.length * 2);
-  let itemIdx = 0;
-  let totalBillingAmount = 0;
-
-  for (let slot = 0; slot < minDetailRows; slot++) {
-    const r0 = aoa.length;
-    const excelRow = r0 + 1;
-    merges.push(
-      { s: { r: r0, c: 1 }, e: { r: r0, c: 3 } }, // B..D
-      { s: { r: r0, c: 7 }, e: { r: r0, c: 8 } }  // H..I
-    );
-
-    if (slot % 2 === 0 && itemIdx < routeGroups.length) {
-      const g = routeGroups[itemIdx];
-      itemIdx += 1;
-      const normRoute = String(g.route || '').replace(/[\s\-]+/g, '').toLowerCase();
-      let savedPrice = existingPricesMap.get(g.route);
-      if (savedPrice === undefined) {
-        for (const [k, v] of existingPricesMap.entries()) {
-          const normK = String(k || '').replace(/[\s\-]+/g, '').toLowerCase();
-          if (normK && (normK === normRoute || normK.includes(normRoute) || normRoute.includes(normK))) {
-            savedPrice = v;
-            break;
-          }
-        }
-      }
-      const unitPrice =
-        savedPrice !== undefined && savedPrice !== '' ? Number(savedPrice) : '';
-      const calcAmount =
-        unitPrice !== '' && !Number.isNaN(Number(unitPrice))
-          ? g.trips * Number(unitPrice)
-          : 0;
-      totalBillingAmount += calcAmount;
-
-      aoa.push(
-        pad12([
-          itemIdx,
-          g.route,
-          '',
-          '',
-          g.trips,
-          'เที่ยว',
-          unitPrice,
-          calcAmount,
-          '',
-          ''
-        ])
-      );
-      formulas.push({
-        cell: `H${excelRow}`,
-        f: `SUM(E${excelRow}*G${excelRow})`,
-        v: calcAmount
-      });
-    } else {
-      aoa.push(pad12([]));
-    }
-  }
-
-  const lastDetailExcelRow = aoa.length;
-  const totalR0 = aoa.length;
-  const totalExcelRow = totalR0 + 1;
-  aoa.push(pad12(['', 'รวม', '', '', '', '', '', totalBillingAmount, '', '']));
-  merges.push(
-    { s: { r: totalR0, c: 1 }, e: { r: totalR0, c: 3 } }, // B29:D29
-    { s: { r: totalR0, c: 7 }, e: { r: totalR0, c: 8 } }  // H29:I29
-  );
-  formulas.push({
-    cell: `H${totalExcelRow}`,
-    f: `SUM(H${firstDetailExcelRow}:I${lastDetailExcelRow})`,
-    v: totalBillingAmount
-  });
-
-  aoa.push(pad12([]));
-  aoa.push(pad12([]));
-  aoa.push(pad12(['', '', '', '', 'ผู้ตรวจรับ / Checked by         ']));
-  aoa.push(pad12(['', '', '', '', 'วันที่ / Date                            ']));
-}
-
-// Section 2: ใบบันทึกการปฏิบัติงานรถ 6 ล้อ รับ - ส่งพนักงาน (แบ่งแผ่นละ 30 แถว แผ่นที่ 1, 2, 3... ตามเส้นทาง)
-function appendOperationPagesToAoa(
-  aoa,
-  merges,
-  rows,
-  defaultProjectTitle,
-  startDateBE,
-  endDateBE
-) {
-  // Group rows by route so each route gets its own 30-row page(s), matching แผ่นที่ 1..8 in sample
-  const routeBuckets = new Map();
-  if (rows.length === 0) {
-    routeBuckets.set('__empty__', []);
-  } else {
-    for (const r of rows) {
-      const key = (r.route || '').trim() || '__default__';
-      if (!routeBuckets.has(key)) routeBuckets.set(key, []);
-      routeBuckets.get(key).push(r);
-    }
-  }
-
-  let sheetPageNo = 1;
-  for (const [, bucketRows] of routeBuckets.entries()) {
-    const pageCount = Math.max(1, Math.ceil(bucketRows.length / 30));
-    for (let p = 0; p < pageCount; p++) {
-      const pageRows = bucketRows.slice(p * 30, (p + 1) * 30);
-      const firstRowSite =
-        (pageRows.find((x) => x.site_name)?.site_name || '').trim() || defaultProjectTitle;
-      const startR = aoa.length;
-
-      aoa.push([
-        'ใบบันทึกการปฏิบัติงานรถ 6 ล้อ รับ - ส่งพนักงาน',
-        '',
-        '',
-        '',
-        '',
-        '',
-        '',
-        '',
-        '',
-        '',
-        '',
-        ''
-      ]);
-      aoa.push(['', '', '', '', '', '', '', '', '', 'แผ่นที่', sheetPageNo, '']);
-      aoa.push([
-        'สถานที่ปฏิบัติงานโครงการ :-',
-        '',
-        '',
-        firstRowSite,
-        '',
-        'ระหว่างวันที่',
-        '',
-        startDateBE,
-        '',
-        'ถึงวันที่ ',
-        endDateBE,
-        ''
-      ]);
-      aoa.push(['', '', '', '', '', '', '', '', '', '', '', '']);
-      aoa.push([
-        'ลำดับ',
-        'ว/ด/ป',
-        'ทะเบียนรถ',
-        'จาก',
-        'เวลา',
-        'ถึง',
-        '',
-        '',
-        'เวลา',
-        'จำนวน',
-        'ลงชื่อผู้ตรวจ',
-        'หมายเหตุ'
-      ]);
-      aoa.push(['', '', '', '', '( น. )', '', '', '', '( น. )', '(คน)', 'แคมป์ Boss /รปภ.', '']);
-
-      merges.push(
-        { s: { r: startR + 0, c: 0 }, e: { r: startR + 0, c: 10 } },
-        { s: { r: startR + 1, c: 10 }, e: { r: startR + 1, c: 11 } },
-        { s: { r: startR + 2, c: 3 }, e: { r: startR + 2, c: 4 } },
-        { s: { r: startR + 2, c: 5 }, e: { r: startR + 2, c: 6 } },
-        { s: { r: startR + 2, c: 7 }, e: { r: startR + 2, c: 8 } },
-        { s: { r: startR + 2, c: 10 }, e: { r: startR + 2, c: 11 } },
-        { s: { r: startR + 4, c: 0 }, e: { r: startR + 5, c: 0 } },
-        { s: { r: startR + 4, c: 1 }, e: { r: startR + 5, c: 1 } },
-        { s: { r: startR + 4, c: 2 }, e: { r: startR + 5, c: 2 } },
-        { s: { r: startR + 4, c: 3 }, e: { r: startR + 5, c: 3 } },
-        { s: { r: startR + 4, c: 5 }, e: { r: startR + 5, c: 7 } },
-        { s: { r: startR + 4, c: 11 }, e: { r: startR + 5, c: 11 } }
-      );
-
-      let prevDateStr = '';
-      for (let i = 0; i < 30; i++) {
-        const r = pageRows[i];
-        const seqNo = p * 30 + i + 1;
-        const row0 = aoa.length;
-        merges.push({ s: { r: row0, c: 5 }, e: { r: row0, c: 7 } }); // F..H
-
-        if (r) {
-          const dateBE = formatShortThaiDateBE(r.travel_date);
-          const displayDate = dateBE !== prevDateStr ? dateBE : '';
-          if (dateBE) prevDateStr = dateBE;
-
-          const { from, to } = getDirectionalRouteParts(
-            r.route,
-            r.departure_time || r.arrival_time,
-            r.site_name || firstRowSite
-          );
-          const pax =
-            r.passenger_count !== null &&
-            r.passenger_count !== undefined &&
-            r.passenger_count !== ''
-              ? Number(r.passenger_count)
-              : '';
-          // ช่อง L (หมายเหตุ): ใส่เฉพาะหมายเหตุที่กรอกจริงๆ เท่านั้น ตามต้นฉบับ
-          const remarkText = String(r.note || '').trim();
-          aoa.push([
-            seqNo,
-            displayDate,
-            r.vehicle_plate || r.worker_name || '',
-            from,
-            formatExcelTimeDisplay(r.departure_time),
-            to,
-            '',
-            '',
-            formatExcelTimeDisplay(r.arrival_time),
-            pax,
-            '',
-            remarkText
-          ]);
-        } else {
-          aoa.push([seqNo, '', '', '', '', '', '', '', '', '', '', '']);
-        }
-      }
-
-      const f1 = aoa.length;
-      const f2 = aoa.length + 1;
-      aoa.push([
-        '',
-        '',
-        '',
-        '',
-        '',
-        '',
-        '',
-        'ผู้ตรวจ / Checked by',
-        '',
-        '',
-        '…........................................................................',
-        ''
-      ]);
-      aoa.push([
-        '',
-        '',
-        '',
-        '',
-        '',
-        '',
-        '',
-        'วันที่ / Date',
-        '',
-        '',
-        '…............../…..................../…............',
-        ''
-      ]);
-      merges.push(
-        { s: { r: f1, c: 10 }, e: { r: f1, c: 11 } },
-        { s: { r: f2, c: 10 }, e: { r: f2, c: 11 } }
-      );
-
-      sheetPageNo += 1;
-    }
-  }
-}
-
-// Section 3: บริษัท จักรพงษ์ ขนส่ง (2003) จำกัด - บันทึกรายการรถ 6 ล้อ รับ-ส่งคนงาน + สรุปจำนวนเที่ยวคนขับ/ทะเบียนรถท้ายตาราง
-function appendZone6WheelBlocksToAoa(aoa, merges, rows, defaultProjectTitle, formulas = []) {
-  const pad12 = (arr) => {
-    const copy = [...arr];
-    while (copy.length < 12) copy.push('');
-    return copy;
-  };
-
-  const routeBuckets = new Map();
-  if (rows.length === 0) {
-    routeBuckets.set('__empty__', []);
-  } else {
-    for (const r of rows) {
-      const key = (r.route || r.site_name || '').trim() || '__default__';
-      if (!routeBuckets.has(key)) routeBuckets.set(key, []);
-      routeBuckets.get(key).push(r);
-    }
-  }
-
-  for (const [, bucketRows] of routeBuckets.entries()) {
-    const blockProject =
-      (bucketRows.find((x) => x.site_name)?.site_name || '').trim() || defaultProjectTitle;
-    const startR = aoa.length;
-
-    aoa.push(pad12(['บริษัท จักรพงษ์ ขนส่ง (2003) จำกัด']));
-    aoa.push(pad12(['บันทึกรายการรถ 6 ล้อ รับ-ส่งคนงาน']));
-    aoa.push(pad12([`โครงการ  ${blockProject}`]));
-    aoa.push(pad12([]));
-    aoa.push(
-      pad12(['ลำดับ', 'วัน เดือน ปี', 'ทะเบียนรถ', 'จาก', 'เวลา', 'จำนวนคน', 'ถึง', 'หมายเหตุ'])
-    );
-
-    merges.push(
-      { s: { r: startR + 0, c: 0 }, e: { r: startR + 0, c: 7 } },
-      { s: { r: startR + 1, c: 0 }, e: { r: startR + 1, c: 7 } },
-      { s: { r: startR + 2, c: 0 }, e: { r: startR + 2, c: 7 } }
-    );
-
-    let prevDateStr = '';
-    const tallyMap = new Map();
-    const firstRowRefMap = new Map();
-
-    for (let i = 0; i < bucketRows.length; i++) {
-      const r = bucketRows[i];
-      const dateBE = formatShortThaiDateBE(r.travel_date);
-      const displayDate = dateBE !== prevDateStr ? dateBE : '';
-      if (dateBE) prevDateStr = dateBE;
-
-      const tripTime = r.departure_time || r.arrival_time;
-      const { from } = getDirectionalRouteParts(
-        r.route,
-        tripTime,
-        r.site_name || blockProject
-      );
-      const pax =
-        r.passenger_count !== null &&
-        r.passenger_count !== undefined &&
-        r.passenger_count !== ''
-          ? Number(r.passenger_count)
-          : '';
-      // ช่อง C ของไฟล์สำเนา: ใช้ชื่อคนขับ (หรือทะเบียนรถถ้าไม่มีชื่อ) ให้ตรงกับสูตร COUNTIF(C:C,...) ด้านล่าง 100%
-      const driverOrPlate = (r.worker_name || r.vehicle_plate || '').trim();
-      const currentExcelRow = aoa.length + 1;
-      if (driverOrPlate) {
-        tallyMap.set(driverOrPlate, (tallyMap.get(driverOrPlate) || 0) + 1);
-        if (!firstRowRefMap.has(driverOrPlate)) {
-          firstRowRefMap.set(driverOrPlate, currentExcelRow);
-        }
-      }
-
-      // ช่อง H (หมายเหตุ): ใส่เฉพาะหมายเหตุจริงๆ เท่านั้น และช่อง G (ถึง) ในแถวข้อมูลเว้นว่างตามต้นฉบับสำเนา
-      const remarkText = String(r.note || '').trim();
-
-      aoa.push(
-        pad12([
-          i + 1,
-          displayDate,
-          driverOrPlate,
-          from,
-          formatExcelTimeDisplay(tripTime),
-          pax,
-          '',
-          remarkText
-        ])
-      );
-    }
-
-    // 2 blank rows before summary (exactly like lines 45-46 in user's template)
-    aoa.push(pad12([bucketRows.length + 1]));
-    aoa.push(pad12([bucketRows.length + 2]));
-
-    let seqCursor = bucketRows.length + 3;
-    let totalTally = 0;
-    const firstSummaryExcelRow = aoa.length + 1;
-    for (const [personOrPlate, count] of tallyMap.entries()) {
-      totalTally += count;
-      const sumExcelRow = aoa.length + 1;
-      const refRow = firstRowRefMap.get(personOrPlate) || sumExcelRow;
-      aoa.push(pad12([seqCursor, '', '', '', '', personOrPlate, count, '']));
-      formulas.push({
-        cell: `G${sumExcelRow}`,
-        f: `COUNTIF(C:C,C${refRow})`,
-        v: count
-      });
-      seqCursor += 1;
-    }
-    const lastSummaryExcelRow = aoa.length;
-    if (tallyMap.size > 0) {
-      const totalExcelRow = aoa.length + 1;
-      aoa.push(pad12([seqCursor, '', '', '', '', '', totalTally, '']));
-      formulas.push({
-        cell: `G${totalExcelRow}`,
-        f: `SUM(G${firstSummaryExcelRow}:G${lastSummaryExcelRow})`,
-        v: totalTally
-      });
-      seqCursor += 1;
-    }
-
-    // Pad up to at least 70 numbered rows as in template
-    while (seqCursor <= Math.max(70, bucketRows.length + tallyMap.size + 15)) {
-      aoa.push(pad12([seqCursor]));
-      seqCursor += 1;
-    }
-  }
-}
-
-function applyFormulasToWorksheet(ws, formulas) {
-  for (const item of formulas) {
-    ws[item.cell] = { t: 'n', f: item.f, v: item.v ?? 0 };
-  }
-}
-
-// Parse existing history & unit prices from an existing Excel workbook buffer
-function normalizeExcelCellDateToISO(val) {
-  if (val === '' || val === null || val === undefined) return '';
-  const numVal = Number(val);
-  // Handle Excel serial date numbers (including Thai Buddhist year serials like 244357 = 1/8/2569)
-  if (!Number.isNaN(numVal) && numVal > 30000 && numVal < 300000 && /^\d+(\.\d+)?$/.test(String(val).trim())) {
-    const d = new Date(Math.round((numVal - 25569) * 86400 * 1000));
-    let y = d.getUTCFullYear();
-    let month = d.getUTCMonth() + 1;
-    let day = d.getUTCDate();
-    if (y >= 2400) {
-      y -= 543;
-      // In Thai BE Excel sheets entered on M/D/Y locale, serial 244357 has month=day(1..12) and day=month(1..12)
-      const swappedDay = month;
-      const swappedMonth = day;
-      day = swappedDay;
-      month = swappedMonth;
-    }
-    return `${y}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-  }
-
-  const s = String(val || '').trim();
-  if (!s) return '';
-  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
-  const m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
-  if (m) {
-    let p1 = Number(m[1]);
-    let p2 = Number(m[2]);
-    let y = Number(m[3]);
-    const isThaiShortYear = y >= 60 && y <= 99;
-    if (y >= 2400) {
-      y -= 543;
-    } else if (y < 100) {
-      y = isThaiShortYear ? 2500 + y - 543 : 2000 + y;
-    }
-    let day = p1;
-    let month = p2;
-    if (month > 12 && day <= 12) {
-      day = p2;
-      month = p1;
-    }
-    return `${y}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-  }
-  return s;
-}
-
-function normalizeExcelCellTime(val) {
-  if (val === '' || val === null || val === undefined) return '';
-  const numVal = Number(val);
-  if (!Number.isNaN(numVal) && numVal >= 0 && numVal < 1 && String(val).trim() !== '') {
-    const totalMins = Math.round(numVal * 24 * 60);
-    const hh = String(Math.floor(totalMins / 60) % 24).padStart(2, '0');
-    const mm = String(totalMins % 60).padStart(2, '0');
-    return `${hh}:${mm}`;
-  }
-  const s = String(val).trim();
-  const m = s.match(/^(\d{1,2}):(\d{2})(?::\d{2})?/);
-  if (m) {
-    return `${String(Number(m[1])).padStart(2, '0')}:${m[2]}`;
-  }
-  return s;
-}
-
-function extractExistingDataFromWorkbook(existingWorkbook) {
-  const existingRows = [];
-  const existingPricesMap = new Map();
-  if (!existingWorkbook || !existingWorkbook.SheetNames) {
-    return { existingRows, existingPricesMap };
-  }
-
-  // 1. Extract unit prices from ใบเบิก sheet if present
-  for (const sheetName of existingWorkbook.SheetNames) {
-    const ws = existingWorkbook.Sheets[sheetName];
-    if (!ws) continue;
-    const rows2d = window.XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
-    for (const r of rows2d) {
-      const colB = String(r[1] || '').trim();
-      const colF = String(r[5] || '').trim();
-      const colG = r[6];
-      if (colB && colF === 'เที่ยว' && colG !== '' && colG !== undefined && !Number.isNaN(Number(colG))) {
-        existingPricesMap.set(colB, Number(colG));
-      }
-    }
-  }
-
-  // 2. Extract saved history from _CKP_HISTORY sheet if present
-  if (existingWorkbook.Sheets['_CKP_HISTORY']) {
-    const rawHistory = window.XLSX.utils.sheet_to_json(existingWorkbook.Sheets['_CKP_HISTORY'], {
-      defval: ''
-    });
-    for (const item of rawHistory) {
-      if (item.worker_name || item.vehicle_plate || item.route) {
-        existingRows.push({
-          worker_name: String(item.worker_name || ''),
-          site_name: String(item.site_name || ''),
-          travel_date: String(item.travel_date || ''),
-          route: String(item.route || ''),
-          departure_time: String(item.departure_time || ''),
-          arrival_time: String(item.arrival_time || ''),
-          vehicle_plate: String(item.vehicle_plate || ''),
-          passenger_count:
-            item.passenger_count !== '' && item.passenger_count !== null && item.passenger_count !== undefined
-              ? Number(item.passenger_count)
-              : null,
-          note: String(item.note || '')
-        });
-      }
-    }
-    return { existingRows, existingPricesMap };
-  }
-
-  // 3. Fallback: Parse native สำเนา or ใบบันทึก sheets when linking a pre-existing Excel file without _CKP_HISTORY
-  for (const sheetName of existingWorkbook.SheetNames) {
-    if (
-      sheetName === '_CKP_HISTORY' ||
-      sheetName === 'รวมสำเนาทุกสาย' ||
-      sheetName === 'รวมใบเบิกและใบบันทึก' ||
-      sheetName === 'ใบเบิก'
-    ) {
-      continue;
-    }
-    const ws = existingWorkbook.Sheets[sheetName];
-    if (!ws) continue;
-    const rows2d = window.XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
-    if (!rows2d || rows2d.length < 5) continue;
-
-    const cleanSheetRoute = sheetName
-      .replace(/^\d+_/, '')
-      .replace(/\s*\(\d+\)\s*$/, '')
-      .trim();
-
-    let siteName = '';
-    let mode = ''; // 'copy' | 'operation'
-    let dataStartIndex = -1;
-
-    for (let idx = 0; idx < Math.min(rows2d.length, 12); idx++) {
-      const r = rows2d[idx] || [];
-      const c0 = String(r[0] || '').trim();
-      const c1 = String(r[1] || '').trim();
-      const c3 = String(r[3] || '').trim();
-      const c5 = String(r[5] || '').trim();
-
-      if (c0.startsWith('โครงการ')) {
-        siteName = c0.replace(/^โครงการ\s*/i, '').trim();
-      } else if (c0.includes('สถานที่ปฏิบัติงานโครงการ') && c3) {
-        siteName = c3;
-      }
-
-      if (c0 === 'ลำดับ' && c1.includes('วัน') && c5.includes('จำนวนคน')) {
-        mode = 'copy';
-        dataStartIndex = idx + 1;
-        break;
-      }
-      if (c0 === 'ลำดับ' && c1.includes('ว/ด/ป')) {
-        mode = 'operation';
-        dataStartIndex = idx + 2; // skip 2-row header
-        break;
-      }
-    }
-
-    if (!mode || dataStartIndex < 0) continue;
-
-    let lastDateISO = '';
-    for (let idx = dataStartIndex; idx < rows2d.length; idx++) {
-      const r = rows2d[idx] || [];
-      const rawDate = r[1];
-      if (rawDate !== '' && rawDate !== null && rawDate !== undefined) {
-        lastDateISO = normalizeExcelCellDateToISO(rawDate);
-      }
-
-      if (mode === 'copy') {
-        const plateOrDriver = String(r[2] || '').trim();
-        const fromStr = String(r[3] || '').trim();
-        const depTime = normalizeExcelCellTime(r[4]);
-        const rawPax = String(r[5] || '').trim();
-        const col6 = String(r[6] || '').trim();
-        const noteStr = String(r[7] || '').trim();
-
-        // In สำเนา, summary rows at the bottom have empty plate (col 2) and empty from (col 3)
-        if (!plateOrDriver && !fromStr) continue;
-
-        const isCol6Time = /^\d{1,2}:\d{2}/.test(col6);
-        const arrTime = isCol6Time ? normalizeExcelCellTime(col6) : '';
-        const routeStr = cleanSheetRoute || fromStr;
-        const paxNum =
-          rawPax !== '' && !Number.isNaN(Number(rawPax)) ? Number(rawPax) : null;
-
-        existingRows.push({
-          worker_name: plateOrDriver,
-          site_name: siteName,
-          travel_date: lastDateISO,
-          route: routeStr,
-          departure_time: depTime,
-          arrival_time: arrTime,
-          vehicle_plate: plateOrDriver,
-          passenger_count: paxNum,
-          note: noteStr
-        });
-      } else if (mode === 'operation') {
-        const plate = String(r[2] || '').trim();
-        const fromStr = String(r[3] || '').trim();
-        const depTime = normalizeExcelCellTime(r[4]);
-        const toStr = String(r[5] || '').trim();
-        const arrTime = normalizeExcelCellTime(r[8]);
-        const rawPax = String(r[9] || '').trim();
-        const noteStr = String(r[11] || '').trim();
-
-        if (!plate && !fromStr && !toStr) continue;
-
-        const routeStr =
-          cleanSheetRoute && !cleanSheetRoute.startsWith('แผ่นที่')
-            ? cleanSheetRoute
-            : toStr && toStr !== fromStr
-            ? `${fromStr} - ${toStr}`
-            : fromStr || toStr;
-        const paxNum =
-          rawPax !== '' && !Number.isNaN(Number(rawPax)) ? Number(rawPax) : null;
-
-        existingRows.push({
-          worker_name: plate,
-          site_name: siteName,
-          travel_date: lastDateISO,
-          route: routeStr,
-          departure_time: depTime,
-          arrival_time: arrTime,
-          vehicle_plate: plate,
-          passenger_count: paxNum,
-          note: noteStr
-        });
-      }
-    }
-  }
-
-  return { existingRows, existingPricesMap };
-}
-
-// Merge existing Excel rows with current web app rows (ไหลข้อมูลใหม่ต่อท้ายไฟล์เดิมโดยไม่ตกหล่นและไม่ซ้ำ)
-function mergeLogsForExcel(existingRows, currentWebRows) {
-  const mergedMap = new Map();
-  const makeSignature = (r) =>
-    [
-      String(r.worker_name || '').trim(),
-      String(r.travel_date || '').trim(),
-      String(r.departure_time || '').trim(),
-      String(r.arrival_time || '').trim(),
-      String(r.route || '').trim(),
-      String(r.vehicle_plate || '').trim(),
-      String(r.passenger_count ?? '').trim(),
-      String(r.note || '').trim()
-    ].join('||');
-
-  const existingCounts = new Map();
-  for (const r of existingRows) {
-    const sig = makeSignature(r);
-    const occ = (existingCounts.get(sig) || 0) + 1;
-    existingCounts.set(sig, occ);
-    mergedMap.set(`${sig}##${occ}`, { ...r });
-  }
-
-  const webCounts = new Map();
-  for (const r of currentWebRows) {
-    const sig = makeSignature(r);
-    const occ = (webCounts.get(sig) || 0) + 1;
-    webCounts.set(sig, occ);
-    mergedMap.set(`${sig}##${occ}`, { ...r });
-  }
-
-  return Array.from(mergedMap.values()).sort((a, b) => {
-    const d1 = a.travel_date || '';
-    const d2 = b.travel_date || '';
-    if (d1 !== d2) return d1.localeCompare(d2);
-    return String(a.departure_time || a.arrival_time || '').localeCompare(
-      String(b.departure_time || b.arrival_time || '')
-    );
-  });
-}
-
-function getWorkbookMetaFromRows(rows) {
-  const todayISO = getTodayISO();
-  const issueDateBE = formatShortThaiDateBE(todayISO);
-
-  const validDates = rows
-    .map((r) => r.travel_date)
-    .filter(Boolean)
-    .sort();
-  const startDateBE = validDates.length > 0 ? formatShortThaiDateBE(validDates[0]) : issueDateBE;
-  const endDateBE =
-    validDates.length > 0
-      ? formatShortThaiDateBE(validDates[validDates.length - 1])
-      : issueDateBE;
-  const periodLabel = startDateBE === endDateBE ? startDateBE : `${startDateBE} - ${endDateBE}`;
-
-  const uniqueSites = Array.from(
-    new Set(rows.map((r) => (r.site_name || '').trim()).filter(Boolean))
-  );
-  const selectedFormSite = (document.getElementById('form-site')?.value || '').trim();
-  const uniqueRoutes = Array.from(
-    new Set(rows.map((r) => (r.route || '').trim()).filter(Boolean))
-  );
-  const projectTitle =
-    uniqueSites.length === 1
-      ? uniqueSites[0]
-      : uniqueSites.length > 1
-      ? uniqueSites.join(', ')
-      : selectedFormSite
-      ? selectedFormSite
-      : uniqueRoutes.length === 1
-      ? uniqueRoutes[0]
-      : 'ไลฟ์รัชดา -พระราม9';
-
-  const defaultCols = [
-    { wch: 8 },  // A: ลำดับ
-    { wch: 15 }, // B: ว/ด/ป / รายละเอียด
-    { wch: 16 }, // C: ทะเบียนรถ / โครงการ
-    { wch: 22 }, // D: จาก
-    { wch: 12 }, // E: เวลา / จำนวน
-    { wch: 14 }, // F: ถึง / หน่วย / จำนวนคน
-    { wch: 12 }, // G: ราคา/หน่วย / สรุปเที่ยว
-    { wch: 14 }, // H: จำนวนเงิน
-    { wch: 10 }, // I: เวลาถึง
-    { wch: 12 }, // J: จำนวน(คน) / วันที่
-    { wch: 20 }, // K: ลงชื่อผู้ตรวจ
-    { wch: 20 }  // L: หมายเหตุ
-  ];
-
-  return { issueDateBE, startDateBE, endDateBE, periodLabel, projectTitle, defaultCols };
-}
-
-function appendHistorySheet(workbook, rows) {
-  const wsHistory = window.XLSX.utils.json_to_sheet(
-    rows.map((r) => ({
-      worker_name: r.worker_name || '',
-      site_name: r.site_name || '',
-      travel_date: r.travel_date || '',
-      route: r.route || '',
-      departure_time: r.departure_time || '',
-      arrival_time: r.arrival_time || '',
-      vehicle_plate: r.vehicle_plate || '',
-      passenger_count:
-        r.passenger_count !== null && r.passenger_count !== undefined ? r.passenger_count : '',
-      note: r.note || ''
-    }))
-  );
-  window.XLSX.utils.book_append_sheet(workbook, wsHistory, '_CKP_HISTORY');
-}
-
-function sanitizeExcelSheetName(rawName, fallbackName) {
-  const cleaned = String(rawName || '')
-    .replace(/[\\/?*[\]:]/g, ' ')
-    .trim();
-  return (cleaned || fallbackName).slice(0, 28);
-}
-
-function getUniqueSheetName(workbook, desiredName) {
-  const base = sanitizeExcelSheetName(desiredName, 'Sheet');
-  if (!workbook.SheetNames.includes(base)) return base;
-  let counter = 2;
-  while (counter < 200) {
-    const suffix = ` (${counter})`;
-    const candidate = `${base.slice(0, 31 - suffix.length)}${suffix}`;
-    if (!workbook.SheetNames.includes(candidate)) return candidate;
-    counter += 1;
-  }
-  return `${base.slice(0, 24)}_${Date.now() % 1000}`;
-}
-
-// 1. สร้างไฟล์แบบ "สำเนา" (แยก Sheet ตามสายรถเหมือนไฟล์ สำเนา27 โซนวิภา + สูตร COUNTIF สรุปจำนวนเที่ยวท้ายตาราง)
-function buildCopyOnlyWorkbook(rows) {
-  const { projectTitle, defaultCols } = getWorkbookMetaFromRows(rows);
-  const workbook = window.XLSX.utils.book_new();
-
-  // แยก Sheet ตามเส้นทาง/โครงการเหมือนไฟล์ สำเนา27 โซนวิภา (ตั้งชื่อแท็บตามสายรถตรงๆ)
-  const routeBuckets = new Map();
-  if (rows.length === 0) {
-    routeBuckets.set('สำเนา', []);
-  } else {
-    for (const r of rows) {
-      const key = (r.route || r.site_name || '').trim() || 'ทั่วไป';
-      if (!routeBuckets.has(key)) routeBuckets.set(key, []);
-      routeBuckets.get(key).push(r);
-    }
-  }
-
-  let tabIndex = 1;
-  for (const [bucketKey, bucketRows] of routeBuckets.entries()) {
-    const singleAoa = [];
-    const singleMerges = [];
-    const singleFormulas = [];
-    const tabProject =
-      (bucketRows.find((x) => x.site_name)?.site_name || '').trim() || projectTitle;
-    appendZone6WheelBlocksToAoa(
-      singleAoa,
-      singleMerges,
-      bucketRows,
-      tabProject,
-      singleFormulas
-    );
-    const wsTab = window.XLSX.utils.aoa_to_sheet(singleAoa);
-    applyFormulasToWorksheet(wsTab, singleFormulas);
-    wsTab['!merges'] = singleMerges;
-    wsTab['!cols'] = defaultCols;
-    const sheetName = getUniqueSheetName(
-      workbook,
-      sanitizeExcelSheetName(bucketKey, `สำเนา_${tabIndex}`)
-    );
-    window.XLSX.utils.book_append_sheet(workbook, wsTab, sheetName);
-    tabIndex += 1;
-  }
-
-  // รวมสำเนาทุกสายในหน้าเดียว
-  const zoneAoa = [];
-  const zoneMerges = [];
-  const zoneFormulas = [];
-  appendZone6WheelBlocksToAoa(zoneAoa, zoneMerges, rows, projectTitle, zoneFormulas);
-  const wsZone = window.XLSX.utils.aoa_to_sheet(zoneAoa);
-  applyFormulasToWorksheet(wsZone, zoneFormulas);
-  wsZone['!merges'] = zoneMerges;
-  wsZone['!cols'] = defaultCols;
-  window.XLSX.utils.book_append_sheet(workbook, wsZone, 'รวมสำเนาทุกสาย');
-
-  appendHistorySheet(workbook, rows);
-  return workbook;
-}
-
-// 2. สร้างไฟล์แบบ "ใบเบิก" (Sheet 1: ใบเบิก + Sheet 2..N: ตั้งชื่อแท็บตามสายรถ แผ่นละ 30 แถว เหมือนต้นฉบับ 100%)
-function buildBillingOnlyWorkbook(rows, existingPricesMap = new Map()) {
-  const { issueDateBE, startDateBE, endDateBE, periodLabel, projectTitle, defaultCols } =
-    getWorkbookMetaFromRows(rows);
-  const workbook = window.XLSX.utils.book_new();
-
-  // Sheet 1: ใบเบิก (ใบเบิกผลงานผู้รับเหมา)
-  const billAoa = [];
-  const billMerges = [];
-  const billFormulas = [];
-  appendBillingSectionToAoa(
-    billAoa,
-    billMerges,
-    billFormulas,
-    rows,
-    projectTitle,
-    periodLabel,
-    issueDateBE,
-    existingPricesMap
-  );
-  const wsBill = window.XLSX.utils.aoa_to_sheet(billAoa);
-  applyFormulasToWorksheet(wsBill, billFormulas);
-  wsBill['!merges'] = billMerges;
-  wsBill['!cols'] = defaultCols;
-  window.XLSX.utils.book_append_sheet(workbook, wsBill, 'ใบเบิก');
-
-  // Sheet 2..N: แยกแผ่นละ 30 แถวตามเส้นทาง (ตั้งชื่อแท็บตามสายรถ เช่น "ไลฟ์รัชดา - พระราม9", "ไลฟ์รัชดา - พระราม9 (2)")
-  const routeBuckets = new Map();
-  if (rows.length === 0) {
-    routeBuckets.set(projectTitle || 'แผ่นที่ 1', []);
-  } else {
-    for (const r of rows) {
-      const key = (r.route || r.site_name || '').trim() || projectTitle || 'ทั่วไป';
-      if (!routeBuckets.has(key)) routeBuckets.set(key, []);
-      routeBuckets.get(key).push(r);
-    }
-  }
-
-  let pageNo = 1;
-  for (const [bucketKey, bucketRows] of routeBuckets.entries()) {
-    const pageCount = Math.max(1, Math.ceil(bucketRows.length / 30));
-    const baseTabName = sanitizeExcelSheetName(bucketKey, `แผ่นที่ ${pageNo}`);
-    for (let p = 0; p < pageCount; p++) {
-      const slice30 = bucketRows.slice(p * 30, (p + 1) * 30);
-      const pageAoa = [];
-      const pageMerges = [];
-      appendOperationPagesToAoa(
-        pageAoa,
-        pageMerges,
-        slice30,
-        projectTitle,
-        startDateBE,
-        endDateBE
-      );
-      if (pageAoa[1]) {
-        pageAoa[1][10] = pageNo; // Set แผ่นที่ X in cell K2
-      }
-      // Adjust sequence numbers for multi-page routes (31..60, 61..90)
-      if (p > 0) {
-        for (let i = 0; i < 30; i++) {
-          if (pageAoa[6 + i]) {
-            pageAoa[6 + i][0] = p * 30 + i + 1;
-          }
-        }
-      }
-      const wsPage = window.XLSX.utils.aoa_to_sheet(pageAoa);
-      wsPage['!merges'] = pageMerges;
-      wsPage['!cols'] = defaultCols;
-      const desiredTabName = p === 0 ? baseTabName : `${baseTabName.slice(0, 24)} (${p + 1})`;
-      const finalTabName = getUniqueSheetName(workbook, desiredTabName);
-      window.XLSX.utils.book_append_sheet(workbook, wsPage, finalTabName);
-      pageNo += 1;
-    }
-  }
-
-  // Sheet รวมใบเบิก + ใบบันทึกทุกแผ่นในหน้าเดียว
-  const combinedBillingAoa = [];
-  const combinedBillingMerges = [];
-  const combinedBillingFormulas = [];
-  appendBillingSectionToAoa(
-    combinedBillingAoa,
-    combinedBillingMerges,
-    combinedBillingFormulas,
-    rows,
-    projectTitle,
-    periodLabel,
-    issueDateBE,
-    existingPricesMap
-  );
-  appendOperationPagesToAoa(
-    combinedBillingAoa,
-    combinedBillingMerges,
-    rows,
-    projectTitle,
-    startDateBE,
-    endDateBE
-  );
-  const wsCombinedBilling = window.XLSX.utils.aoa_to_sheet(combinedBillingAoa);
-  applyFormulasToWorksheet(wsCombinedBilling, combinedBillingFormulas);
-  wsCombinedBilling['!merges'] = combinedBillingMerges;
-  wsCombinedBilling['!cols'] = defaultCols;
-  window.XLSX.utils.book_append_sheet(workbook, wsCombinedBilling, 'รวมใบเบิกและใบบันทึก');
-
-  appendHistorySheet(workbook, rows);
-  return workbook;
-}
-
-function downloadArrayBufferAsXlsx(buffer, filename) {
-  const blob = new Blob([buffer], {
-    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-  });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  setTimeout(() => URL.revokeObjectURL(url), 1500);
-}
-
-function getDefaultProjectTitleForSync(rows) {
-  const selectedFormSite = (document.getElementById('form-site')?.value || '').trim();
-  if (selectedFormSite) return selectedFormSite;
-  const firstSite = (rows.find((r) => (r.site_name || '').trim())?.site_name || '').trim();
-  return firstSite || '';
-}
-
-function loadScriptDynamic(src) {
-  return new Promise((resolve, reject) => {
-    const script = document.createElement('script');
-    script.src = src;
-    script.async = false;
-    script.onload = () => resolve(true);
-    script.onerror = () => reject(new Error(`โหลดไฟล์ ${src} ไม่สำเร็จ`));
-    document.head.appendChild(script);
-  });
-}
-
-let excelLibLoadPromise = null;
-async function ensureExcelLibrariesLoaded() {
-  if (typeof window.ExcelJS !== 'undefined' && window.CkpExcelSync) {
-    return true;
-  }
-  if (!excelLibLoadPromise) {
-    excelLibLoadPromise = (async () => {
-      if (typeof window.ExcelJS === 'undefined') {
-        try {
-          await loadScriptDynamic('/vendor/exceljs.min.js');
-        } catch {
-          await loadScriptDynamic('https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js');
-        }
-      }
-      if (!window.CkpExcelSync) {
-        await loadScriptDynamic('/excel-sync.js?v=2');
-      }
-    })();
-  }
-  try {
-    await excelLibLoadPromise;
-    const loaded = typeof window.ExcelJS !== 'undefined' && Boolean(window.CkpExcelSync);
-    if (!loaded) {
-      excelLibLoadPromise = null;
-      showToast(
-        'ไม่สามารถเริ่มต้นตัวอ่าน/เขียนไฟล์ Excel ได้ กรุณากด Ctrl+F5 รีเฟรชหน้าเว็บ',
-        'error'
-      );
-    }
-    return loaded;
-  } catch (err) {
-    excelLibLoadPromise = null;
-    showToast(err?.message || 'ไม่สามารถโหลดไลบรารี Excel ได้ กรุณากด Ctrl+F5', 'error');
-    return false;
-  }
-}
-
-// บันทึกแยกเฉพาะไฟล์สำเนา (รักษาไฟล์ต้นฉบับ รูปแบบ ตาราง และข้อมูลเดิม 100%)
-async function saveCopyExcelFile() {
-  if (!(await ensureExcelLibrariesLoaded())) return;
-  if (state.linkedCopyHandle) {
-    await writeWorkbookIntoHandleByType('copy', state.linkedCopyHandle, false);
-  } else {
-    openExcelLinkModalByType('copy');
-  }
-}
-
-// บันทึกแยกเฉพาะไฟล์ใบเบิก (รักษาไฟล์ต้นฉบับ รูปแบบ ตาราง และข้อมูลเดิม 100%)
-async function saveBillingExcelFile() {
-  if (!(await ensureExcelLibrariesLoaded())) return;
-  if (state.linkedBillingHandle) {
-    await writeWorkbookIntoHandleByType('billing', state.linkedBillingHandle, false);
-  } else {
-    openExcelLinkModalByType('billing');
-  }
-}
-
-async function buildNonDestructiveExcelBuffer(type, handleOrNull) {
-  const wb = new window.ExcelJS.Workbook();
-  if (handleOrNull) {
-    const existingFile = await handleOrNull.getFile();
-    if (existingFile && existingFile.size > 0) {
-      const arrayBuf = await existingFile.arrayBuffer();
+      if (!ok) return;
       try {
-        await wb.xlsx.load(arrayBuf);
-      } catch (loadErr) {
-        const err = new Error(
-          `ไม่สามารถอ่านไฟล์ "${handleOrNull.name}" ได้ (กรุณาตรวจสอบว่าเป็นไฟล์ .xlsx มาตรฐาน หรือเปิด-บันทึกเป็น .xlsx ใหม่ใน Excel ก่อน): ${loadErr?.message || ''}`
-        );
-        err.isFileReadError = true;
-        throw err;
+        const res = await apiFetch(`/api/logs/${encodeURIComponent(id)}`, { method: 'DELETE' });
+        if (res && res.storageQuota) renderQuotaUI(res.storageQuota);
+        if (state.editingLogId === id) resetForm({ keepDateAndSite: true });
+        showToast('ลบรายการเดินทางเรียบร้อยแล้ว', 'success');
+        await loadLogs();
+      } catch (err) {
+        showToast(err.message || 'ไม่สามารถลบรายการได้', 'error');
       }
     }
   }
 
-  const currentWebRows = getFilteredLogs();
-  const projectTitle = getDefaultProjectTitleForSync(currentWebRows);
-  const result =
-    type === 'copy'
-      ? window.CkpExcelSync.applyRowsToCopyWorkbookExcelJS(wb, currentWebRows, projectTitle)
-      : window.CkpExcelSync.applyRowsToBillingWorkbookExcelJS(wb, currentWebRows, projectTitle);
-
-  const outArrayBuffer = await wb.xlsx.writeBuffer();
-  return {
-    outArrayBuffer,
-    syncedCount: result.syncedCount,
-    totalFlowed: result.totalFlowed,
-    summaryText: result.summaryText,
-    webRowsCount: currentWebRows.length
-  };
-}
-
-async function writeWorkbookIntoHandleByType(type, handle, silentToast = false) {
-  const typeLabel = type === 'copy' ? 'แบบสำเนา' : 'แบบใบเบิก';
-  let lastOutBuffer = null;
-  let lastSyncMeta = null;
-  try {
-    if (handle.queryPermission) {
-      let perm = await handle.queryPermission({ mode: 'readwrite' });
-      if (perm !== 'granted' && handle.requestPermission) {
-        perm = await handle.requestPermission({ mode: 'readwrite' });
-      }
-      if (perm !== 'granted') {
-        showToast(`ไม่ได้รับสิทธิ์เขียนทับไฟล์${typeLabel} กรุณากดอนุญาตสิทธิ์`, 'warning');
-        return false;
-      }
-    }
-
-    const built = await buildNonDestructiveExcelBuffer(type, handle);
-    lastOutBuffer = built.outArrayBuffer;
-    lastSyncMeta = built;
-
-    const writable = await handle.createWritable();
-    await writable.write(built.outArrayBuffer);
-    await writable.close();
-
-    await saveLinkedExcelHandleByType(type, handle);
-    if (!silentToast) {
-      if (built.syncedCount > 0) {
-        showToast(
-          `ไหลข้อมูลเข้าไฟล์${typeLabel} "${handle.name}" สำเร็จ! (+${built.syncedCount} รายการ)`,
-          'success',
-          built.summaryText
-            ? `เพิ่มลงในแท็บ ${built.summaryText} (ข้อมูลเดิมในไฟล์อยู่ครบ 100%)`
-            : `อัปเดตข้อมูลเรียบร้อยแล้ว (ข้อมูลเดิมในไฟล์อยู่ครบ 100%)`
-        );
-      } else {
-        showToast(
-          `ข้อมูลในไฟล์${typeLabel} "${handle.name}" ตรงกับหน้าเว็บครบอยู่แล้ว`,
-          'info',
-          `ไม่มีรายการใหม่เพิ่มเติม (ข้อมูลเดิมทั้งหมดในไฟล์ยังคงอยู่ครบ 100%)`
-        );
-      }
-    }
-    return true;
-  } catch (err) {
-    if (err?.isFileReadError) {
-      showToast(err.message, 'error');
-      return false;
-    }
-
-    const msg = String(err?.message || err || '');
-    const isLockOrStateErr =
-      err?.name === 'NoModificationAllowedError' ||
-      err?.name === 'InvalidStateError' ||
-      err?.name === 'NotAllowedError' ||
-      msg.toLowerCase().includes('lock') ||
-      msg.toLowerCase().includes('used by another');
-
-    if (isLockOrStateErr) {
-      openCustomModal(`
-        <div class="p-6 space-y-4">
-          <div class="flex items-start gap-3.5">
-            <div class="w-12 h-12 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center text-xl shrink-0">
-              <i class="fa-solid fa-file-circle-exclamation"></i>
-            </div>
-            <div>
-              <h3 class="text-base font-bold text-slate-900">ยังไม่สามารถเขียนทับไฟล์${escapeHtml(
-                typeLabel
-              )}ได้</h3>
-              <p class="text-xs sm:text-sm text-slate-600 mt-1 leading-relaxed">
-                ไฟล์ <strong>"${escapeHtml(
-                  handle.name
-                )}"</strong> อาจยังเปิดค้างอยู่ใน Excel / OneDrive หรือถูกล็อกสิทธิ์โดย Windows
-              </p>
-              <p class="text-[11px] text-slate-500 mt-1">
-                หากปิด Excel แล้วยังกดลองซ้ำไม่ได้ สามารถกด <strong>"บันทึกเป็นไฟล์ใหม่ (Save As)"</strong> หรือ <strong>"ดาวน์โหลด .xlsx"</strong> ได้เลย (ข้อมูลเดิม+ใหม่รวมไว้ให้ครบ 100% แล้วครับ)
-              </p>
-            </div>
-          </div>
-          <div class="pt-3 border-t border-slate-100 flex flex-wrap justify-end gap-2">
-            <button
-              type="button"
-              id="modal-btn-cancel"
-              class="min-h-[40px] px-3.5 py-2 rounded-xl border border-slate-300 bg-white text-slate-700 text-xs font-medium cursor-pointer"
-            >
-              ปิดหน้าต่าง
-            </button>
-            ${
-              lastOutBuffer
-                ? `<button
-                    type="button"
-                    id="modal-btn-download-fallback"
-                    class="min-h-[40px] px-3.5 py-2 rounded-xl border border-sky-300 bg-sky-50 hover:bg-sky-100 text-sky-800 text-xs font-semibold cursor-pointer"
-                  >
-                    <i class="fa-solid fa-download mr-1"></i>ดาวน์โหลด .xlsx
-                  </button>`
-                : ''
-            }
-            ${
-              lastOutBuffer && typeof window.showSaveFilePicker === 'function'
-                ? `<button
-                    type="button"
-                    id="modal-btn-saveas-fallback"
-                    class="min-h-[40px] px-3.5 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold cursor-pointer"
-                  >
-                    <i class="fa-solid fa-file-export mr-1"></i>บันทึกเป็นไฟล์ใหม่ (Save As)
-                  </button>`
-                : ''
-            }
-            <button
-              type="button"
-              id="modal-btn-retry-write"
-              class="min-h-[40px] px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold cursor-pointer"
-            >
-              ลองไหลข้อมูลเข้าไฟล์เดิมอีกครั้ง
-            </button>
-          </div>
-        </div>
-      `);
-      document.getElementById('modal-btn-cancel')?.addEventListener('click', closeCustomModal);
-      document.getElementById('modal-btn-download-fallback')?.addEventListener('click', () => {
-        if (lastOutBuffer) {
-          const fallbackName = handle.name || `export_${type}.xlsx`;
-          downloadArrayBufferAsXlsx(lastOutBuffer, fallbackName);
-          closeCustomModal();
-          showToast(
-            `ดาวน์โหลดไฟล์สำเร็จ`,
-            'success',
-            lastSyncMeta?.summaryText
-              ? `${fallbackName} (${lastSyncMeta.summaryText})`
-              : fallbackName
-          );
-        }
-      });
-      document.getElementById('modal-btn-saveas-fallback')?.addEventListener('click', async () => {
-        closeCustomModal();
-        try {
-          const newHandle = await window.showSaveFilePicker({
-            suggestedName: handle.name || `export_${type}.xlsx`,
-            types: [
-              {
-                description: 'Excel Workbook (.xlsx)',
-                accept: {
-                  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx']
-                }
-              }
-            ]
-          });
-          if (newHandle && lastOutBuffer) {
-            const w = await newHandle.createWritable();
-            await w.write(lastOutBuffer);
-            await w.close();
-            await saveLinkedExcelHandleByType(type, newHandle);
-            showToast(
-              `บันทึกและผูกไฟล์ใหม่ "${newHandle.name}" สำเร็จ!`,
-              'success',
-              lastSyncMeta?.summaryText || 'บันทึกข้อมูลเรียบร้อยแล้ว'
-            );
-          }
-        } catch (saveErr) {
-          if (saveErr?.name !== 'AbortError') {
-            showToast(saveErr?.message || 'ยกเลิกการบันทึกไฟล์ใหม่', 'info');
-          }
-        }
-      });
-      document.getElementById('modal-btn-retry-write')?.addEventListener('click', async (e) => {
-        const btn = e.currentTarget;
-        if (btn) {
-          btn.disabled = true;
-          btn.textContent = 'กำลังลองเขียนทับ...';
-        }
-        await new Promise((r) => setTimeout(r, 150));
-        closeCustomModal();
-        await writeWorkbookIntoHandleByType(type, handle, silentToast);
-      });
-      return false;
-    }
-
-    showToast(err.message || `ไม่สามารถเขียนข้อมูลลงไฟล์${typeLabel}ได้`, 'error');
-    return false;
-  }
-}
-
-async function downloadWorkbookByType(type) {
-  if (!(await ensureExcelLibrariesLoaded())) return;
-  try {
-    const dateSuffix = state.filterDate || getTodayISO();
-    const built = await buildNonDestructiveExcelBuffer(type, null);
-    const filename =
-      type === 'copy'
-        ? `สำเนา_บันทึกรายการรถ6ล้อ_${dateSuffix}.xlsx`
-        : `ใบเบิก_และใบบันทึกปฏิบัติงานรถ6ล้อ_${dateSuffix}.xlsx`;
-    downloadArrayBufferAsXlsx(built.outArrayBuffer, filename);
-    showToast(
-      `ดาวน์โหลดไฟล์${type === 'copy' ? 'สำเนา' : 'ใบเบิก'}สำเร็จ (${built.webRowsCount} รายการ)`,
-      'success',
-      filename
-    );
-  } catch (err) {
-    showToast(err?.message || 'ไม่สามารถสร้างไฟล์ Excel ได้', 'error');
-  }
-}
-
-// Modal สำหรับเลือกผูกไฟล์ 1. แบบสำเนา หรือ 2. แบบใบเบิก
-function openExcelLinkModalByType(type) {
-  const isCopy = type === 'copy';
-  const titleText = isCopy
-    ? 'ผูกไฟล์ที่ 1: แบบ "สำเนา" (บันทึกรายการรถ 6 ล้อ + สรุปเที่ยว)'
-    : 'ผูกไฟล์ที่ 2: แบบ "ใบเบิก" (ใบเบิกผู้รับเหมา + ใบบันทึกปฏิบัติงาน)';
-  const subtitleText = isCopy
-    ? 'เช่น ไฟล์ "สำเนา27 โซนวิภา ( 1 - 15 ส.ค. 69 ).xlsx" — เมื่อผูกแล้ว กดปุ่มส่งออกข้อมูลจะไหลต่อท้ายเข้าไฟล์สำเนานี้ทันที'
-    : 'เช่น ไฟล์ "ใบเบิกไลฟ์รัชดา-พระราม9 ( 1-15-6).xlsx" — เมื่อผูกแล้ว กดปุ่มส่งออกข้อมูลจะไหลเข้าหน้าใบเบิกและใบบันทึกของไฟล์นี้ทันที';
-  const currentHandle = isCopy ? state.linkedCopyHandle : state.linkedBillingHandle;
-
-  const supportsFileSystemAccess =
-    typeof window.showOpenFilePicker === 'function' &&
-    typeof window.showSaveFilePicker === 'function';
-
-  if (!supportsFileSystemAccess) {
-    downloadWorkbookByType(type);
-    return;
-  }
-
-  openCustomModal(`
-    <div class="p-6 space-y-4">
-      <div class="flex items-start gap-3.5">
-        <div class="w-12 h-12 rounded-2xl ${
-          isCopy ? 'bg-amber-100 text-amber-700' : 'bg-sky-100 text-sky-700'
-        } flex items-center justify-center text-xl shrink-0">
-          <i class="fa-solid fa-file-excel"></i>
-        </div>
-        <div>
-          <h3 class="text-base sm:text-lg font-bold text-slate-900">
-            ${escapeHtml(titleText)}
-          </h3>
-          <p class="text-xs sm:text-sm text-slate-600 mt-1 leading-relaxed">
-            ${escapeHtml(subtitleText)}
-          </p>
-          ${
-            currentHandle && currentHandle.name
-              ? `<p class="mt-2 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-semibold">
-                  <i class="fa-solid fa-check-circle text-emerald-600"></i>
-                  <span>ไฟล์ที่ผูกอยู่ปัจจุบัน: <strong>${escapeHtml(currentHandle.name)}</strong></span>
-                </p>`
-              : ''
-          }
-        </div>
-      </div>
-
-      <div class="space-y-2.5 pt-2">
-        ${
-          currentHandle && currentHandle.name
-            ? `<button
-                type="button"
-                id="modal-btn-flow-current"
-                class="w-full min-h-[48px] px-4 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs sm:text-sm font-bold shadow-sm flex items-center justify-between gap-3 transition cursor-pointer"
-              >
-                <span class="flex items-center gap-2.5 text-left">
-                  <i class="fa-solid fa-bolt text-amber-300 text-base"></i>
-                  <span>ไหลข้อมูลเข้าไฟล์เดิม "${escapeHtml(currentHandle.name)}" ทันที</span>
-                </span>
-                <i class="fa-solid fa-chevron-right text-xs"></i>
-              </button>`
-            : ''
-        }
-
-        <button
-          type="button"
-          id="modal-btn-pick-existing"
-          class="w-full min-h-[48px] px-4 py-3 rounded-xl ${
-            isCopy
-              ? 'bg-amber-600 hover:bg-amber-700 text-white'
-              : 'bg-sky-600 hover:bg-sky-700 text-white'
-          } text-xs sm:text-sm font-bold shadow-sm flex items-center justify-between gap-3 transition cursor-pointer"
-        >
-          <span class="flex items-center gap-2.5 text-left">
-            <i class="fa-solid fa-folder-open text-base"></i>
-            <span>1. เลือกไฟล์ Excel "${isCopy ? 'สำเนา' : 'ใบเบิก'}" เดิมที่มีอยู่ในเครื่อง</span>
-          </span>
-          <i class="fa-solid fa-chevron-right text-xs"></i>
-        </button>
-
-        <button
-          type="button"
-          id="modal-btn-create-new"
-          class="w-full min-h-[48px] px-4 py-3 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-white text-xs sm:text-sm font-bold shadow-sm flex items-center justify-between gap-3 transition cursor-pointer"
-        >
-          <span class="flex items-center gap-2.5 text-left">
-            <i class="fa-solid fa-file-circle-plus text-amber-400 text-base"></i>
-            <span>2. สร้างไฟล์ Excel "${isCopy ? 'สำเนา' : 'ใบเบิก'}" หลักใหม่ไว้ในเครื่อง</span>
-          </span>
-          <i class="fa-solid fa-chevron-right text-xs"></i>
-        </button>
-
-        <button
-          type="button"
-          id="modal-btn-download-once"
-          class="w-full min-h-[44px] px-4 py-2.5 rounded-xl border border-slate-300 bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs sm:text-sm font-semibold flex items-center justify-center gap-2 transition cursor-pointer"
-        >
-          <i class="fa-solid fa-download"></i>
-          <span>ดาวน์โหลดไฟล์ "${isCopy ? 'สำเนา' : 'ใบเบิก'}" แยกเป็นไฟล์ .xlsx ทันที</span>
-        </button>
-      </div>
-
-      <div class="pt-3 border-t border-slate-100 flex justify-end">
-        <button
-          type="button"
-          id="modal-btn-cancel"
-          class="min-h-[40px] px-4 py-1.5 rounded-xl border border-slate-300 bg-white text-slate-600 text-xs font-medium cursor-pointer"
-        >
-          ปิดหน้าต่าง
-        </button>
-      </div>
-    </div>
-  `);
-
-  document.getElementById('modal-btn-cancel')?.addEventListener('click', closeCustomModal);
-
-  document.getElementById('modal-btn-flow-current')?.addEventListener('click', async () => {
-    closeCustomModal();
-    if (currentHandle) {
-      await writeWorkbookIntoHandleByType(type, currentHandle, false);
-    }
-  });
-
-  document.getElementById('modal-btn-pick-existing')?.addEventListener('click', async () => {
-    closeCustomModal();
+  async function handleClearAllLogs() {
+    const ok = await confirmModal({
+      title: 'ยืนยันการล้างประวัติการเดินทางทั้งหมด',
+      message: 'การดำเนินการนี้จะลบรายการบันทึกการเดินทาง (travel_logs) ทั้งหมดออกจากฐานข้อมูลอย่างถาวร (ข้อมูลหลักคนขับ รถ โครงการ เส้นทาง จะยังคงอยู่) แนะนำให้ส่งออกไฟล์ Excel สำรองก่อนดำเนินการ',
+      confirmText: 'ล้างรายการทั้งหมด',
+      danger: true
+    });
+    if (!ok) return;
     try {
-      const [handle] = await window.showOpenFilePicker({
-        multiple: false,
-        types: [
-          {
-            description: 'Excel Workbook (.xlsx)',
-            accept: {
-              'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx']
-            }
-          }
-        ]
-      });
-      if (handle) {
-        await writeWorkbookIntoHandleByType(type, handle, false);
-      }
+      const res = await apiFetch('/api/logs/clear', { method: 'POST' });
+      if (res && res.storageQuota) renderQuotaUI(res.storageQuota);
+      showToast(res.message || 'ล้างรายการเดินทางทั้งหมดแล้ว', 'success');
+      await loadLogs();
     } catch (err) {
-      if (err?.name !== 'AbortError') {
-        showToast('ยกเลิกการเลือกไฟล์ Excel', 'info');
-      }
+      showToast(err.message || 'ไม่สามารถล้างข้อมูลได้', 'error');
     }
-  });
+  }
 
-  document.getElementById('modal-btn-create-new')?.addEventListener('click', async () => {
-    closeCustomModal();
+  // ==========================================================================
+  // 9. Dual ExcelJS Export Engine (สำเนาโซน & ใบเบิกโครงการ)
+  // ==========================================================================
+  async function downloadWorkbook(wb, filename) {
+    const buffer = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buffer], {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+  }
+
+  function findSiteMeta(siteName) {
+    return state.sites.find((s) => s.site_name === siteName) || null;
+  }
+
+  async function handleExportZoneCopy() {
+    if (typeof window.ExcelJS === 'undefined' || !window.CkpExcel) {
+      showToast('ไม่พบไลบรารี ExcelJS กรุณารีเฟรชหน้าเว็บ', 'error');
+      return;
+    }
+
+    const btn = $('btn-export-zone');
+    btn.disabled = true;
     try {
-      const dateSuffix = state.filterDate || getTodayISO();
-      const suggestedName = isCopy
-        ? `สำเนา_บันทึกรายการรถ6ล้อ_${dateSuffix}.xlsx`
-        : `ใบเบิก_และใบบันทึกปฏิบัติงานรถ6ล้อ_${dateSuffix}.xlsx`;
-      const handle = await window.showSaveFilePicker({
-        suggestedName,
-        types: [
-          {
-            description: 'Excel Workbook (.xlsx)',
-            accept: {
-              'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx']
-            }
-          }
-        ]
-      });
-      if (handle) {
-        await writeWorkbookIntoHandleByType(type, handle, false);
-      }
-    } catch (err) {
-      if (err?.name !== 'AbortError') {
-        showToast('ยกเลิกการสร้างไฟล์ Excel', 'info');
-      }
-    }
-  });
+      const f = getFilterParams();
+      // ดึงข้อมูลจาก travel_logs ตามช่วงวันที่ (และไซต์งานหากกรองไว้)
+      const params = new URLSearchParams();
+      if (f.date_from) params.set('date_from', f.date_from);
+      if (f.date_to) params.set('date_to', f.date_to);
+      if (f.site_name) params.set('site_name', f.site_name);
+      if (f.trip_type) params.set('trip_type', f.trip_type);
+      const logs = await apiFetch(`/api/logs${params.toString() ? `?${params.toString()}` : ''}`);
 
-  document.getElementById('modal-btn-download-once')?.addEventListener('click', () => {
-    closeCustomModal();
-    downloadWorkbookByType(type);
-  });
-}
+      const distinctSites = [...new Set(logs.map((l) => (l.site_name || '').trim()).filter(Boolean))];
+      const siteName = f.site_name || (distinctSites.length === 1 ? distinctSites[0] : '');
+      const siteMeta = siteName ? findSiteMeta(siteName) : null;
+      const zoneName = siteMeta ? siteMeta.zone_name : '';
 
-// ปุ่มหลัก: ไหลข้อมูลเข้าไฟล์ที่ผูกไว้ (ทั้งไฟล์สำเนา และ/หรือ ไฟล์ใบเบิก ในปุ่มเดียว!)
-async function exportLogsToExcel() {
-  if (!(await ensureExcelLibrariesLoaded())) return;
+      const wb = window.CkpExcel.buildZoneCopyWorkbook(window.ExcelJS, logs, { siteName, zoneName });
+      const { start, end } = window.CkpExcel.dateRangeOf(logs, f.date_from, f.date_to);
+      const filename = window.CkpExcel.zoneCopyFilename({ zoneName, siteName, start, end });
 
-  const hasCopy = Boolean(state.linkedCopyHandle);
-  const hasBilling = Boolean(state.linkedBillingHandle);
-
-  if (hasCopy && hasBilling) {
-    const okCopy = await writeWorkbookIntoHandleByType('copy', state.linkedCopyHandle, true);
-    const okBilling = await writeWorkbookIntoHandleByType('billing', state.linkedBillingHandle, true);
-    if (okCopy && okBilling) {
+      await downloadWorkbook(wb, filename);
       showToast(
-        'ไหลข้อมูลเข้าทั้ง 2 ไฟล์ (สำเนา + ใบเบิก) สำเร็จ!',
+        `ส่งออกไฟล์สำเนาโซนสำเร็จ: ${filename} (${wb.worksheets.length} ชีต, ${logs.length} เที่ยว)`,
         'success',
-        `อัปเดตไฟล์ "${state.linkedCopyHandle.name}" และ "${state.linkedBillingHandle.name}" เรียบร้อยแล้ว`
+        4500
       );
+    } catch (err) {
+      showToast(`ส่งออกไฟล์สำเนาโซนไม่สำเร็จ: ${err.message}`, 'error', 5000);
+    } finally {
+      btn.disabled = false;
     }
-    return;
   }
 
-  if (hasCopy) {
-    await writeWorkbookIntoHandleByType('copy', state.linkedCopyHandle, false);
-    return;
+  async function runBillingExport({ siteName, dateFrom, dateTo, issueDate }) {
+    const params = new URLSearchParams();
+    if (siteName) params.set('site_name', siteName);
+    if (dateFrom) params.set('date_from', dateFrom);
+    if (dateTo) params.set('date_to', dateTo);
+
+    const logs = await apiFetch(`/api/logs${params.toString() ? `?${params.toString()}` : ''}`);
+    const wb = window.CkpExcel.buildBillingWorkbook(window.ExcelJS, logs, {
+      siteName,
+      dateFrom,
+      dateTo,
+      issueDate: issueDate || todayIso()
+    });
+    const { start, end } = window.CkpExcel.dateRangeOf(logs, dateFrom, dateTo);
+    const filename = window.CkpExcel.billingFilename({ siteName, start, end });
+
+    await downloadWorkbook(wb, filename);
+    showToast(
+      `ส่งออกไฟล์ใบเบิกโครงการสำเร็จ: ${filename} (${wb.worksheets.length} ชีต, ${logs.length} เที่ยว)`,
+      'success',
+      4500
+    );
   }
 
-  if (hasBilling) {
-    await writeWorkbookIntoHandleByType('billing', state.linkedBillingHandle, false);
-    return;
-  }
+  async function handleExportBilling() {
+    if (typeof window.ExcelJS === 'undefined' || !window.CkpExcel) {
+      showToast('ไม่พบไลบรารี ExcelJS กรุณารีเฟรชหน้าเว็บ', 'error');
+      return;
+    }
 
-  // หากยังไม่ได้ผูกไฟล์ใดเลย ให้เปิดหน้าต่างเลือกผูกไฟล์ทั้ง 2 แบบ
-  openCustomModal(`
-    <div class="p-6 space-y-4">
-      <div class="flex items-start gap-3.5">
-        <div class="w-12 h-12 rounded-2xl bg-emerald-100 text-emerald-700 flex items-center justify-center text-xl shrink-0">
-          <i class="fa-solid fa-file-excel"></i>
-        </div>
-        <div>
-          <h3 class="text-base sm:text-lg font-bold text-slate-900">
-            เลือกผูกไฟล์ Excel 2 แบบฟอร์ม (1. แบบสำเนา / 2. แบบใบเบิก)
-          </h3>
-          <p class="text-xs sm:text-sm text-slate-600 mt-1 leading-relaxed">
-            กรุณาเลือกผูกไฟล์ที่ต้องการอย่างน้อย 1 ไฟล์ (หรือผูกทั้ง 2 ไฟล์) เพื่อให้เวลากดปุ่มนี้ ข้อมูลจะ<strong>ไหลเข้าไฟล์เดิมที่ผูกไว้โดยอัตโนมัติ</strong>ครับ
-          </p>
-        </div>
-      </div>
+    const f = getFilterParams();
+    // รวมรายชื่อโครงการจากข้อมูลหลักและจากบันทึกปัจจุบัน
+    const siteSet = new Set(state.sites.map((s) => s.site_name).filter(Boolean));
+    for (const l of state.logs) {
+      if (l.site_name) siteSet.add(l.site_name);
+    }
+    const siteOptions = [...siteSet];
 
-      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
-        <button
-          type="button"
-          id="modal-choose-link-copy"
-          class="p-4 rounded-2xl border-2 border-amber-300 bg-amber-50/70 hover:bg-amber-100 text-left space-y-1.5 transition cursor-pointer"
-        >
-          <div class="flex items-center justify-between text-amber-800 font-bold text-sm">
-            <span><i class="fa-solid fa-link mr-1.5"></i>1. ผูกไฟล์แบบ "สำเนา"</span>
-            <i class="fa-solid fa-chevron-right text-xs"></i>
-          </div>
-          <p class="text-xs text-amber-900/80">
-            บันทึกรายการรถ 6 ล้อ รับ-ส่งคนงาน + สรุปจำนวนเที่ยวคนขับ/ทะเบียนรถ
-          </p>
-        </button>
+    // หากเลือกไซต์งานในตัวกรองแล้ว หรือเปิด Modal เพื่อยืนยันโครงการและวันที่ออกใบเบิก
+    const preselected = f.site_name || (siteOptions.length === 1 ? siteOptions[0] : '');
 
-        <button
-          type="button"
-          id="modal-choose-link-billing"
-          class="p-4 rounded-2xl border-2 border-sky-300 bg-sky-50/70 hover:bg-sky-100 text-left space-y-1.5 transition cursor-pointer"
-        >
-          <div class="flex items-center justify-between text-sky-800 font-bold text-sm">
-            <span><i class="fa-solid fa-link mr-1.5"></i>2. ผูกไฟล์แบบ "ใบเบิก"</span>
-            <i class="fa-solid fa-chevron-right text-xs"></i>
-          </div>
-          <p class="text-xs text-sky-900/80">
-            ใบเบิกผลงานผู้รับเหมา + ใบบันทึกการปฏิบัติงานรถ 6 ล้อ (แผ่นที่ 1..N)
-          </p>
-        </button>
-      </div>
-
-      <div class="pt-2">
-        <button
-          type="button"
-          id="modal-download-both-now"
-          class="w-full min-h-[44px] px-4 py-2.5 rounded-xl border border-slate-300 bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs sm:text-sm font-semibold flex items-center justify-center gap-2 transition cursor-pointer"
-        >
-          <i class="fa-solid fa-download"></i>
-          <span>ดาวน์โหลดทั้ง 2 ไฟล์ (สำเนา + ใบเบิก) แยกเป็น .xlsx ทันที</span>
-        </button>
-      </div>
-
-      <div class="pt-3 border-t border-slate-100 flex justify-end">
-        <button
-          type="button"
-          id="modal-btn-cancel"
-          class="min-h-[40px] px-4 py-1.5 rounded-xl border border-slate-300 bg-white text-slate-600 text-xs font-medium cursor-pointer"
-        >
-          ปิดหน้าต่าง
-        </button>
-      </div>
-    </div>
-  `);
-
-  document.getElementById('modal-btn-cancel')?.addEventListener('click', closeCustomModal);
-  document.getElementById('modal-choose-link-copy')?.addEventListener('click', () => {
-    closeCustomModal();
-    openExcelLinkModalByType('copy');
-  });
-  document.getElementById('modal-choose-link-billing')?.addEventListener('click', () => {
-    closeCustomModal();
-    openExcelLinkModalByType('billing');
-  });
-  document.getElementById('modal-download-both-now')?.addEventListener('click', () => {
-    closeCustomModal();
-    downloadWorkbookByType('copy');
-    setTimeout(() => downloadWorkbookByType('billing'), 350);
-  });
-}
-
-// ============================================================================
-// BACK-OFFICE MANAGEMENT (4 SECTIONS - ADMIN ONLY)
-// ============================================================================
-
-function populateGpsSettingsForm() {
-  const s = state.gpsSettings;
-  if (!s) return;
-
-  const mockToggle = document.getElementById('setting-mock-mode');
-  const maxLimitInput = document.getElementById('setting-max-limit');
-  const apiUrlInput = document.getElementById('setting-api-url');
-  const apiUserInput = document.getElementById('setting-api-username');
-  const apiKeyInput = document.getElementById('setting-api-key');
-  const modePill = document.getElementById('gps-mode-status-pill');
-
-  const isMock = String(s.cartrack_mock_mode).toLowerCase() !== 'false';
-  if (mockToggle) mockToggle.checked = isMock;
-  if (maxLimitInput) maxLimitInput.value = s.max_storage_limit || '100';
-  if (apiUrlInput) apiUrlInput.value = s.cartrack_api_url || '';
-  if (apiUserInput) apiUserInput.value = s.cartrack_username || '';
-  if (apiKeyInput) apiKeyInput.value = s.cartrack_api_key || '';
-
-  if (modePill) {
-    modePill.className = isMock
-      ? 'px-3 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-300'
-      : 'px-3 py-1 rounded-full text-xs font-bold bg-sky-100 text-sky-800 border border-sky-300';
-    modePill.textContent = isMock
-      ? 'โหมดจำลองข้อมูล (Mock GPS Mode)'
-      : 'โหมดเชื่อมต่อจริง (Cartrack Live API)';
-  }
-}
-
-function renderBackOfficeLists() {
-  if (state.user?.role !== 'admin') return;
-  populateGpsSettingsForm();
-
-  // 1. Workers
-  const workersListEl = document.getElementById('master-workers-list');
-  const badgeWorkers = document.getElementById('badge-count-workers');
-  if (badgeWorkers) badgeWorkers.textContent = `${state.allWorkers.length} คน`;
-
-  if (workersListEl) {
-    workersListEl.innerHTML = state.allWorkers
-      .map(
-        (w) => `
-        <div class="p-3.5 hover:bg-slate-50 flex items-center justify-between gap-2 transition">
-          <div class="min-w-0 flex-1">
-            <div class="flex items-center gap-2">
-              <span class="font-semibold text-sm ${
-                w.active ? 'text-slate-900' : 'text-slate-400 line-through'
-              } truncate">${escapeHtml(w.name)}</span>
-              <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold ${
-                w.active ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-600'
-              }">
-                ${w.active ? 'เปิดใช้งาน' : 'ปิดใช้งาน'}
-              </span>
-            </div>
-            <p class="text-xs text-slate-500 truncate mt-0.5">
-              <i class="fa-solid fa-map-pin text-indigo-500 mr-1 text-[10px]"></i>
-              ไซต์ประจำ: ${
-                w.default_route
-                  ? `<strong class="text-slate-700">${escapeHtml(w.default_route)}</strong>`
-                  : '<span class="italic text-slate-400">ไม่ได้กำหนด</span>'
-              }
-            </p>
-          </div>
-
-          <div class="flex items-center gap-1.5 shrink-0">
-            <button
-              type="button"
-              data-worker-toggle="${w.id}"
-              class="px-2 py-1 rounded-lg border text-xs font-semibold transition cursor-pointer ${
-                w.active
-                  ? 'bg-emerald-50 border-emerald-300 text-emerald-700 hover:bg-emerald-100'
-                  : 'bg-slate-100 border-slate-300 text-slate-500 hover:bg-slate-200'
-              }"
-            >
-              <i class="fa-solid ${w.active ? 'fa-toggle-on text-sm' : 'fa-toggle-off text-sm'}"></i>
-            </button>
-
-            <button
-              type="button"
-              data-worker-edit="${w.id}"
-              class="p-1.5 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 text-xs transition cursor-pointer"
-            >
-              <i class="fa-solid fa-pen"></i>
-            </button>
-
-            <button
-              type="button"
-              data-worker-delete="${w.id}"
-              class="p-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs transition cursor-pointer"
-            >
-              <i class="fa-solid fa-trash"></i>
-            </button>
-          </div>
-        </div>
+    openModal(
       `
-      )
-      .join('');
-
-    workersListEl.querySelectorAll('[data-worker-toggle]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const id = Number(btn.getAttribute('data-worker-toggle'));
-        const item = state.allWorkers.find((x) => x.id === id);
-        if (item) toggleMasterItemActive('workers', item);
-      });
-    });
-
-    workersListEl.querySelectorAll('[data-worker-edit]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const id = Number(btn.getAttribute('data-worker-edit'));
-        const item = state.allWorkers.find((x) => x.id === id);
-        if (item) openEditWorkerModal(item);
-      });
-    });
-
-    workersListEl.querySelectorAll('[data-worker-delete]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const id = Number(btn.getAttribute('data-worker-delete'));
-        const item = state.allWorkers.find((x) => x.id === id);
-        if (item) confirmDeleteMasterItem('workers', item.id, item.name);
-      });
-    });
-  }
-
-  // 1B. Sites (ไซต์งาน / โครงการ หัวตาราง)
-  const sitesListEl = document.getElementById('master-sites-list');
-  const badgeSites = document.getElementById('badge-count-sites');
-  if (badgeSites) badgeSites.textContent = `${state.allSites.length} ไซต์งาน`;
-
-  if (sitesListEl) {
-    sitesListEl.innerHTML = state.allSites
-      .map((s) => {
-        const logsUsingCount = state.logs.filter((l) => (l.site_name || '') === s.name).length;
-        return `
-        <div class="p-3.5 hover:bg-slate-50 flex items-center justify-between gap-2 transition">
-          <div class="min-w-0 flex-1">
-            <div class="flex items-center gap-2">
-              <span class="font-semibold text-sm ${
-                s.active ? 'text-slate-900' : 'text-slate-400 line-through'
-              } truncate">${escapeHtml(s.name)}</span>
-              <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold ${
-                s.active ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-600'
-              }">
-                ${s.active ? 'เปิดใช้งาน' : 'ปิดใช้งาน'}
-              </span>
-            </div>
-            <p class="text-[11px] text-slate-500 mt-0.5">
-              บันทึกในไซต์งานนี้: <strong>${logsUsingCount} รายการ</strong>
-            </p>
-          </div>
-
-          <div class="flex items-center gap-1.5 shrink-0">
-            <button
-              type="button"
-              data-site-toggle="${s.id}"
-              class="px-2 py-1 rounded-lg border text-xs font-semibold transition cursor-pointer ${
-                s.active
-                  ? 'bg-emerald-50 border-emerald-300 text-emerald-700 hover:bg-emerald-100'
-                  : 'bg-slate-100 border-slate-300 text-slate-500 hover:bg-slate-200'
-              }"
-            >
-              <i class="fa-solid ${s.active ? 'fa-toggle-on text-sm' : 'fa-toggle-off text-sm'}"></i>
-            </button>
-
-            <button
-              type="button"
-              data-site-edit="${s.id}"
-              class="p-1.5 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 text-xs transition cursor-pointer"
-            >
-              <i class="fa-solid fa-pen"></i>
-            </button>
-
-            <button
-              type="button"
-              data-site-delete="${s.id}"
-              class="p-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs transition cursor-pointer"
-            >
-              <i class="fa-solid fa-trash"></i>
-            </button>
-          </div>
-        </div>
-      `;
-      })
-      .join('');
-
-    sitesListEl.querySelectorAll('[data-site-toggle]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const id = Number(btn.getAttribute('data-site-toggle'));
-        const item = state.allSites.find((x) => x.id === id);
-        if (item) toggleMasterItemActive('sites', item);
-      });
-    });
-
-    sitesListEl.querySelectorAll('[data-site-edit]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const id = Number(btn.getAttribute('data-site-edit'));
-        const item = state.allSites.find((x) => x.id === id);
-        if (item) openEditSiteModal(item);
-      });
-    });
-
-    sitesListEl.querySelectorAll('[data-site-delete]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const id = Number(btn.getAttribute('data-site-delete'));
-        const item = state.allSites.find((x) => x.id === id);
-        if (item) confirmDeleteMasterItem('sites', item.id, item.name);
-      });
-    });
-  }
-
-  // 2. Routes
-  const routesListEl = document.getElementById('master-routes-list');
-  const badgeRoutes = document.getElementById('badge-count-routes');
-  if (badgeRoutes) badgeRoutes.textContent = `${state.allRoutes.length} เส้นทาง`;
-
-  if (routesListEl) {
-    routesListEl.innerHTML = state.allRoutes
-      .map((r) => {
-        const workersUsingCount = state.allWorkers.filter(
-          (w) => w.default_route === r.name
-        ).length;
-        return `
-        <div class="p-3.5 hover:bg-slate-50 flex items-center justify-between gap-2 transition">
-          <div class="min-w-0 flex-1">
-            <div class="flex items-center gap-2">
-              <span class="font-semibold text-sm ${
-                r.active ? 'text-slate-900' : 'text-slate-400 line-through'
-              } truncate">${escapeHtml(r.name)}</span>
-              <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold ${
-                r.active ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-600'
-              }">
-                ${r.active ? 'เปิดใช้งาน' : 'ปิดใช้งาน'}
-              </span>
-            </div>
-            <p class="text-[11px] text-slate-500 mt-0.5">
-              เป็นไซต์ประจำของคนงาน: <strong>${workersUsingCount} คน</strong>
-            </p>
-          </div>
-
-          <div class="flex items-center gap-1.5 shrink-0">
-            <button
-              type="button"
-              data-route-toggle="${r.id}"
-              class="px-2 py-1 rounded-lg border text-xs font-semibold transition cursor-pointer ${
-                r.active
-                  ? 'bg-emerald-50 border-emerald-300 text-emerald-700 hover:bg-emerald-100'
-                  : 'bg-slate-100 border-slate-300 text-slate-500 hover:bg-slate-200'
-              }"
-            >
-              <i class="fa-solid ${r.active ? 'fa-toggle-on text-sm' : 'fa-toggle-off text-sm'}"></i>
-            </button>
-
-            <button
-              type="button"
-              data-route-edit="${r.id}"
-              class="p-1.5 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 text-xs transition cursor-pointer"
-            >
-              <i class="fa-solid fa-pen"></i>
-            </button>
-
-            <button
-              type="button"
-              data-route-delete="${r.id}"
-              class="p-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs transition cursor-pointer"
-            >
-              <i class="fa-solid fa-trash"></i>
-            </button>
-          </div>
-        </div>
-      `;
-      })
-      .join('');
-
-    routesListEl.querySelectorAll('[data-route-toggle]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const id = Number(btn.getAttribute('data-route-toggle'));
-        const item = state.allRoutes.find((x) => x.id === id);
-        if (item) toggleMasterItemActive('routes', item);
-      });
-    });
-
-    routesListEl.querySelectorAll('[data-route-edit]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const id = Number(btn.getAttribute('data-route-edit'));
-        const item = state.allRoutes.find((x) => x.id === id);
-        if (item) openEditRouteModal(item);
-      });
-    });
-
-    routesListEl.querySelectorAll('[data-route-delete]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const id = Number(btn.getAttribute('data-route-delete'));
-        const item = state.allRoutes.find((x) => x.id === id);
-        if (item) confirmDeleteMasterItem('routes', item.id, item.name);
-      });
-    });
-  }
-
-  // 3. Vehicles
-  const vehiclesListEl = document.getElementById('master-vehicles-list');
-  const badgeVehicles = document.getElementById('badge-count-vehicles');
-  if (badgeVehicles) badgeVehicles.textContent = `${state.allVehicles.length} คัน`;
-
-  if (vehiclesListEl) {
-    vehiclesListEl.innerHTML = state.allVehicles
-      .map(
-        (v) => `
-        <div class="p-3.5 hover:bg-slate-50 flex items-center justify-between gap-2 transition">
-          <div class="min-w-0 flex-1 flex items-center gap-2.5">
-            <span class="license-plate-badge ${!v.active ? 'opacity-50 line-through' : ''}">
-              <i class="fa-solid fa-truck text-amber-600 text-[11px]"></i>
-              ${escapeHtml(v.plate)}
-            </span>
-            <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold ${
-              v.active ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-600'
-            }">
-              ${v.active ? 'เปิดใช้งาน' : 'ปิดใช้งาน'}
-            </span>
-          </div>
-
-          <div class="flex items-center gap-1.5 shrink-0">
-            <button
-              type="button"
-              data-vehicle-toggle="${v.id}"
-              class="px-2 py-1 rounded-lg border text-xs font-semibold transition cursor-pointer ${
-                v.active
-                  ? 'bg-emerald-50 border-emerald-300 text-emerald-700 hover:bg-emerald-100'
-                  : 'bg-slate-100 border-slate-300 text-slate-500 hover:bg-slate-200'
-              }"
-            >
-              <i class="fa-solid ${v.active ? 'fa-toggle-on text-sm' : 'fa-toggle-off text-sm'}"></i>
-            </button>
-
-            <button
-              type="button"
-              data-vehicle-edit="${v.id}"
-              class="p-1.5 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 text-xs transition cursor-pointer"
-            >
-              <i class="fa-solid fa-pen"></i>
-            </button>
-
-            <button
-              type="button"
-              data-vehicle-delete="${v.id}"
-              class="p-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs transition cursor-pointer"
-            >
-              <i class="fa-solid fa-trash"></i>
-            </button>
-          </div>
-        </div>
-      `
-      )
-      .join('');
-
-    vehiclesListEl.querySelectorAll('[data-vehicle-toggle]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const id = Number(btn.getAttribute('data-vehicle-toggle'));
-        const item = state.allVehicles.find((x) => x.id === id);
-        if (item) toggleMasterItemActive('vehicles', item);
-      });
-    });
-
-    vehiclesListEl.querySelectorAll('[data-vehicle-edit]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const id = Number(btn.getAttribute('data-vehicle-edit'));
-        const item = state.allVehicles.find((x) => x.id === id);
-        if (item) openEditVehicleModal(item);
-      });
-    });
-
-    vehiclesListEl.querySelectorAll('[data-vehicle-delete]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const id = Number(btn.getAttribute('data-vehicle-delete'));
-        const item = state.allVehicles.find((x) => x.id === id);
-        if (item) confirmDeleteMasterItem('vehicles', item.id, item.plate);
-      });
-    });
-  }
-}
-
-async function toggleMasterItemActive(type, item) {
-  try {
-    const newActive = !item.active;
-    const res = await apiFetch(`/api/master/${type}/${item.id}`, {
-      method: 'PUT',
-      body: JSON.stringify({ active: newActive })
-    });
-    if (!res.ok) {
-      showToast(res.data?.error || 'ไม่สามารถเปลี่ยนสถานะได้', 'error');
-      return;
-    }
-    const label = item.name || item.plate;
-    showToast(
-      `${newActive ? 'เปิดใช้งาน' : 'ปิดใช้งาน'} "${label}" ในหน้า Dropdown แล้ว`,
-      'info'
-    );
-    await loadAllData();
-  } catch (err) {
-    showToast(err.message || 'เกิดข้อผิดพลาด', 'error');
-  }
-}
-
-function openEditWorkerModal(worker) {
-  openCustomModal(`
-    <form id="modal-form-edit-worker" class="p-6 space-y-4">
-      <div class="flex items-center gap-3">
-        <div class="w-10 h-10 rounded-xl bg-indigo-100 text-indigo-700 flex items-center justify-center">
-          <i class="fa-solid fa-user-pen"></i>
-        </div>
-        <div>
-          <h3 class="text-base font-bold text-slate-900">แก้ไขข้อมูลคนงาน</h3>
-          <p class="text-xs text-slate-500">อัปเดตเชื่อมโยงกับตาราง <code>travel_logs</code> อัตโนมัติ</p>
-        </div>
-      </div>
-
-      <div>
-        <label class="block text-xs font-semibold text-slate-700 mb-1">ชื่อ-นามสกุลคนงาน *</label>
-        <input
-          type="text"
-          id="modal-edit-worker-name"
-          value="${escapeHtml(worker.name)}"
-          required
-          class="w-full min-h-[42px] px-3.5 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600"
-        />
-      </div>
-
-      <div>
-        <label class="block text-xs font-semibold text-slate-700 mb-1">ไซต์งานประจำ (default_route)</label>
-        <input
-          type="text"
-          id="modal-edit-worker-route"
-          list="datalist-master-routes"
-          value="${escapeHtml(worker.default_route || '')}"
-          placeholder="เลือกจากรายการหรือพิมพ์เอง (เว้นว่างได้)"
-          class="w-full min-h-[42px] px-3.5 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600"
-        />
-      </div>
-
-      <div class="pt-3 border-t border-slate-100 flex justify-end gap-2">
-        <button
-          type="button"
-          id="modal-btn-cancel"
-          class="min-h-[42px] px-4 py-2 rounded-xl border border-slate-300 bg-white text-slate-700 text-xs sm:text-sm font-medium cursor-pointer"
-        >
-          ยกเลิก
-        </button>
-        <button
-          type="submit"
-          class="min-h-[42px] px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs sm:text-sm font-semibold cursor-pointer"
-        >
-          บันทึกการแก้ไข
-        </button>
-      </div>
-    </form>
-  `);
-
-  document.getElementById('modal-btn-cancel')?.addEventListener('click', closeCustomModal);
-  document.getElementById('modal-form-edit-worker')?.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const name = document.getElementById('modal-edit-worker-name').value.trim();
-    const default_route = document.getElementById('modal-edit-worker-route').value.trim();
-    if (!name) return;
-
-    const res = await apiFetch(`/api/master/workers/${worker.id}`, {
-      method: 'PUT',
-      body: JSON.stringify({ name, default_route })
-    });
-
-    if (!res.ok) {
-      showToast(res.data?.error || 'ไม่สามารถแก้ไขข้อมูลคนงานได้', 'error');
-      return;
-    }
-
-    closeCustomModal();
-    if (state.editingWorkerName === worker.name && name !== worker.name) {
-      state.editingWorkerName = name;
-    }
-    showToast(
-      `อัปเดตข้อมูลคนงาน "${name}" สำเร็จ`,
-      'success',
-      res.data?.cascadedLogsCount
-        ? `อัปเดตเชื่อมโยงในตารางบันทึกการเดินทาง ${res.data.cascadedLogsCount} รายการ`
-        : ''
-    );
-    await loadAllData();
-  });
-}
-
-function openEditSiteModal(siteItem) {
-  openCustomModal(`
-    <form id="modal-form-edit-site" class="p-6 space-y-4">
-      <div class="flex items-center gap-3">
-        <div class="w-10 h-10 rounded-xl bg-sky-100 text-sky-700 flex items-center justify-center">
-          <i class="fa-solid fa-building-user"></i>
-        </div>
-        <div>
-          <h3 class="text-base font-bold text-slate-900">แก้ไขชื่อไซต์งาน / โครงการ (หัวตาราง)</h3>
-          <p class="text-xs text-slate-500">อัปเดตเชื่อมโยงไปยังตาราง <code>travel_logs</code> อัตโนมัติ</p>
-        </div>
-      </div>
-
-      <div>
-        <label class="block text-xs font-semibold text-slate-700 mb-1">ชื่อไซต์งาน / โครงการ *</label>
-        <input
-          type="text"
-          id="modal-edit-site-name"
-          value="${escapeHtml(siteItem.name)}"
-          required
-          class="w-full min-h-[42px] px-3.5 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-sky-600"
-        />
-      </div>
-
-      <div class="pt-3 border-t border-slate-100 flex justify-end gap-2">
-        <button
-          type="button"
-          id="modal-btn-cancel"
-          class="min-h-[42px] px-4 py-2 rounded-xl border border-slate-300 bg-white text-slate-700 text-xs sm:text-sm font-medium cursor-pointer"
-        >
-          ยกเลิก
-        </button>
-        <button
-          type="submit"
-          class="min-h-[42px] px-5 py-2 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs sm:text-sm font-semibold cursor-pointer"
-        >
-          บันทึกการแก้ไข
-        </button>
-      </div>
-    </form>
-  `);
-
-  document.getElementById('modal-btn-cancel')?.addEventListener('click', closeCustomModal);
-  document.getElementById('modal-form-edit-site')?.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const name = document.getElementById('modal-edit-site-name').value.trim();
-    if (!name) return;
-
-    const res = await apiFetch(`/api/master/sites/${siteItem.id}`, {
-      method: 'PUT',
-      body: JSON.stringify({ name })
-    });
-
-    if (!res.ok) {
-      showToast(res.data?.error || 'ไม่สามารถแก้ไขไซต์งานได้', 'error');
-      return;
-    }
-
-    closeCustomModal();
-    showToast(
-      `อัปเดตไซต์งาน "${name}" สำเร็จ`,
-      'success',
-      `อัปเดตเชื่อมโยงบันทึกเดินทาง ${res.data?.cascadedLogsCount || 0} รายการ`
-    );
-    await loadAllData();
-  });
-}
-
-function openEditRouteModal(routeItem) {
-  openCustomModal(`
-    <form id="modal-form-edit-route" class="p-6 space-y-4">
-      <div class="flex items-center gap-3">
-        <div class="w-10 h-10 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center">
-          <i class="fa-solid fa-map-location-dot"></i>
-        </div>
-        <div>
-          <h3 class="text-base font-bold text-slate-900">แก้ไขชื่อเส้นทาง / ที่หมาย</h3>
-          <p class="text-xs text-slate-500">อัปเดตเชื่อมโยงไปยัง <code>travel_logs</code> และ <code>default_route</code> อัตโนมัติ</p>
-        </div>
-      </div>
-
-      <div>
-        <label class="block text-xs font-semibold text-slate-700 mb-1">ชื่อเส้นทาง / ไซต์งาน *</label>
-        <input
-          type="text"
-          id="modal-edit-route-name"
-          value="${escapeHtml(routeItem.name)}"
-          required
-          class="w-full min-h-[42px] px-3.5 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-600"
-        />
-      </div>
-
-      <div class="pt-3 border-t border-slate-100 flex justify-end gap-2">
-        <button
-          type="button"
-          id="modal-btn-cancel"
-          class="min-h-[42px] px-4 py-2 rounded-xl border border-slate-300 bg-white text-slate-700 text-xs sm:text-sm font-medium cursor-pointer"
-        >
-          ยกเลิก
-        </button>
-        <button
-          type="submit"
-          class="min-h-[42px] px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs sm:text-sm font-semibold cursor-pointer"
-        >
-          บันทึกการแก้ไข
-        </button>
-      </div>
-    </form>
-  `);
-
-  document.getElementById('modal-btn-cancel')?.addEventListener('click', closeCustomModal);
-  document.getElementById('modal-form-edit-route')?.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const name = document.getElementById('modal-edit-route-name').value.trim();
-    if (!name) return;
-
-    const res = await apiFetch(`/api/master/routes/${routeItem.id}`, {
-      method: 'PUT',
-      body: JSON.stringify({ name })
-    });
-
-    if (!res.ok) {
-      showToast(res.data?.error || 'ไม่สามารถแก้ไขเส้นทางได้', 'error');
-      return;
-    }
-
-    closeCustomModal();
-    showToast(
-      `อัปเดตเส้นทาง "${name}" สำเร็จ`,
-      'success',
-      `อัปเดตเชื่อมโยงบันทึกเดินทาง ${res.data?.cascadedLogsCount || 0} รายการ และไซต์ประจำคนงาน ${
-        res.data?.cascadedWorkersCount || 0
-      } คน`
-    );
-    await loadAllData();
-  });
-}
-
-function openEditVehicleModal(vehicleItem) {
-  openCustomModal(`
-    <form id="modal-form-edit-vehicle" class="p-6 space-y-4">
-      <div class="flex items-center gap-3">
-        <div class="w-10 h-10 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center">
-          <i class="fa-solid fa-truck-pickup"></i>
-        </div>
-        <div>
-          <h3 class="text-base font-bold text-slate-900">แก้ไขหมายเลขทะเบียนรถ</h3>
-          <p class="text-xs text-slate-500">อัปเดตเชื่อมโยงไปยังตาราง <code>travel_logs</code> อัตโนมัติ</p>
-        </div>
-      </div>
-
-      <div>
-        <label class="block text-xs font-semibold text-slate-700 mb-1">หมายเลขทะเบียนรถ *</label>
-        <input
-          type="text"
-          id="modal-edit-vehicle-plate"
-          value="${escapeHtml(vehicleItem.plate)}"
-          required
-          class="w-full min-h-[42px] px-3.5 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-amber-600"
-        />
-      </div>
-
-      <div class="pt-3 border-t border-slate-100 flex justify-end gap-2">
-        <button
-          type="button"
-          id="modal-btn-cancel"
-          class="min-h-[42px] px-4 py-2 rounded-xl border border-slate-300 bg-white text-slate-700 text-xs sm:text-sm font-medium cursor-pointer"
-        >
-          ยกเลิก
-        </button>
-        <button
-          type="submit"
-          class="min-h-[42px] px-5 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs sm:text-sm font-semibold cursor-pointer"
-        >
-          บันทึกการแก้ไข
-        </button>
-      </div>
-    </form>
-  `);
-
-  document.getElementById('modal-btn-cancel')?.addEventListener('click', closeCustomModal);
-  document.getElementById('modal-form-edit-vehicle')?.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const plate = document.getElementById('modal-edit-vehicle-plate').value.trim();
-    if (!plate) return;
-
-    const res = await apiFetch(`/api/master/vehicles/${vehicleItem.id}`, {
-      method: 'PUT',
-      body: JSON.stringify({ plate })
-    });
-
-    if (!res.ok) {
-      showToast(res.data?.error || 'ไม่สามารถแก้ไขทะเบียนรถได้', 'error');
-      return;
-    }
-
-    closeCustomModal();
-    showToast(
-      `อัปเดตทะเบียนรถ "${plate}" สำเร็จ`,
-      'success',
-      res.data?.cascadedLogsCount
-        ? `อัปเดตเชื่อมโยงในตารางบันทึกการเดินทาง ${res.data.cascadedLogsCount} รายการ`
-        : ''
-    );
-    await loadAllData();
-  });
-}
-
-function confirmDeleteMasterItem(type, id, label) {
-  const typeLabelMap = {
-    workers: 'รายชื่อคนงาน',
-    sites: 'ไซต์งาน / โครงการ',
-    routes: 'เส้นทาง / ที่หมาย',
-    vehicles: 'ทะเบียนรถ'
-  };
-
-  openCustomModal(`
-    <div class="p-6">
-      <div class="flex items-start gap-4">
-        <div class="w-12 h-12 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center text-xl shrink-0">
-          <i class="fa-solid fa-trash-can"></i>
-        </div>
-        <div>
-          <h3 class="text-lg font-bold text-slate-900">ยืนยันการลบ${typeLabelMap[type] || 'รายการ'}</h3>
-          <p class="text-sm text-slate-600 mt-1">
-            คุณต้องการลบ <strong>"${escapeHtml(label)}"</strong> ออกจากรายการตัวเลือกหลักใช่หรือไม่?
-          </p>
-        </div>
-      </div>
-
-      <div class="mt-6 pt-4 border-t border-slate-100 flex justify-end gap-2">
-        <button
-          type="button"
-          id="modal-btn-cancel"
-          class="min-h-[42px] px-4 py-2 rounded-xl border border-slate-300 bg-white text-slate-700 text-sm font-medium cursor-pointer"
-        >
-          ยกเลิก
-        </button>
-        <button
-          type="button"
-          id="modal-btn-confirm-del"
-          class="min-h-[42px] px-5 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-sm font-semibold cursor-pointer"
-        >
-          ยืนยันการลบ
-        </button>
-      </div>
-    </div>
-  `);
-
-  document.getElementById('modal-btn-cancel')?.addEventListener('click', closeCustomModal);
-  document.getElementById('modal-btn-confirm-del')?.addEventListener('click', async () => {
-    closeCustomModal();
-    const res = await apiFetch(`/api/master/${type}/${id}`, { method: 'DELETE' });
-    if (!res.ok) {
-      showToast(res.data?.error || 'ไม่สามารถลบรายการได้', 'error');
-      return;
-    }
-    showToast(`ลบ "${label}" สำเร็จ`, 'success');
-    await loadAllData();
-  });
-}
-
-// ============================================================================
-// EVENT LISTENERS INITIALIZATION
-// ============================================================================
-
-document.addEventListener('DOMContentLoaded', async () => {
-  const formDate = document.getElementById('form-date');
-  if (formDate) {
-    formDate.value = getTodayISO();
-  }
-  updateDateAndDurationPreview();
-
-  // 1. Login Password Visibility Toggle
-  document.getElementById('toggle-password-btn')?.addEventListener('click', () => {
-    const pwdInput = document.getElementById('login-password');
-    const icon = document.getElementById('toggle-password-icon');
-    if (pwdInput.type === 'password') {
-      pwdInput.type = 'text';
-      icon.className = 'fa-solid fa-eye-slash text-indigo-600';
-    } else {
-      pwdInput.type = 'password';
-      icon.className = 'fa-solid fa-eye';
-    }
-  });
-
-  // 2. Login Form Submit (No Quick-Fill Buttons)
-  document.getElementById('login-form')?.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const username = document.getElementById('login-username').value.trim();
-    const password = document.getElementById('login-password').value;
-    const errBox = document.getElementById('login-error-box');
-    const errText = document.getElementById('login-error-text');
-
-    errBox.classList.add('hidden');
-    errBox.classList.remove('flex');
-
-    const res = await apiFetch('/api/login', {
-      method: 'POST',
-      body: JSON.stringify({ username, password })
-    });
-
-    if (!res.ok) {
-      errText.textContent = res.data?.error || 'ชื่อผู้ใช้งานหรือรหัสผ่านไม่ถูกต้อง';
-      errBox.classList.remove('hidden');
-      errBox.classList.add('flex');
-      return;
-    }
-
-    saveSession(res.data.token, res.data.user);
-    if (res.data.storageQuota) {
-      state.storageQuota = res.data.storageQuota;
-    }
-    state.currentView = 'front';
-    renderAuthView();
-    await loadAllData();
-    showToast(`ยินดีต้อนรับ ${res.data.user.full_name}`, 'success');
-  });
-
-  // 4. Logout, Desktop Tabs, Mobile Bottom Nav & Database Reset
-  document.getElementById('btn-logout')?.addEventListener('click', async () => {
-    try {
-      await apiFetch('/api/logout', { method: 'POST' });
-    } catch {
-      // ignore
-    }
-    exitEditModeAndResetForm();
-    clearSession();
-    renderAuthView();
-    showToast('ออกจากระบบเรียบร้อยแล้ว', 'info');
-  });
-
-  document.getElementById('nav-tab-front')?.addEventListener('click', () => switchView('front'));
-  document.getElementById('nav-tab-back')?.addEventListener('click', () => switchView('back'));
-  document.getElementById('btn-back-to-front')?.addEventListener('click', () => switchView('front'));
-
-  // Mobile Bottom Navigation Bar
-  document.getElementById('mob-nav-form')?.addEventListener('click', () => {
-    switchView('front');
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  });
-  document.getElementById('mob-nav-table')?.addEventListener('click', () => {
-    switchView('front');
-    document.getElementById('logs-section-anchor')?.scrollIntoView({ behavior: 'smooth' });
-  });
-  document.getElementById('mob-nav-backoffice')?.addEventListener('click', () => {
-    switchView('back');
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  });
-
-  document.getElementById('btn-reset-db')?.addEventListener('click', () => {
-    openCustomModal(`
-      <div class="p-6">
-        <div class="flex items-start gap-4">
-          <div class="w-12 h-12 rounded-2xl bg-amber-100 text-amber-600 flex items-center justify-center text-xl shrink-0">
-            <i class="fa-solid fa-rotate-left"></i>
+      <div class="p-5 sm:p-6 space-y-4">
+        <div class="flex items-start gap-3">
+          <div class="w-10 h-10 rounded-xl bg-zinc-900 text-amber-400 flex items-center justify-center shrink-0">
+            <i class="fa-solid fa-file-invoice-dollar"></i>
           </div>
           <div>
-            <h3 class="text-lg font-bold text-slate-900">ยืนยันการรีเซ็ตข้อมูลฐานข้อมูล</h3>
-            <p class="text-sm text-slate-600 mt-1">
-              ระบบจะรีเซ็ตข้อมูลทั้ง 6 ตารางกลับเป็นข้อมูลเริ่มต้น (Seed Data พร้อมทะเบียนรถ 20 คัน) คุณต้องการดำเนินการต่อหรือไม่?
+            <h3 class="text-base font-bold text-slate-900">ส่งออกไฟล์ใบเบิกโครงการ (.xlsx)</h3>
+            <p class="text-xs text-slate-500 mt-0.5">
+              สร้างชีต "ใบเบิก" พร้อมสูตรคำนวณ และชีตแนบท้ายตัดหน้าอัตโนมัติแผ่นละ 30 แถว (A4 แนวตั้ง)
             </p>
           </div>
         </div>
-        <div class="mt-6 pt-4 border-t border-slate-100 flex justify-end gap-2.5">
-          <button
-            type="button"
-            id="modal-btn-cancel-reset"
-            class="min-h-[42px] px-4 py-2 rounded-xl border border-slate-300 bg-white text-slate-700 text-sm font-medium cursor-pointer"
-          >
-            ยกเลิก
-          </button>
-          <button
-            type="button"
-            id="modal-btn-confirm-reset"
-            class="min-h-[42px] px-5 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-sm font-semibold cursor-pointer"
-          >
-            ยืนยันการรีเซ็ตฐานข้อมูล
-          </button>
-        </div>
+
+        <form id="modal-billing-form" class="space-y-3.5">
+          <div>
+            <label for="modal-billing-site" class="block text-xs font-semibold text-slate-700 mb-1">
+              โครงการที่วางบิล (site_name)
+            </label>
+            <select id="modal-billing-site" class="w-full min-h-[42px] px-3 py-2 rounded-xl border border-slate-300 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-zinc-900">
+              <option value="">-- ทุกโครงการในช่วงวันที่เลือก --</option>
+              ${siteOptions
+                .map(
+                  (s) =>
+                    `<option value="${escapeHtml(s)}" ${s === preselected ? 'selected' : ''}>${escapeHtml(s)}</option>`
+                )
+                .join('')}
+            </select>
+          </div>
+
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label for="modal-billing-from" class="block text-xs font-semibold text-slate-700 mb-1">ตั้งแต่วันที่</label>
+              <input type="date" id="modal-billing-from" value="${escapeHtml(f.date_from)}"
+                class="w-full min-h-[42px] px-3 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-zinc-900" />
+            </div>
+            <div>
+              <label for="modal-billing-to" class="block text-xs font-semibold text-slate-700 mb-1">ถึงวันที่</label>
+              <input type="date" id="modal-billing-to" value="${escapeHtml(f.date_to)}"
+                class="w-full min-h-[42px] px-3 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-zinc-900" />
+            </div>
+          </div>
+
+          <div>
+            <label for="modal-billing-issue" class="block text-xs font-semibold text-slate-700 mb-1">วันที่ออกเอกสาร (เซลล์ J2 ในใบเบิก)</label>
+            <input type="date" id="modal-billing-issue" value="${escapeHtml(todayIso())}" required
+              class="w-full min-h-[42px] px-3 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-zinc-900" />
+          </div>
+
+          <div class="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+            <button type="button" id="modal-billing-cancel" class="min-h-[40px] px-4 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 text-xs sm:text-sm font-medium cursor-pointer">ยกเลิก</button>
+            <button type="submit" id="modal-billing-submit" class="min-h-[40px] px-5 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-white text-xs sm:text-sm font-semibold cursor-pointer">
+              <i class="fa-solid fa-download text-amber-400 mr-1.5"></i>สร้างและดาวน์โหลด (.xlsx)
+            </button>
+          </div>
+        </form>
       </div>
-    `);
-
-    document.getElementById('modal-btn-cancel-reset')?.addEventListener('click', closeCustomModal);
-    document.getElementById('modal-btn-confirm-reset')?.addEventListener('click', async () => {
-      closeCustomModal();
-      const res = await apiFetch('/api/reset', { method: 'POST' });
-      if (!res.ok) {
-        showToast(res.data?.error || 'ไม่สามารถรีเซ็ตฐานข้อมูลได้', 'error');
-        return;
+      `,
+      (box) => {
+        box.querySelector('#modal-billing-cancel').addEventListener('click', closeModal);
+        box.querySelector('#modal-billing-form').addEventListener('submit', async (e) => {
+          e.preventDefault();
+          const btn = box.querySelector('#modal-billing-submit');
+          btn.disabled = true;
+          try {
+            await runBillingExport({
+              siteName: box.querySelector('#modal-billing-site').value.trim(),
+              dateFrom: box.querySelector('#modal-billing-from').value.trim(),
+              dateTo: box.querySelector('#modal-billing-to').value.trim(),
+              issueDate: box.querySelector('#modal-billing-issue').value.trim()
+            });
+            closeModal();
+          } catch (err) {
+            showToast(`ส่งออกไฟล์ใบเบิกไม่สำเร็จ: ${err.message}`, 'error', 5000);
+            btn.disabled = false;
+          }
+        });
       }
-      exitEditModeAndResetForm();
-      await loadAllData();
-      showToast(res.data?.message || 'รีเซ็ตฐานข้อมูลสำเร็จ', 'success');
-    });
-  });
-
-  // 5. Admin Quick Quota Simulator Buttons (Warning 80% / Full 100% / Normal 100)
-  document.querySelectorAll('button[data-sim-quota]').forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      const mode = btn.getAttribute('data-sim-quota');
-      const count = Math.max(1, state.logs.length || 4);
-      if (mode === 'warning') {
-        // Set limit so current count is >= 80% (e.g. 4 / 5 = 80%)
-        const targetLimit = Math.max(count + 1, Math.ceil(count / 0.8));
-        await quickSetQuotaLimit(targetLimit);
-      } else if (mode === 'full') {
-        // Set limit equal to current count (100% Full!)
-        await quickSetQuotaLimit(count);
-      } else {
-        await quickSetQuotaLimit(100);
-      }
-    });
-  });
-
-  // 6. Front-Office Worker Selection -> Auto-fill Default Route
-  document.getElementById('form-worker')?.addEventListener('change', () => {
-    const worker = getSelectedWorkerObject();
-    const routeInput = document.getElementById('form-route');
-    if (worker) {
-      if (worker.default_route) {
-        routeInput.value = worker.default_route;
-        routeInput.classList.remove('input-highlight-pulse');
-        void routeInput.offsetWidth;
-        routeInput.classList.add('input-highlight-pulse');
-      } else if (!state.editingWorkerName) {
-        routeInput.value = '';
-      }
-    }
-    renderRouteComboboxMenu();
-    updateRouteSmartControls();
-  });
-
-  // 7. Cartrack GPS Check Button next to Vehicle Select & Sync All Button
-  document
-    .getElementById('btn-check-vehicle-gps')
-    ?.addEventListener('click', checkVehicleGpsFromForm);
-  document.getElementById('btn-sync-all-gps')?.addEventListener('click', syncAllVehiclesGps);
-
-  // 8. Combo Box Route Input & Smart Route Buttons
-  const routeInput = document.getElementById('form-route');
-  const routeMenu = document.getElementById('route-combobox-menu');
-
-  routeInput?.addEventListener('input', () => {
-    renderRouteComboboxMenu(routeInput.value);
-    routeMenu?.classList.remove('hidden');
-    updateRouteSmartControls();
-  });
-
-  routeInput?.addEventListener('focus', () => {
-    renderRouteComboboxMenu('');
-    routeMenu?.classList.remove('hidden');
-  });
-
-  document.getElementById('btn-toggle-route-dropdown')?.addEventListener('click', () => {
-    if (routeMenu.classList.contains('hidden')) {
-      renderRouteComboboxMenu('');
-      routeMenu.classList.remove('hidden');
-      routeInput.focus();
-    } else {
-      routeMenu.classList.add('hidden');
-    }
-  });
-
-  document.addEventListener('click', (e) => {
-    const wrapper = document.getElementById('route-combobox-wrapper');
-    if (wrapper && !wrapper.contains(e.target)) {
-      routeMenu?.classList.add('hidden');
-    }
-  });
-
-  document.getElementById('btn-reset-default-route')?.addEventListener('click', () => {
-    const worker = getSelectedWorkerObject();
-    if (worker && worker.default_route) {
-      routeInput.value = worker.default_route;
-      updateRouteSmartControls();
-      showToast(`รีเซ็ตเส้นทางกลับเป็นไซต์งานประจำของ "${worker.name}" แล้ว`, 'info');
-    }
-  });
-
-  document.getElementById('btn-add-to-routes')?.addEventListener('click', async () => {
-    const val = routeInput.value.trim();
-    if (!val) return;
-
-    const res = await apiFetch('/api/master/routes', {
-      method: 'POST',
-      body: JSON.stringify({ name: val, active: 1, reactivateIfInactive: true })
-    });
-
-    if (!res.ok) {
-      showToast(res.data?.error || 'ไม่สามารถเพิ่มในรายการที่หมายได้', 'error');
-      return;
-    }
-
-    showToast(`เพิ่ม "${val}" เข้าสู่รายการเส้นทาง/ที่หมายหลักแล้ว`, 'success');
-    await loadAllData();
-  });
-
-  document.getElementById('btn-set-worker-default-route')?.addEventListener('click', async () => {
-    const worker = getSelectedWorkerObject();
-    const val = routeInput.value.trim();
-    if (!worker || !worker.id || !val) return;
-
-    const res = await apiFetch(`/api/master/workers/${worker.id}`, {
-      method: 'PUT',
-      body: JSON.stringify({ default_route: val })
-    });
-
-    if (!res.ok) {
-      showToast(res.data?.error || 'ไม่สามารถตั้งไซต์งานประจำได้', 'error');
-      return;
-    }
-
-    showToast(`ตั้ง "${val}" เป็นไซต์งานประจำของ "${worker.name}" เรียบร้อยแล้ว`, 'success');
-    await loadAllData();
-  });
-
-  // 9. Date & Time Inputs Live Preview
-  document.getElementById('form-date')?.addEventListener('input', updateDateAndDurationPreview);
-  document.getElementById('form-departure')?.addEventListener('input', updateDateAndDurationPreview);
-  document.getElementById('form-arrival')?.addEventListener('input', updateDateAndDurationPreview);
-
-  // 10. Form Submit, Clear, Cancel Edit
-  document.getElementById('travel-log-form')?.addEventListener('submit', handleTravelLogSubmit);
-  document.getElementById('btn-clear-form')?.addEventListener('click', exitEditModeAndResetForm);
-  document.getElementById('btn-cancel-edit')?.addEventListener('click', exitEditModeAndResetForm);
-  document.getElementById('btn-cancel-edit-top')?.addEventListener('click', exitEditModeAndResetForm);
-
-  // 11. Table Filters & Excel Export
-  const filterSiteSelect = document.getElementById('filter-site');
-  const filterDateInput = document.getElementById('filter-date');
-  const filterSearchInput = document.getElementById('filter-search');
-  const btnClearSearch = document.getElementById('btn-clear-search');
-
-  filterSiteSelect?.addEventListener('change', () => {
-    state.filterSite = filterSiteSelect.value;
-    renderLogsTable();
-  });
-
-  filterDateInput?.addEventListener('input', () => {
-    state.filterDate = filterDateInput.value;
-    renderLogsTable();
-  });
-
-  document.getElementById('btn-filter-today')?.addEventListener('click', () => {
-    const today = getTodayISO();
-    filterDateInput.value = today;
-    state.filterDate = today;
-    renderLogsTable();
-  });
-
-  document.getElementById('btn-filter-all-dates')?.addEventListener('click', () => {
-    filterDateInput.value = '';
-    state.filterDate = '';
-    renderLogsTable();
-  });
-
-  filterSearchInput?.addEventListener('input', () => {
-    state.filterSearch = filterSearchInput.value;
-    if (state.filterSearch) {
-      btnClearSearch.classList.remove('hidden');
-      btnClearSearch.classList.add('flex');
-    } else {
-      btnClearSearch.classList.add('hidden');
-      btnClearSearch.classList.remove('flex');
-    }
-    renderLogsTable();
-  });
-
-  btnClearSearch?.addEventListener('click', () => {
-    filterSearchInput.value = '';
-    state.filterSearch = '';
-    btnClearSearch.classList.add('hidden');
-    btnClearSearch.classList.remove('flex');
-    renderLogsTable();
-  });
-
-  document.getElementById('btn-export-excel')?.addEventListener('click', exportLogsToExcel);
-  document.getElementById('btn-save-copy-excel')?.addEventListener('click', saveCopyExcelFile);
-  document.getElementById('btn-save-billing-excel')?.addEventListener('click', saveBillingExcelFile);
-  document.getElementById('btn-link-copy-excel')?.addEventListener('click', () => {
-    pickAndLinkExcelFileOnly('copy');
-  });
-  document.getElementById('btn-link-billing-excel')?.addEventListener('click', () => {
-    pickAndLinkExcelFileOnly('billing');
-  });
-  loadLinkedExcelHandles();
-
-  // 12. Back-Office: Storage Quota Settings Form
-  document.getElementById('form-gps-settings')?.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const payload = {
-      ...state.gpsSettings,
-      max_storage_limit: Number(document.getElementById('setting-max-limit').value) || 100
-    };
-
-    const res = await apiFetch('/api/settings/gps', {
-      method: 'PUT',
-      body: JSON.stringify(payload)
-    });
-
-    if (!res.ok) {
-      showToast(res.data?.error || 'ไม่สามารถบันทึกการตั้งค่าได้', 'error');
-      return;
-    }
-
-    state.gpsSettings = res.data.settings;
-    state.storageQuota = res.data.storageQuota;
-    populateGpsSettingsForm();
-    renderStorageQuotaUI(false);
-    showToast('บันทึกการตั้งค่าขีดจำกัดพื้นที่เก็บข้อมูลเรียบร้อยแล้ว', 'success');
-  });
-
-  // 13. Back-Office Add Forms (Workers, Routes, Vehicles)
-  document.getElementById('form-add-worker')?.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const nameInput = document.getElementById('new-worker-name');
-    const routeInputEl = document.getElementById('new-worker-default-route');
-    const name = nameInput.value.trim();
-    const default_route = routeInputEl.value.trim();
-    if (!name) return;
-
-    const res = await apiFetch('/api/master/workers', {
-      method: 'POST',
-      body: JSON.stringify({ name, default_route, active: 1 })
-    });
-
-    if (!res.ok) {
-      showToast(res.data?.error || 'ไม่สามารถเพิ่มรายชื่อคนงานได้', 'error');
-      return;
-    }
-
-    nameInput.value = '';
-    routeInputEl.value = '';
-    showToast(`เพิ่มคนงาน "${name}" สำเร็จ`, 'success');
-    await loadAllData();
-  });
-
-  document.getElementById('form-add-site')?.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const nameInput = document.getElementById('new-site-name');
-    const name = nameInput.value.trim();
-    if (!name) return;
-
-    const res = await apiFetch('/api/master/sites', {
-      method: 'POST',
-      body: JSON.stringify({ name, active: 1 })
-    });
-
-    if (!res.ok) {
-      showToast(res.data?.error || 'ไม่สามารถเพิ่มไซต์งานได้', 'error');
-      return;
-    }
-
-    nameInput.value = '';
-    showToast(`เพิ่มไซต์งาน/โครงการ "${name}" สำเร็จ`, 'success');
-    await loadAllData();
-  });
-
-  document.getElementById('form-add-route')?.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const nameInput = document.getElementById('new-route-name');
-    const name = nameInput.value.trim();
-    if (!name) return;
-
-    const res = await apiFetch('/api/master/routes', {
-      method: 'POST',
-      body: JSON.stringify({ name, active: 1 })
-    });
-
-    if (!res.ok) {
-      showToast(res.data?.error || 'ไม่สามารถเพิ่มเส้นทางได้', 'error');
-      return;
-    }
-
-    nameInput.value = '';
-    showToast(`เพิ่มเส้นทาง "${name}" สำเร็จ`, 'success');
-    await loadAllData();
-  });
-
-  document.getElementById('form-add-vehicle')?.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const plateInput = document.getElementById('new-vehicle-plate');
-    const plate = plateInput.value.trim();
-    if (!plate) return;
-
-    const res = await apiFetch('/api/master/vehicles', {
-      method: 'POST',
-      body: JSON.stringify({ plate, active: 1 })
-    });
-
-    if (!res.ok) {
-      showToast(res.data?.error || 'ไม่สามารถเพิ่มทะเบียนรถได้', 'error');
-      return;
-    }
-
-    plateInput.value = '';
-    showToast(`เพิ่มทะเบียนรถ "${plate}" สำเร็จ`, 'success');
-    await loadAllData();
-  });
-
-  // 14. Verify existing session on startup
-  if (state.token) {
-    try {
-      const meRes = await apiFetch('/api/me');
-      if (meRes.ok && meRes.data?.user) {
-        state.user = meRes.data.user;
-        if (meRes.data.storageQuota) {
-          state.storageQuota = meRes.data.storageQuota;
-        }
-        localStorage.setItem('dispatch_auth_user', JSON.stringify(state.user));
-        renderAuthView();
-        await loadAllData();
-        return;
-      }
-    } catch {
-      // session expired
-    }
-    clearSession();
+    );
   }
 
-  renderAuthView();
-});
+  // ==========================================================================
+  // 10. Back-Office Master Data CRUD (4 Tables + Quota Settings)
+  // ==========================================================================
+  function renderBackOfficeLists() {
+    renderVehiclesList();
+    renderWorkersList();
+    renderSitesList();
+    renderRoutesList();
+  }
+
+  function renderVehiclesList() {
+    const el = $('list-vehicles');
+    if (state.vehicles.length === 0) {
+      el.innerHTML =
+        '<div class="col-span-full py-10 text-center text-xs text-slate-400 border border-dashed border-slate-300 rounded-xl">ยังไม่มีทะเบียนรถในระบบ — เพิ่มทะเบียนรถจากฟอร์มด้านบน</div>';
+      return;
+    }
+    el.innerHTML = state.vehicles
+      .map(
+        (v) => `
+        <div class="p-3.5 rounded-xl border ${v.active ? 'bg-white border-slate-200' : 'bg-slate-50 border-slate-200 opacity-65'} flex items-center justify-between gap-2">
+          <div class="flex items-center gap-2 min-w-0">
+            <span class="license-plate-badge">${escapeHtml(v.license_plate)}</span>
+            ${v.active ? '' : '<span class="text-[10px] px-1.5 py-0.5 rounded bg-slate-200 text-slate-600 font-semibold">ปิดใช้งาน</span>'}
+          </div>
+          <div class="flex items-center gap-1 shrink-0">
+            <button type="button" data-bo="toggle-vehicle" data-id="${v.id}" title="${v.active ? 'ปิดใช้งาน' : 'เปิดใช้งาน'}"
+              class="w-8 h-8 rounded-lg ${v.active ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-slate-200 text-slate-600 border-slate-300'} border inline-flex items-center justify-center cursor-pointer">
+              <i class="fa-solid ${v.active ? 'fa-toggle-on' : 'fa-toggle-off'}"></i>
+            </button>
+            <button type="button" data-bo="edit-vehicle" data-id="${v.id}" title="แก้ไข"
+              class="w-8 h-8 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 inline-flex items-center justify-center cursor-pointer">
+              <i class="fa-solid fa-pen text-xs"></i>
+            </button>
+            <button type="button" data-bo="delete-vehicle" data-id="${v.id}" title="ลบ"
+              class="w-8 h-8 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 inline-flex items-center justify-center cursor-pointer">
+              <i class="fa-solid fa-trash text-xs"></i>
+            </button>
+          </div>
+        </div>
+      `
+      )
+      .join('');
+  }
+
+  function renderWorkersList() {
+    const el = $('list-workers');
+    if (state.workers.length === 0) {
+      el.innerHTML = '<div class="py-10 text-center text-xs text-slate-400">ยังไม่มีรายชื่อคนขับในระบบ — เพิ่มคนขับจากฟอร์มด้านบน</div>';
+      return;
+    }
+    el.innerHTML = state.workers
+      .map(
+        (w, i) => `
+        <div class="px-4 py-3 flex flex-wrap items-center justify-between gap-3 ${w.active ? 'bg-white' : 'bg-slate-50 opacity-65'}">
+          <div class="flex flex-wrap items-center gap-2.5">
+            <span class="text-xs font-bold text-slate-400 w-6">${i + 1}.</span>
+            <span class="font-semibold text-sm text-slate-900">${escapeHtml(w.name)}</span>
+            ${
+              w.default_vehicle
+                ? `<span class="license-plate-badge !text-[11px] !py-0.5 !px-2"><i class="fa-solid fa-truck-front text-amber-600 text-[10px]"></i>${escapeHtml(w.default_vehicle)}</span>`
+                : '<span class="text-[11px] text-slate-400">ยังไม่ผูกทะเบียนรถประจำตัว</span>'
+            }
+            ${w.active ? '' : '<span class="text-[10px] px-2 py-0.5 rounded-full bg-slate-200 text-slate-600 font-semibold">ปิดใช้งาน</span>'}
+          </div>
+          <div class="flex items-center gap-1.5">
+            <button type="button" data-bo="toggle-worker" data-id="${w.id}" title="${w.active ? 'ปิดใช้งาน' : 'เปิดใช้งาน'}"
+              class="w-8 h-8 rounded-lg ${w.active ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-slate-200 text-slate-600 border-slate-300'} border inline-flex items-center justify-center cursor-pointer">
+              <i class="fa-solid ${w.active ? 'fa-toggle-on' : 'fa-toggle-off'}"></i>
+            </button>
+            <button type="button" data-bo="edit-worker" data-id="${w.id}" title="แก้ไข"
+              class="w-8 h-8 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 inline-flex items-center justify-center cursor-pointer">
+              <i class="fa-solid fa-pen text-xs"></i>
+            </button>
+            <button type="button" data-bo="delete-worker" data-id="${w.id}" title="ลบ"
+              class="w-8 h-8 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 inline-flex items-center justify-center cursor-pointer">
+              <i class="fa-solid fa-trash text-xs"></i>
+            </button>
+          </div>
+        </div>
+      `
+      )
+      .join('');
+  }
+
+  function renderSitesList() {
+    const el = $('list-sites');
+    if (state.sites.length === 0) {
+      el.innerHTML = '<div class="py-10 text-center text-xs text-slate-400">ยังไม่มีไซต์งาน / โครงการในระบบ — เพิ่มโครงการจากฟอร์มด้านบน</div>';
+      return;
+    }
+    el.innerHTML = state.sites
+      .map(
+        (s, i) => `
+        <div class="px-4 py-3 flex flex-wrap items-center justify-between gap-3 ${s.active ? 'bg-white' : 'bg-slate-50 opacity-65'}">
+          <div class="flex flex-wrap items-center gap-2.5">
+            <span class="text-xs font-bold text-slate-400 w-6">${i + 1}.</span>
+            <span class="font-semibold text-sm text-slate-900">${escapeHtml(s.site_name)}</span>
+            ${
+              s.zone_name
+                ? `<span class="px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-200 text-[11px] font-semibold">โซน: ${escapeHtml(s.zone_name)}</span>`
+                : '<span class="text-[11px] text-slate-400">ไม่ระบุชื่อโซน</span>'
+            }
+            ${s.active ? '' : '<span class="text-[10px] px-2 py-0.5 rounded-full bg-slate-200 text-slate-600 font-semibold">ปิดใช้งาน</span>'}
+          </div>
+          <div class="flex items-center gap-1.5">
+            <button type="button" data-bo="toggle-site" data-id="${s.id}" title="${s.active ? 'ปิดใช้งาน' : 'เปิดใช้งาน'}"
+              class="w-8 h-8 rounded-lg ${s.active ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-slate-200 text-slate-600 border-slate-300'} border inline-flex items-center justify-center cursor-pointer">
+              <i class="fa-solid ${s.active ? 'fa-toggle-on' : 'fa-toggle-off'}"></i>
+            </button>
+            <button type="button" data-bo="edit-site" data-id="${s.id}" title="แก้ไข"
+              class="w-8 h-8 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 inline-flex items-center justify-center cursor-pointer">
+              <i class="fa-solid fa-pen text-xs"></i>
+            </button>
+            <button type="button" data-bo="delete-site" data-id="${s.id}" title="ลบ"
+              class="w-8 h-8 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 inline-flex items-center justify-center cursor-pointer">
+              <i class="fa-solid fa-trash text-xs"></i>
+            </button>
+          </div>
+        </div>
+      `
+      )
+      .join('');
+  }
+
+  function renderRoutesList() {
+    const el = $('list-routes');
+    if (state.routes.length === 0) {
+      el.innerHTML = '<div class="py-10 text-center text-xs text-slate-400">ยังไม่มีเส้นทางในระบบ — เพิ่มเส้นทางจากฟอร์มด้านบน</div>';
+      return;
+    }
+    el.innerHTML = state.routes
+      .map(
+        (r, i) => `
+        <div class="px-4 py-3.5 flex flex-col lg:flex-row lg:items-center justify-between gap-3 ${r.active ? 'bg-white' : 'bg-slate-50 opacity-65'}">
+          <div class="space-y-1">
+            <div class="flex flex-wrap items-center gap-2">
+              <span class="text-xs font-bold text-slate-400">${i + 1}.</span>
+              <span class="font-bold text-sm text-slate-900">
+                ${escapeHtml(r.origin)} <i class="fa-solid fa-arrow-right text-amber-500 text-xs mx-1"></i> ${escapeHtml(r.destination)}
+              </span>
+              <span class="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs font-bold">
+                ${formatMoney(r.unit_price)} บาท/เที่ยว
+              </span>
+              ${r.active ? '' : '<span class="text-[10px] px-2 py-0.5 rounded-full bg-slate-200 text-slate-600 font-semibold">ปิดใช้งาน</span>'}
+            </div>
+            <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-600">
+              <span><strong class="text-slate-700">แท็บชีต:</strong> ${escapeHtml(r.route_sheet_name)}</span>
+              <span><strong class="text-slate-700">ใบเบิก:</strong> ${escapeHtml(r.billing_title)}</span>
+              <span><strong class="text-slate-700">เวลา:</strong> ${escapeHtml(r.default_dep_time || '-')} – ${escapeHtml(r.default_arr_time || '-')}</span>
+              <span>
+                <strong class="text-slate-700">โซนคอลัมน์ C:</strong>
+                <span class="px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-800 font-semibold text-[11px]">
+                  ${r.display_mode_zone === 'license_plate' ? 'ทะเบียนรถ (license_plate)' : 'ชื่อคนขับ (worker_name)'}
+                </span>
+              </span>
+            </div>
+          </div>
+
+          <div class="flex items-center gap-1.5 shrink-0">
+            <button type="button" data-bo="toggle-route" data-id="${r.id}" title="${r.active ? 'ปิดใช้งาน' : 'เปิดใช้งาน'}"
+              class="w-8 h-8 rounded-lg ${r.active ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-slate-200 text-slate-600 border-slate-300'} border inline-flex items-center justify-center cursor-pointer">
+              <i class="fa-solid ${r.active ? 'fa-toggle-on' : 'fa-toggle-off'}"></i>
+            </button>
+            <button type="button" data-bo="edit-route" data-id="${r.id}" title="แก้ไข"
+              class="w-8 h-8 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 inline-flex items-center justify-center cursor-pointer">
+              <i class="fa-solid fa-pen text-xs"></i>
+            </button>
+            <button type="button" data-bo="delete-route" data-id="${r.id}" title="ลบ"
+              class="w-8 h-8 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 inline-flex items-center justify-center cursor-pointer">
+              <i class="fa-solid fa-trash text-xs"></i>
+            </button>
+          </div>
+        </div>
+      `
+      )
+      .join('');
+  }
+
+  // Add Handlers
+  async function handleAddVehicle(e) {
+    e.preventDefault();
+    const plate = $('input-vehicle-plate').value.trim();
+    if (!plate) return;
+    try {
+      await apiFetch('/api/master/vehicles', { method: 'POST', body: JSON.stringify({ license_plate: plate }) });
+      $('input-vehicle-plate').value = '';
+      showToast(`เพิ่มทะเบียนรถ "${plate}" เรียบร้อยแล้ว`, 'success');
+      await loadMasterData();
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  }
+
+  async function handleAddWorker(e) {
+    e.preventDefault();
+    const name = $('input-worker-name').value.trim();
+    const default_vehicle = $('input-worker-default-vehicle').value.trim();
+    if (!name) return;
+    try {
+      await apiFetch('/api/master/workers', {
+        method: 'POST',
+        body: JSON.stringify({ name, default_vehicle })
+      });
+      $('input-worker-name').value = '';
+      $('input-worker-default-vehicle').value = '';
+      showToast(`เพิ่มรายชื่อคนขับ "${name}" เรียบร้อยแล้ว`, 'success');
+      await loadMasterData();
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  }
+
+  async function handleAddSite(e) {
+    e.preventDefault();
+    const site_name = $('input-site-name').value.trim();
+    const zone_name = $('input-site-zone').value.trim();
+    if (!site_name) return;
+    try {
+      await apiFetch('/api/master/sites', {
+        method: 'POST',
+        body: JSON.stringify({ site_name, zone_name })
+      });
+      $('input-site-name').value = '';
+      $('input-site-zone').value = '';
+      showToast(`เพิ่มไซต์งาน/โครงการ "${site_name}" เรียบร้อยแล้ว`, 'success');
+      await loadMasterData();
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  }
+
+  async function handleAddRoute(e) {
+    e.preventDefault();
+    const origin = $('input-route-origin').value.trim();
+    const destination = $('input-route-destination').value.trim();
+    if (!origin || !destination) {
+      showToast('กรุณาระบุต้นทางและปลายทาง', 'error');
+      return;
+    }
+    const payload = {
+      origin,
+      destination,
+      route_sheet_name: $('input-route-sheet-name').value.trim(),
+      billing_title: $('input-route-billing-title').value.trim(),
+      default_dep_time: $('input-route-dep-time').value.trim(),
+      default_arr_time: $('input-route-arr-time').value.trim(),
+      unit_price: $('input-route-unit-price').value.trim() === '' ? 0 : Number($('input-route-unit-price').value),
+      display_mode_zone: $('input-route-display-mode').value
+    };
+    try {
+      await apiFetch('/api/master/routes', { method: 'POST', body: JSON.stringify(payload) });
+      $('form-add-route').reset();
+      showToast(`เพิ่มเส้นทาง "${origin} → ${destination}" เรียบร้อยแล้ว`, 'success');
+      await loadMasterData();
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  }
+
+  // Edit Modals for Back-Office Items
+  function openEditVehicleModal(v) {
+    openModal(
+      `
+      <div class="p-5 sm:p-6 space-y-4">
+        <h3 class="text-base font-bold text-slate-900">แก้ไขทะเบียนรถ</h3>
+        <form id="modal-edit-form" class="space-y-3.5">
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1">เลขทะเบียนรถ *</label>
+            <input type="text" id="m-plate" value="${escapeHtml(v.license_plate)}" required
+              class="w-full min-h-[42px] px-3 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600" />
+          </div>
+          <div class="flex justify-end gap-2 pt-2 border-t border-slate-100">
+            <button type="button" id="m-cancel" class="min-h-[40px] px-4 py-2 rounded-xl border border-slate-300 text-xs sm:text-sm cursor-pointer">ยกเลิก</button>
+            <button type="submit" class="min-h-[40px] px-4 py-2 rounded-xl bg-zinc-900 text-white text-xs sm:text-sm font-semibold cursor-pointer">บันทึก</button>
+          </div>
+        </form>
+      </div>
+      `,
+      (box) => {
+        box.querySelector('#m-cancel').addEventListener('click', closeModal);
+        box.querySelector('#modal-edit-form').addEventListener('submit', async (e) => {
+          e.preventDefault();
+          try {
+            await apiFetch(`/api/master/vehicles/${v.id}`, {
+              method: 'PUT',
+              body: JSON.stringify({ license_plate: box.querySelector('#m-plate').value.trim() })
+            });
+            closeModal();
+            showToast('อัปเดตทะเบียนรถเรียบร้อยแล้ว', 'success');
+            await refreshAll();
+          } catch (err) {
+            showToast(err.message, 'error');
+          }
+        });
+      }
+    );
+  }
+
+  function openEditWorkerModal(w) {
+    const vehOpts = state.vehicles
+      .map(
+        (v) =>
+          `<option value="${escapeHtml(v.license_plate)}" ${v.license_plate === w.default_vehicle ? 'selected' : ''}>${escapeHtml(v.license_plate)}</option>`
+      )
+      .join('');
+    openModal(
+      `
+      <div class="p-5 sm:p-6 space-y-4">
+        <h3 class="text-base font-bold text-slate-900">แก้ไขข้อมูลคนขับ</h3>
+        <form id="modal-edit-form" class="space-y-3.5">
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1">ชื่อคนขับ *</label>
+            <input type="text" id="m-name" value="${escapeHtml(w.name)}" required
+              class="w-full min-h-[42px] px-3 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600" />
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1">ทะเบียนรถประจำตัว (Auto-fill)</label>
+            <select id="m-veh" class="w-full min-h-[42px] px-3 py-2 rounded-xl border border-slate-300 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-600">
+              <option value="">-- ยังไม่ผูกทะเบียนรถ --</option>
+              ${vehOpts}
+            </select>
+          </div>
+          <div class="flex justify-end gap-2 pt-2 border-t border-slate-100">
+            <button type="button" id="m-cancel" class="min-h-[40px] px-4 py-2 rounded-xl border border-slate-300 text-xs sm:text-sm cursor-pointer">ยกเลิก</button>
+            <button type="submit" class="min-h-[40px] px-4 py-2 rounded-xl bg-zinc-900 text-white text-xs sm:text-sm font-semibold cursor-pointer">บันทึก</button>
+          </div>
+        </form>
+      </div>
+      `,
+      (box) => {
+        box.querySelector('#m-cancel').addEventListener('click', closeModal);
+        box.querySelector('#modal-edit-form').addEventListener('submit', async (e) => {
+          e.preventDefault();
+          try {
+            await apiFetch(`/api/master/workers/${w.id}`, {
+              method: 'PUT',
+              body: JSON.stringify({
+                name: box.querySelector('#m-name').value.trim(),
+                default_vehicle: box.querySelector('#m-veh').value.trim()
+              })
+            });
+            closeModal();
+            showToast('อัปเดตข้อมูลคนขับเรียบร้อยแล้ว', 'success');
+            await refreshAll();
+          } catch (err) {
+            showToast(err.message, 'error');
+          }
+        });
+      }
+    );
+  }
+
+  function openEditSiteModal(s) {
+    openModal(
+      `
+      <div class="p-5 sm:p-6 space-y-4">
+        <h3 class="text-base font-bold text-slate-900">แก้ไขไซต์งาน / โครงการ</h3>
+        <form id="modal-edit-form" class="space-y-3.5">
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1">ชื่อโครงการ / ไซต์งาน (site_name) *</label>
+            <input type="text" id="m-site-name" value="${escapeHtml(s.site_name)}" required
+              class="w-full min-h-[42px] px-3 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600" />
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1">ชื่อโซน (zone_name)</label>
+            <input type="text" id="m-zone-name" value="${escapeHtml(s.zone_name)}"
+              class="w-full min-h-[42px] px-3 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600" />
+          </div>
+          <div class="flex justify-end gap-2 pt-2 border-t border-slate-100">
+            <button type="button" id="m-cancel" class="min-h-[40px] px-4 py-2 rounded-xl border border-slate-300 text-xs sm:text-sm cursor-pointer">ยกเลิก</button>
+            <button type="submit" class="min-h-[40px] px-4 py-2 rounded-xl bg-zinc-900 text-white text-xs sm:text-sm font-semibold cursor-pointer">บันทึก</button>
+          </div>
+        </form>
+      </div>
+      `,
+      (box) => {
+        box.querySelector('#m-cancel').addEventListener('click', closeModal);
+        box.querySelector('#modal-edit-form').addEventListener('submit', async (e) => {
+          e.preventDefault();
+          try {
+            await apiFetch(`/api/master/sites/${s.id}`, {
+              method: 'PUT',
+              body: JSON.stringify({
+                site_name: box.querySelector('#m-site-name').value.trim(),
+                zone_name: box.querySelector('#m-zone-name').value.trim()
+              })
+            });
+            closeModal();
+            showToast('อัปเดตไซต์งาน/โครงการเรียบร้อยแล้ว', 'success');
+            await refreshAll();
+          } catch (err) {
+            showToast(err.message, 'error');
+          }
+        });
+      }
+    );
+  }
+
+  function openEditRouteModal(r) {
+    openModal(
+      `
+      <div class="p-5 sm:p-6 space-y-4">
+        <h3 class="text-base font-bold text-slate-900">แก้ไขเส้นทาง / ที่หมาย</h3>
+        <form id="modal-edit-form" class="space-y-3">
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">ต้นทาง (origin) *</label>
+              <input type="text" id="m-origin" value="${escapeHtml(r.origin)}" required
+                class="w-full min-h-[40px] px-3 py-2 rounded-xl border border-slate-300 text-sm" />
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">ปลายทาง (destination) *</label>
+              <input type="text" id="m-dest" value="${escapeHtml(r.destination)}" required
+                class="w-full min-h-[40px] px-3 py-2 rounded-xl border border-slate-300 text-sm" />
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">ชื่อแท็บชีต Excel (route_sheet_name)</label>
+              <input type="text" id="m-sheet" value="${escapeHtml(r.route_sheet_name)}"
+                class="w-full min-h-[40px] px-3 py-2 rounded-xl border border-slate-300 text-sm" />
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">ชื่อรายการในใบเบิก (billing_title)</label>
+              <input type="text" id="m-billing" value="${escapeHtml(r.billing_title)}"
+                class="w-full min-h-[40px] px-3 py-2 rounded-xl border border-slate-300 text-sm" />
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">เวลาออกมาตรฐาน</label>
+              <input type="time" id="m-dep" value="${escapeHtml(r.default_dep_time)}"
+                class="w-full min-h-[40px] px-3 py-2 rounded-xl border border-slate-300 text-sm" />
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">เวลาถึงมาตรฐาน</label>
+              <input type="time" id="m-arr" value="${escapeHtml(r.default_arr_time)}"
+                class="w-full min-h-[40px] px-3 py-2 rounded-xl border border-slate-300 text-sm" />
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">ราคาต่อเที่ยว (บาท)</label>
+              <input type="number" id="m-price" min="0" step="0.01" value="${escapeHtml(r.unit_price)}"
+                class="w-full min-h-[40px] px-3 py-2 rounded-xl border border-slate-300 text-sm" />
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">คอลัมน์ C ในสำเนาโซน</label>
+              <select id="m-mode" class="w-full min-h-[40px] px-3 py-2 rounded-xl border border-slate-300 text-sm bg-white">
+                <option value="worker_name" ${r.display_mode_zone !== 'license_plate' ? 'selected' : ''}>ชื่อคนขับ (worker_name)</option>
+                <option value="license_plate" ${r.display_mode_zone === 'license_plate' ? 'selected' : ''}>ทะเบียนรถ (license_plate)</option>
+              </select>
+            </div>
+          </div>
+          <div class="flex justify-end gap-2 pt-2 border-t border-slate-100">
+            <button type="button" id="m-cancel" class="min-h-[40px] px-4 py-2 rounded-xl border border-slate-300 text-xs sm:text-sm cursor-pointer">ยกเลิก</button>
+            <button type="submit" class="min-h-[40px] px-4 py-2 rounded-xl bg-zinc-900 text-white text-xs sm:text-sm font-semibold cursor-pointer">บันทึก</button>
+          </div>
+        </form>
+      </div>
+      `,
+      (box) => {
+        box.querySelector('#m-cancel').addEventListener('click', closeModal);
+        box.querySelector('#modal-edit-form').addEventListener('submit', async (e) => {
+          e.preventDefault();
+          try {
+            await apiFetch(`/api/master/routes/${r.id}`, {
+              method: 'PUT',
+              body: JSON.stringify({
+                origin: box.querySelector('#m-origin').value.trim(),
+                destination: box.querySelector('#m-dest').value.trim(),
+                route_sheet_name: box.querySelector('#m-sheet').value.trim(),
+                billing_title: box.querySelector('#m-billing').value.trim(),
+                default_dep_time: box.querySelector('#m-dep').value.trim(),
+                default_arr_time: box.querySelector('#m-arr').value.trim(),
+                unit_price: Number(box.querySelector('#m-price').value) || 0,
+                display_mode_zone: box.querySelector('#m-mode').value
+              })
+            });
+            closeModal();
+            showToast('อัปเดตเส้นทางเรียบร้อยแล้ว', 'success');
+            await loadMasterData();
+          } catch (err) {
+            showToast(err.message, 'error');
+          }
+        });
+      }
+    );
+  }
+
+  async function handleBackOfficeActionClick(e) {
+    const btn = e.target.closest('button[data-bo]');
+    if (!btn) return;
+    const action = btn.dataset.bo;
+    const id = Number(btn.dataset.id);
+
+    try {
+      if (action === 'toggle-vehicle') {
+        const v = state.vehicles.find((x) => x.id === id);
+        if (!v) return;
+        await apiFetch(`/api/master/vehicles/${id}`, { method: 'PUT', body: JSON.stringify({ active: !v.active }) });
+        await loadMasterData();
+      } else if (action === 'edit-vehicle') {
+        const v = state.vehicles.find((x) => x.id === id);
+        if (v) openEditVehicleModal(v);
+      } else if (action === 'delete-vehicle') {
+        const v = state.vehicles.find((x) => x.id === id);
+        if (!v) return;
+        const ok = await confirmModal({
+          title: 'ยืนยันการลบทะเบียนรถ',
+          message: `ต้องการลบทะเบียนรถ "${v.license_plate}" ใช่หรือไม่? (คนขับที่ผูกทะเบียนนี้ไว้จะถูกปลดการผูกอัตโนมัติ)`,
+          confirmText: 'ลบทะเบียนรถ',
+          danger: true
+        });
+        if (!ok) return;
+        await apiFetch(`/api/master/vehicles/${id}`, { method: 'DELETE' });
+        showToast(`ลบทะเบียนรถ "${v.license_plate}" แล้ว`, 'success');
+        await loadMasterData();
+      } else if (action === 'toggle-worker') {
+        const w = state.workers.find((x) => x.id === id);
+        if (!w) return;
+        await apiFetch(`/api/master/workers/${id}`, { method: 'PUT', body: JSON.stringify({ active: !w.active }) });
+        await loadMasterData();
+      } else if (action === 'edit-worker') {
+        const w = state.workers.find((x) => x.id === id);
+        if (w) openEditWorkerModal(w);
+      } else if (action === 'delete-worker') {
+        const w = state.workers.find((x) => x.id === id);
+        if (!w) return;
+        const ok = await confirmModal({
+          title: 'ยืนยันการลบรายชื่อคนขับ',
+          message: `ต้องการลบคนขับ "${w.name}" ออกจากรายการข้อมูลหลักใช่หรือไม่?`,
+          confirmText: 'ลบรายชื่อ',
+          danger: true
+        });
+        if (!ok) return;
+        await apiFetch(`/api/master/workers/${id}`, { method: 'DELETE' });
+        showToast(`ลบรายชื่อ "${w.name}" แล้ว`, 'success');
+        await loadMasterData();
+      } else if (action === 'toggle-site') {
+        const s = state.sites.find((x) => x.id === id);
+        if (!s) return;
+        await apiFetch(`/api/master/sites/${id}`, { method: 'PUT', body: JSON.stringify({ active: !s.active }) });
+        await loadMasterData();
+      } else if (action === 'edit-site') {
+        const s = state.sites.find((x) => x.id === id);
+        if (s) openEditSiteModal(s);
+      } else if (action === 'delete-site') {
+        const s = state.sites.find((x) => x.id === id);
+        if (!s) return;
+        const ok = await confirmModal({
+          title: 'ยืนยันการลบไซต์งาน / โครงการ',
+          message: `ต้องการลบโครงการ "${s.site_name}" ออกจากรายการข้อมูลหลักใช่หรือไม่?`,
+          confirmText: 'ลบโครงการ',
+          danger: true
+        });
+        if (!ok) return;
+        await apiFetch(`/api/master/sites/${id}`, { method: 'DELETE' });
+        showToast(`ลบโครงการ "${s.site_name}" แล้ว`, 'success');
+        await loadMasterData();
+      } else if (action === 'toggle-route') {
+        const r = state.routes.find((x) => x.id === id);
+        if (!r) return;
+        await apiFetch(`/api/master/routes/${id}`, { method: 'PUT', body: JSON.stringify({ active: !r.active }) });
+        await loadMasterData();
+      } else if (action === 'edit-route') {
+        const r = state.routes.find((x) => x.id === id);
+        if (r) openEditRouteModal(r);
+      } else if (action === 'delete-route') {
+        const r = state.routes.find((x) => x.id === id);
+        if (!r) return;
+        const ok = await confirmModal({
+          title: 'ยืนยันการลบเส้นทาง',
+          message: `ต้องการลบเส้นทาง "${r.origin} → ${r.destination}" ออกจากรายการข้อมูลหลักใช่หรือไม่?`,
+          confirmText: 'ลบเส้นทาง',
+          danger: true
+        });
+        if (!ok) return;
+        await apiFetch(`/api/master/routes/${id}`, { method: 'DELETE' });
+        showToast(`ลบเส้นทาง "${r.origin} → ${r.destination}" แล้ว`, 'success');
+        await loadMasterData();
+      }
+    } catch (err) {
+      showToast(err.message || 'ไม่สามารถดำเนินการได้', 'error');
+    }
+  }
+
+  async function handleQuotaSubmit(e) {
+    e.preventDefault();
+    const max_storage_limit = Number($('input-max-storage-limit').value);
+    if (!Number.isFinite(max_storage_limit) || max_storage_limit < 1) {
+      showToast('ขีดจำกัดรายการต้องเป็นตัวเลขตั้งแต่ 1 ขึ้นไป', 'error');
+      return;
+    }
+    try {
+      const res = await apiFetch('/api/settings', {
+        method: 'PUT',
+        body: JSON.stringify({ max_storage_limit })
+      });
+      if (res && res.storageQuota) renderQuotaUI(res.storageQuota);
+      showToast(`บันทึกขีดจำกัดสูงสุดเป็น ${formatInt(max_storage_limit)} รายการแล้ว`, 'success');
+    } catch (err) {
+      showToast(err.message || 'ไม่สามารถบันทึกโควต้าได้', 'error');
+    }
+  }
+
+  // ==========================================================================
+  // 11. Event Binding & Initialization
+  // ==========================================================================
+  function bindEvents() {
+    // Modal backdrop click & Escape
+    $('custom-modal-backdrop').addEventListener('click', (e) => {
+      if (e.target === $('custom-modal-backdrop')) closeModal();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') closeModal();
+    });
+
+    // Login events
+    $('toggle-password-btn').addEventListener('click', () => {
+      const input = $('login-password');
+      const icon = $('toggle-password-icon');
+      const show = input.type === 'password';
+      input.type = show ? 'text' : 'password';
+      icon.className = show ? 'fa-solid fa-eye-slash' : 'fa-solid fa-eye';
+    });
+
+    $('login-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const errBox = $('login-error-box');
+      errBox.classList.add('hidden');
+      errBox.classList.remove('flex');
+
+      const username = $('login-username').value.trim();
+      const password = $('login-password').value;
+      const btn = $('btn-login-submit');
+      btn.disabled = true;
+
+      try {
+        const res = await apiFetch('/api/login', {
+          method: 'POST',
+          body: JSON.stringify({ username, password })
+        });
+        state.token = res.token;
+        state.user = res.user;
+        state.storageMode = res.storageMode || '';
+        localStorage.setItem(TOKEN_KEY, state.token);
+        $('login-password').value = '';
+        showAppScreen();
+        if (res.storageQuota) renderQuotaUI(res.storageQuota);
+        await refreshAll();
+        showToast(`ยินดีต้อนรับ ${state.user.full_name}`, 'success');
+      } catch (err) {
+        $('login-error-text').textContent = err.message || 'ชื่อผู้ใช้งานหรือรหัสผ่านไม่ถูกต้อง';
+        errBox.classList.remove('hidden');
+        errBox.classList.add('flex');
+      } finally {
+        btn.disabled = false;
+      }
+    });
+
+    $('btn-logout').addEventListener('click', async () => {
+      const ok = await confirmModal({
+        title: 'ออกจากระบบ',
+        message: 'ต้องการออกจากระบบปฏิบัติงานใช่หรือไม่?',
+        confirmText: 'ออกจากระบบ'
+      });
+      if (!ok) return;
+      try {
+        await apiFetch('/api/logout', { method: 'POST' });
+      } catch {
+        // ignore network errors on logout
+      }
+      handleForceLogout('ออกจากระบบเรียบร้อยแล้ว');
+    });
+
+    // Navigation
+    $('nav-tab-front').addEventListener('click', () => switchView('front'));
+    $('nav-tab-back').addEventListener('click', () => switchView('back'));
+    $('mobile-nav-front').addEventListener('click', () => switchView('front'));
+    $('mobile-nav-back').addEventListener('click', () => switchView('back'));
+    $('btn-goto-backoffice-hint').addEventListener('click', () => switchView('back'));
+
+    // Back-Office Sub-Tabs
+    $('bo-tab-vehicles').addEventListener('click', () => switchBoTab('vehicles'));
+    $('bo-tab-workers').addEventListener('click', () => switchBoTab('workers'));
+    $('bo-tab-sites').addEventListener('click', () => switchBoTab('sites'));
+    $('bo-tab-routes').addEventListener('click', () => switchBoTab('routes'));
+
+    // Front-Office Form
+    $('trip-type-normal').addEventListener('click', () => setTripType('normal'));
+    $('trip-type-charter').addEventListener('click', () => setTripType('charter'));
+    $('form-date').addEventListener('change', updateFormDatePreview);
+    $('form-worker').addEventListener('change', onWorkerSelectChange);
+    $('form-route-select').addEventListener('change', onRouteSelectChange);
+    $('btn-swap-route').addEventListener('click', onSwapRouteClick);
+    $('btn-toggle-route-meta').addEventListener('click', () => toggleRouteMetaBox());
+    $('form-origin').addEventListener('input', updateRouteMetaPreview);
+    $('form-destination').addEventListener('input', updateRouteMetaPreview);
+    $('form-route-sheet-name').addEventListener('input', updateRouteMetaPreview);
+    $('form-billing-title').addEventListener('input', updateRouteMetaPreview);
+    $('form-display-mode-zone').addEventListener('change', updateRouteMetaPreview);
+    $('form-dep-time').addEventListener('input', updateDurationPreview);
+    $('form-arr-time').addEventListener('input', updateDurationPreview);
+
+    $('travel-log-form').addEventListener('submit', handleLogFormSubmit);
+    $('btn-clear-form').addEventListener('click', () => resetForm({ keepDateAndSite: false }));
+    $('btn-cancel-edit').addEventListener('click', () => resetForm({ keepDateAndSite: true }));
+    $('btn-cancel-edit-top').addEventListener('click', () => resetForm({ keepDateAndSite: true }));
+    $('btn-copy-previous-day').addEventListener('click', openCopyPreviousDayModal);
+
+    // Filter & Quick Periods
+    $('filter-site').addEventListener('change', loadLogs);
+    $('filter-trip-type').addEventListener('change', loadLogs);
+    $('filter-date-from').addEventListener('change', loadLogs);
+    $('filter-date-to').addEventListener('change', loadLogs);
+    $('filter-search').addEventListener('input', () => {
+      clearTimeout(state.searchTimer);
+      state.searchTimer = setTimeout(loadLogs, 220);
+    });
+    $('btn-period-1-15').addEventListener('click', () => applyQuickPeriod('1-15'));
+    $('btn-period-16-end').addEventListener('click', () => applyQuickPeriod('16-end'));
+    $('btn-period-today').addEventListener('click', () => applyQuickPeriod('today'));
+    $('btn-period-all').addEventListener('click', () => applyQuickPeriod('all'));
+
+    // Exports & Logs Actions
+    $('btn-export-zone').addEventListener('click', handleExportZoneCopy);
+    $('btn-export-billing').addEventListener('click', handleExportBilling);
+    $('btn-clear-all-logs').addEventListener('click', handleClearAllLogs);
+    $('logs-table-body').addEventListener('click', handleLogsActionClick);
+    $('logs-mobile-cards').addEventListener('click', handleLogsActionClick);
+
+    // Back-Office Forms & Action Delegation
+    $('form-add-vehicle').addEventListener('submit', handleAddVehicle);
+    $('form-add-worker').addEventListener('submit', handleAddWorker);
+    $('form-add-site').addEventListener('submit', handleAddSite);
+    $('form-add-route').addEventListener('submit', handleAddRoute);
+    $('form-settings-quota').addEventListener('submit', handleQuotaSubmit);
+    $('view-back-office').addEventListener('click', handleBackOfficeActionClick);
+  }
+
+  async function init() {
+    bindEvents();
+    $('form-date').value = todayIso();
+    $('filter-month').value = currentMonthIso();
+    updateFormDatePreview();
+    updateDurationPreview();
+    updateRouteMetaPreview();
+
+    if (!state.token) {
+      showLoginScreen();
+      return;
+    }
+
+    try {
+      const me = await apiFetch('/api/me');
+      state.user = me.user;
+      showAppScreen();
+      if (me.storageQuota) renderQuotaUI(me.storageQuota);
+      await refreshAll();
+    } catch {
+      handleForceLogout();
+    }
+  }
+
+  document.addEventListener('DOMContentLoaded', init);
+})();

@@ -1,33 +1,252 @@
-const {
-  db,
-  supabase,
-  isSupabaseConfigured,
-  DB_PATH,
-  hashPassword,
-  verifyPassword,
-  seedDatabase,
-  syncJsonFallbackFile,
-  getSystemSettingsMap: getLocalSettingsMap,
-  updateSystemSettings: updateLocalSettings,
-  getStorageQuotaStatus: getLocalQuotaStatus,
-  INITIAL_VEHICLES
-} = require('./db');
-const fs = require('node:fs');
+const { db, supabase, isSupabaseConfigured, verifyPassword, seedDatabase } = require('./db');
 
-function getTodayDateString() {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  const day = String(now.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
+seedDatabase();
+
+const useSupabase = Boolean(isSupabaseConfigured && supabase);
+
+// ตารางจริงที่ใช้เก็บข้อมูล (ใช้ตารางเดิมที่มีอยู่แล้วใน Supabase / SQLite เพื่อให้ใช้งานได้ทันทีโดยไม่ต้องรัน SQL เพิ่ม)
+//  - คนขับ      → master_workers   (name, default_route ← ใช้เก็บ default_vehicle, active)
+//  - ทะเบียนรถ  → master_vehicles  (plate ← license_plate, active)
+//  - โครงการ    → system_settings  (key = v3_sites,  JSON)
+//  - เส้นทาง    → system_settings  (key = v3_routes, JSON)
+//  - เที่ยววิ่ง → travel_logs      (worker_name ← id ของรายการ, gps_status ← JSON เต็มรูปแบบ, คอลัมน์อื่นเก็บค่าสำคัญไว้ดูใน Dashboard)
+const T = {
+  workers: 'master_workers',
+  vehicles: 'master_vehicles',
+  logs: 'travel_logs',
+  settings: 'system_settings'
+};
+const KV_SITES = 'v3_sites';
+const KV_ROUTES = 'v3_routes';
+const LOG_VERSION = 3;
+const DEFAULT_MAX_LIMIT = 10000;
+
+// ============================================================================
+// Helpers
+// ============================================================================
+
+function httpError(status, message, extra = {}) {
+  const err = new Error(message);
+  err.status = status;
+  Object.assign(err, extra);
+  return err;
+}
+
+const str = (v) => String(v ?? '').trim();
+
+function normalizeTime(v, label) {
+  const s = str(v);
+  if (!s) return '';
+  const m = s.match(/^(\d{1,2}):(\d{2})/);
+  if (!m || Number(m[1]) > 23 || Number(m[2]) > 59) {
+    throw httpError(400, `รูปแบบ${label}ไม่ถูกต้อง (ต้องเป็น HH:mm)`);
+  }
+  return `${String(Number(m[1])).padStart(2, '0')}:${m[2]}`;
+}
+
+function normalizeMoney(v, label) {
+  if (v === undefined || v === null || str(v) === '') return 0;
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < 0) throw httpError(400, `${label}ต้องเป็นตัวเลขตั้งแต่ 0 ขึ้นไป`);
+  return Math.round(n * 100) / 100;
+}
+
+function normalizeIntOrNull(v, label) {
+  if (v === undefined || v === null || str(v) === '') return null;
+  const n = Number.parseInt(String(v), 10);
+  if (!Number.isFinite(n) || n < 0) throw httpError(400, `${label}ต้องเป็นจำนวนเต็มตั้งแต่ 0 ขึ้นไป`);
+  return n;
+}
+
+function normalizeDisplayMode(v) {
+  return str(v) === 'license_plate' ? 'license_plate' : 'worker_name';
+}
+
+function makeId(prefix) {
+  return `${prefix}${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
 }
 
 // ============================================================================
-// USERS & AUTH
+// Low-level table access (Supabase หรือ SQLite) — ใช้ร่วมกันทุกเอนทิตี
+// ============================================================================
+
+async function selectAll(table, orderCol) {
+  if (useSupabase) {
+    const out = [];
+    const page = 1000;
+    for (let from = 0; ; from += page) {
+      const { data, error } = await supabase
+        .from(table)
+        .select('*')
+        .order(orderCol, { ascending: true })
+        .range(from, from + page - 1);
+      if (error) throw new Error(error.message);
+      out.push(...(data || []));
+      if (!data || data.length < page) break;
+    }
+    return out;
+  }
+  return db.prepare(`SELECT * FROM ${table} ORDER BY ${orderCol} ASC`).all();
+}
+
+async function selectOne(table, keyCol, key) {
+  if (useSupabase) {
+    const { data, error } = await supabase.from(table).select('*').eq(keyCol, key).maybeSingle();
+    if (error) throw new Error(error.message);
+    return data || null;
+  }
+  return db.prepare(`SELECT * FROM ${table} WHERE ${keyCol} = ?`).get(key) || null;
+}
+
+function toSqlValue(v) {
+  if (typeof v === 'boolean') return v ? 1 : 0;
+  if (v === undefined) return null;
+  return v;
+}
+
+async function insertRow(table, row, keyCol) {
+  if (useSupabase) {
+    let { data, error } = await supabase.from(table).insert(row).select('*').single();
+    if (error && error.code === '23505' && String(error.message).includes('_pkey') && keyCol === 'id') {
+      const { data: maxRow } = await supabase
+        .from(table)
+        .select('id')
+        .order('id', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      const retry = await supabase
+        .from(table)
+        .insert({ ...row, id: (maxRow?.id || 0) + 1 })
+        .select('*')
+        .single();
+      data = retry.data;
+      error = retry.error;
+    }
+    if (error) throw new Error(error.message);
+    return data;
+  }
+  const cols = Object.keys(row);
+  const result = db
+    .prepare(`INSERT INTO ${table} (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`)
+    .run(...cols.map((c) => toSqlValue(row[c])));
+  const key = keyCol === 'id' ? result.lastInsertRowid : row[keyCol];
+  return db.prepare(`SELECT * FROM ${table} WHERE ${keyCol} = ?`).get(key);
+}
+
+async function insertRows(table, rows) {
+  if (rows.length === 0) return;
+  if (useSupabase) {
+    const chunk = 500;
+    for (let i = 0; i < rows.length; i += chunk) {
+      const { error } = await supabase.from(table).insert(rows.slice(i, i + chunk));
+      if (error) throw new Error(error.message);
+    }
+    return;
+  }
+  for (const r of rows) {
+    await insertRow(table, r, 'worker_name');
+  }
+}
+
+async function updateRow(table, keyCol, key, patch) {
+  if (useSupabase) {
+    const { data, error } = await supabase
+      .from(table)
+      .update(patch)
+      .eq(keyCol, key)
+      .select('*')
+      .single();
+    if (error) throw new Error(error.message);
+    return data;
+  }
+  const cols = Object.keys(patch);
+  db.prepare(`UPDATE ${table} SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE ${keyCol} = ?`).run(
+    ...cols.map((c) => toSqlValue(patch[c])),
+    key
+  );
+  const newKey = patch[keyCol] !== undefined ? patch[keyCol] : key;
+  return db.prepare(`SELECT * FROM ${table} WHERE ${keyCol} = ?`).get(newKey);
+}
+
+async function deleteRow(table, keyCol, key) {
+  if (useSupabase) {
+    const { error } = await supabase.from(table).delete().eq(keyCol, key);
+    if (error) throw new Error(error.message);
+    return;
+  }
+  db.prepare(`DELETE FROM ${table} WHERE ${keyCol} = ?`).run(key);
+}
+
+async function deleteAllRows(table, keyCol) {
+  if (useSupabase) {
+    const { error } = await supabase.from(table).delete().neq(keyCol, '__never_match__');
+    if (error) throw new Error(error.message);
+    return;
+  }
+  db.prepare(`DELETE FROM ${table}`).run();
+}
+
+async function countRows(table) {
+  if (useSupabase) {
+    const { count, error } = await supabase.from(table).select('*', { count: 'exact', head: true });
+    if (error) throw new Error(error.message);
+    return Number(count || 0);
+  }
+  return Number(db.prepare(`SELECT COUNT(*) AS c FROM ${table}`).get().c);
+}
+
+async function getKV(key, fallback) {
+  let raw = null;
+  if (useSupabase) {
+    const { data, error } = await supabase
+      .from(T.settings)
+      .select('value')
+      .eq('key', key)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    raw = data ? data.value : null;
+  } else {
+    const row = db.prepare(`SELECT value FROM ${T.settings} WHERE key = ?`).get(key);
+    raw = row ? row.value : null;
+  }
+  if (raw === null || raw === undefined || raw === '') return fallback;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return fallback;
+  }
+}
+
+async function getRawKV(key) {
+  if (useSupabase) {
+    const { data } = await supabase.from(T.settings).select('value').eq('key', key).maybeSingle();
+    return data ? data.value : null;
+  }
+  const row = db.prepare(`SELECT value FROM ${T.settings} WHERE key = ?`).get(key);
+  return row ? row.value : null;
+}
+
+async function setRawKV(key, value) {
+  if (useSupabase) {
+    const { error } = await supabase
+      .from(T.settings)
+      .upsert([{ key, value: String(value) }], { onConflict: 'key' });
+    if (error) throw new Error(error.message);
+    return;
+  }
+  db.prepare(`INSERT OR REPLACE INTO ${T.settings} (key, value) VALUES (?, ?)`).run(key, String(value));
+}
+
+async function setKV(key, value) {
+  await setRawKV(key, JSON.stringify(value));
+}
+
+// ============================================================================
+// Users
 // ============================================================================
 
 async function findUserByUsername(username) {
-  if (isSupabaseConfigured && supabase) {
+  if (useSupabase) {
     const { data, error } = await supabase
       .from('users')
       .select('id, username, password, full_name, role')
@@ -44,7 +263,7 @@ async function findUserByUsername(username) {
 }
 
 async function findUserById(id) {
-  if (isSupabaseConfigured && supabase) {
+  if (useSupabase) {
     const { data, error } = await supabase
       .from('users')
       .select('id, username, full_name, role')
@@ -53,1517 +272,569 @@ async function findUserById(id) {
     if (error) throw new Error(error.message);
     return data || null;
   }
-  return (
-    db.prepare('SELECT id, username, full_name, role FROM users WHERE id = ?').get(id) || null
-  );
+  return db.prepare('SELECT id, username, full_name, role FROM users WHERE id = ?').get(id) || null;
 }
 
 // ============================================================================
-// SYSTEM SETTINGS & STORAGE QUOTA
+// Settings & Storage quota
 // ============================================================================
 
-async function getSettingsMap() {
-  const defaults = {
-    cartrack_api_url: 'https://fleetapi-th.cartrack.com/rest/vehicles/status',
-    cartrack_username: 'DEMO_FLEET_TH',
-    cartrack_api_key: '',
-    cartrack_mock_mode: 'true',
-    max_storage_limit: '100'
-  };
-
-  if (isSupabaseConfigured && supabase) {
-    const { data, error } = await supabase.from('system_settings').select('key, value');
-    if (error) throw new Error(error.message);
-    for (const r of data || []) {
-      defaults[r.key] = r.value;
-    }
-    return defaults;
-  }
-
-  return getLocalSettingsMap();
+async function getSettings() {
+  const raw = await getRawKV('max_storage_limit');
+  const n = Number(raw);
+  return { max_storage_limit: Number.isFinite(n) && n >= 1 ? n : DEFAULT_MAX_LIMIT };
 }
 
-async function saveSettingsMap(newSettings) {
-  if (isSupabaseConfigured && supabase) {
-    const rows = Object.entries(newSettings)
-      .filter(([, v]) => v !== undefined && v !== null)
-      .map(([key, value]) => ({ key, value: String(value) }));
-    if (rows.length > 0) {
-      const { error } = await supabase.from('system_settings').upsert(rows, { onConflict: 'key' });
-      if (error) throw new Error(error.message);
-    }
-    return getSettingsMap();
-  }
-  return updateLocalSettings(newSettings);
+async function saveSettings({ max_storage_limit }) {
+  const n = Math.max(1, Number.parseInt(max_storage_limit, 10) || DEFAULT_MAX_LIMIT);
+  await setRawKV('max_storage_limit', n);
+  return getSettings();
 }
 
 async function getQuotaStatus() {
-  if (isSupabaseConfigured && supabase) {
-    const settings = await getSettingsMap();
-    const maxLimit = Math.max(1, Number(settings.max_storage_limit) || 100);
-    const { count, error } = await supabase
-      .from('travel_logs')
-      .select('*', { count: 'exact', head: true });
-    if (error) throw new Error(error.message);
-    const currentCount = Number(count || 0);
-    const usagePercent = Math.min(100, Math.round((currentCount / maxLimit) * 100));
-
-    let statusLevel = 'normal';
-    if (currentCount >= maxLimit || usagePercent >= 100) statusLevel = 'full';
-    else if (usagePercent >= 80) statusLevel = 'warning';
-
-    return {
-      currentCount,
-      maxLimit,
-      usagePercent,
-      statusLevel,
-      isFull: currentCount >= maxLimit,
-      isWarning: usagePercent >= 80 && currentCount < maxLimit,
-      dbSizeBytes: currentCount * 512,
-      supabaseFreeTierBytes: 500 * 1024 * 1024,
-      storageMode: 'supabase_cloud'
-    };
-  }
-
-  return getLocalQuotaStatus();
+  const { max_storage_limit: maxLimit } = await getSettings();
+  const currentCount = await countRows(T.logs);
+  const usagePercent = Math.min(100, Math.round((currentCount / maxLimit) * 100));
+  let statusLevel = 'normal';
+  if (currentCount >= maxLimit) statusLevel = 'full';
+  else if (usagePercent >= 80) statusLevel = 'warning';
+  return {
+    currentCount,
+    maxLimit,
+    usagePercent,
+    statusLevel,
+    isFull: currentCount >= maxLimit,
+    isWarning: statusLevel === 'warning',
+    storageMode: useSupabase ? 'supabase_cloud' : 'local_sqlite'
+  };
 }
 
 // ============================================================================
-// MASTER WORKERS
+// Master: Workers  (id, name, default_vehicle, active)
 // ============================================================================
+
+const workerFromRow = (r) => ({
+  id: Number(r.id),
+  name: r.name,
+  default_vehicle: r.default_route || '',
+  active: Boolean(r.active)
+});
 
 async function listWorkers(activeOnly = false) {
-  if (isSupabaseConfigured && supabase) {
-    let query = supabase
-      .from('master_workers')
-      .select('id, name, default_route, active')
-      .order('id', { ascending: true });
-    if (activeOnly) query = query.eq('active', true);
-    const { data, error } = await query;
-    if (error) throw new Error(error.message);
-    return (data || []).map((r) => ({
-      id: r.id,
-      name: r.name,
-      default_route: r.default_route || '',
-      active: Boolean(r.active)
-    }));
-  }
-
-  const sql = activeOnly
-    ? 'SELECT id, name, default_route, active FROM master_workers WHERE active = 1 ORDER BY id ASC'
-    : 'SELECT id, name, default_route, active FROM master_workers ORDER BY id ASC';
-  return db
-    .prepare(sql)
-    .all()
-    .map((r) => ({
-      id: r.id,
-      name: r.name,
-      default_route: r.default_route || '',
-      active: Boolean(r.active)
-    }));
+  const rows = (await selectAll(T.workers, 'id')).map(workerFromRow);
+  return activeOnly ? rows.filter((r) => r.active) : rows;
 }
 
-async function insertWithSequenceFix(table, row, selectCols) {
-  let { data, error } = await supabase.from(table).insert(row).select(selectCols).single();
-  if (error && error.code === '23505' && String(error.message).includes('_pkey')) {
-    const { data: maxRow } = await supabase
-      .from(table)
-      .select('id')
-      .order('id', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    const nextId = (maxRow?.id || 0) + 1;
-    const retry = await supabase
-      .from(table)
-      .insert({ ...row, id: nextId })
-      .select(selectCols)
-      .single();
-    data = retry.data;
-    error = retry.error;
+async function assertVehicleExistsIfSet(plate) {
+  if (!plate) return;
+  const vehicles = await listVehicles();
+  if (!vehicles.some((v) => v.license_plate === plate)) {
+    throw httpError(400, `ไม่พบทะเบียนรถ "${plate}" ในตารางทะเบียนรถ กรุณาเพิ่มทะเบียนรถก่อน`);
   }
-  if (error) throw new Error(error.message);
-  return data;
 }
 
-async function createWorker({ name, default_route, active }) {
-  if (isSupabaseConfigured && supabase) {
-    const { data: existing } = await supabase
-      .from('master_workers')
-      .select('id')
-      .eq('name', name)
-      .maybeSingle();
-    if (existing) {
-      const err = new Error(`ชื่อคนงาน "${name}" มีอยู่ในระบบแล้ว`);
-      err.status = 409;
-      throw err;
-    }
-
-    const data = await insertWithSequenceFix(
-      'master_workers',
-      { name, default_route: default_route || '', active: Boolean(active) },
-      'id, name, default_route, active'
-    );
-    return {
-      id: data.id,
-      name: data.name,
-      default_route: data.default_route || '',
-      active: Boolean(data.active)
-    };
+async function createWorker({ name, default_vehicle, active }) {
+  const cleanName = str(name);
+  if (!cleanName) throw httpError(400, 'กรุณาระบุชื่อคนขับ');
+  const plate = str(default_vehicle);
+  await assertVehicleExistsIfSet(plate);
+  const existing = await listWorkers();
+  if (existing.some((w) => w.name === cleanName)) {
+    throw httpError(409, `ชื่อคนขับ "${cleanName}" มีอยู่ในระบบแล้ว`);
   }
-
-  const existing = db.prepare('SELECT id FROM master_workers WHERE name = ?').get(name);
-  if (existing) {
-    const err = new Error(`ชื่อคนงาน "${name}" มีอยู่ในระบบแล้ว`);
-    err.status = 409;
-    throw err;
-  }
-  const result = db
-    .prepare('INSERT INTO master_workers (name, default_route, active) VALUES (?, ?, ?)')
-    .run(name, default_route || '', active ? 1 : 0);
-  syncJsonFallbackFile();
-  const created = db
-    .prepare('SELECT id, name, default_route, active FROM master_workers WHERE id = ?')
-    .get(result.lastInsertRowid);
-  return {
-    id: created.id,
-    name: created.name,
-    default_route: created.default_route || '',
-    active: Boolean(created.active)
-  };
+  const row = await insertRow(
+    T.workers,
+    { name: cleanName, default_route: plate, active: active === undefined ? true : Boolean(active) },
+    'id'
+  );
+  return workerFromRow(row);
 }
 
-async function updateWorker(id, { name, default_route, active }, userRole) {
-  if (isSupabaseConfigured && supabase) {
-    const { data: existing, error: fetchErr } = await supabase
-      .from('master_workers')
-      .select('id, name, default_route, active')
-      .eq('id', id)
-      .maybeSingle();
-    if (fetchErr) throw new Error(fetchErr.message);
-    if (!existing) {
-      const err = new Error('ไม่พบข้อมูลคนงานที่ต้องการแก้ไข');
-      err.status = 404;
-      throw err;
-    }
+async function updateWorker(id, { name, default_vehicle, active }) {
+  const all = await listWorkers();
+  const existing = all.find((w) => w.id === Number(id));
+  if (!existing) throw httpError(404, 'ไม่พบคนขับที่ต้องการแก้ไข');
 
-    const isRenaming = name !== undefined && name !== existing.name;
-    const isTogglingActive = active !== undefined && Boolean(active) !== Boolean(existing.active);
-    if ((isRenaming || isTogglingActive) && userRole !== 'admin') {
-      const err = new Error('เฉพาะผู้ดูแลระบบ (Admin) เท่านั้นที่สามารถเปลี่ยนชื่อหรือสถานะคนงานได้');
-      err.status = 403;
-      throw err;
-    }
-
-    const newName = name !== undefined ? name : existing.name;
-    const newDefaultRoute =
-      default_route !== undefined ? default_route : existing.default_route || '';
-    const newActive = active !== undefined ? Boolean(active) : Boolean(existing.active);
-
-    if (newName !== existing.name) {
-      const { data: dup } = await supabase
-        .from('master_workers')
-        .select('id')
-        .eq('name', newName)
-        .neq('id', id)
-        .maybeSingle();
-      if (dup) {
-        const err = new Error(`ชื่อคนงาน "${newName}" มีอยู่ในระบบแล้ว`);
-        err.status = 409;
-        throw err;
-      }
-    }
-
-    const { data: updated, error: updErr } = await supabase
-      .from('master_workers')
-      .update({ name: newName, default_route: newDefaultRoute, active: newActive })
-      .eq('id', id)
-      .select('id, name, default_route, active')
-      .single();
-    if (updErr) throw new Error(updErr.message);
-
-    let cascadedLogsCount = 0;
-    if (newName !== existing.name) {
-      const allLogs = await listLogs();
-      for (const log of allLogs) {
-        if ((log.worker_name || '') === existing.name) {
-          await updateLog(log.log_id || log.worker_name, { worker_name: newName });
-          cascadedLogsCount += 1;
-        }
-      }
-    }
-
-    return {
-      id: updated.id,
-      name: updated.name,
-      default_route: updated.default_route || '',
-      active: Boolean(updated.active),
-      cascadedLogsCount
-    };
+  const newName = name !== undefined ? str(name) : existing.name;
+  if (!newName) throw httpError(400, 'ชื่อคนขับห้ามเว้นว่าง');
+  const newPlate = default_vehicle !== undefined ? str(default_vehicle) : existing.default_vehicle;
+  if (default_vehicle !== undefined) await assertVehicleExistsIfSet(newPlate);
+  if (newName !== existing.name && all.some((w) => w.name === newName)) {
+    throw httpError(409, `ชื่อคนขับ "${newName}" มีอยู่ในระบบแล้ว`);
   }
 
-  const existing = db
-    .prepare('SELECT id, name, default_route, active FROM master_workers WHERE id = ?')
-    .get(id);
-  if (!existing) {
-    const err = new Error('ไม่พบข้อมูลคนงานที่ต้องการแก้ไข');
-    err.status = 404;
-    throw err;
-  }
-
-  const isRenaming = name !== undefined && name !== existing.name;
-  const isTogglingActive = active !== undefined && Boolean(active) !== Boolean(existing.active);
-  if ((isRenaming || isTogglingActive) && userRole !== 'admin') {
-    const err = new Error('เฉพาะผู้ดูแลระบบ (Admin) เท่านั้นที่สามารถเปลี่ยนชื่อหรือสถานะคนงานได้');
-    err.status = 403;
-    throw err;
-  }
-
-  const newName = name !== undefined ? name : existing.name;
-  const newDefaultRoute =
-    default_route !== undefined ? default_route : existing.default_route || '';
-  const newActive = active !== undefined ? (active ? 1 : 0) : existing.active ? 1 : 0;
-
-  if (newName !== existing.name) {
-    const dup = db
-      .prepare('SELECT id FROM master_workers WHERE name = ? AND id != ?')
-      .get(newName, id);
-    if (dup) {
-      const err = new Error(`ชื่อคนงาน "${newName}" มีอยู่ในระบบแล้ว`);
-      err.status = 409;
-      throw err;
-    }
-  }
+  const row = await updateRow(T.workers, 'id', existing.id, {
+    name: newName,
+    default_route: newPlate,
+    active: active !== undefined ? Boolean(active) : existing.active
+  });
 
   let cascadedLogsCount = 0;
-  db.exec('BEGIN');
-  try {
-    db.prepare('UPDATE master_workers SET name = ?, default_route = ?, active = ? WHERE id = ?').run(
-      newName,
-      newDefaultRoute,
-      newActive,
-      id
-    );
-    if (newName !== existing.name) {
-      const matchingLogs = db
-        .prepare("SELECT worker_name FROM travel_logs WHERE worker_name = ? OR worker_name LIKE ?")
-        .all(existing.name, `${existing.name}__#%`);
-      const updStmt = db.prepare(
-        "UPDATE travel_logs SET worker_name = ?, updated_at = datetime('now', 'localtime') WHERE worker_name = ?"
-      );
-      for (const m of matchingLogs) {
-        const { suffix } = splitWorkerLogKey(m.worker_name);
-        const nextKey = suffix ? `${newName}${suffix}` : newName;
-        updStmt.run(nextKey, m.worker_name);
-        cascadedLogsCount += 1;
-      }
-    }
-    db.exec('COMMIT');
-  } catch (e) {
-    db.exec('ROLLBACK');
-    throw e;
+  if (newName !== existing.name) {
+    cascadedLogsCount = await cascadeLogField('worker_name', existing.name, newName);
   }
-  syncJsonFallbackFile();
-
-  const updated = db
-    .prepare('SELECT id, name, default_route, active FROM master_workers WHERE id = ?')
-    .get(id);
-  return {
-    id: updated.id,
-    name: updated.name,
-    default_route: updated.default_route || '',
-    active: Boolean(updated.active),
-    cascadedLogsCount
-  };
+  return { ...workerFromRow(row), cascadedLogsCount };
 }
 
 async function deleteWorker(id) {
-  if (isSupabaseConfigured && supabase) {
-    const { data: existing } = await supabase
-      .from('master_workers')
-      .select('id, name')
-      .eq('id', id)
-      .maybeSingle();
-    if (!existing) {
-      const err = new Error('ไม่พบรายชื่อคนงานที่ต้องการลบ');
-      err.status = 404;
-      throw err;
-    }
-    const { error } = await supabase.from('master_workers').delete().eq('id', id);
-    if (error) throw new Error(error.message);
-    return existing;
-  }
-
-  const existing = db.prepare('SELECT id, name FROM master_workers WHERE id = ?').get(id);
-  if (!existing) {
-    const err = new Error('ไม่พบรายชื่อคนงานที่ต้องการลบ');
-    err.status = 404;
-    throw err;
-  }
-  db.prepare('DELETE FROM master_workers WHERE id = ?').run(id);
-  syncJsonFallbackFile();
+  const existing = (await listWorkers()).find((w) => w.id === Number(id));
+  if (!existing) throw httpError(404, 'ไม่พบคนขับที่ต้องการลบ');
+  await deleteRow(T.workers, 'id', existing.id);
   return existing;
 }
 
 // ============================================================================
-// MASTER ROUTES
+// Master: Vehicles  (id, license_plate, active)
 // ============================================================================
 
-async function listRoutes(activeOnly = false) {
-  if (isSupabaseConfigured && supabase) {
-    let query = supabase
-      .from('master_routes')
-      .select('id, name, active')
-      .order('id', { ascending: true });
-    if (activeOnly) query = query.eq('active', true);
-    const { data, error } = await query;
-    if (error) throw new Error(error.message);
-    return (data || []).map((r) => ({ id: r.id, name: r.name, active: Boolean(r.active) }));
-  }
-
-  const sql = activeOnly
-    ? 'SELECT id, name, active FROM master_routes WHERE active = 1 ORDER BY id ASC'
-    : 'SELECT id, name, active FROM master_routes ORDER BY id ASC';
-  return db
-    .prepare(sql)
-    .all()
-    .map((r) => ({ id: r.id, name: r.name, active: Boolean(r.active) }));
-}
-
-async function createRoute({ name, active, reactivateIfInactive }) {
-  if (isSupabaseConfigured && supabase) {
-    const { data: existing } = await supabase
-      .from('master_routes')
-      .select('id, name, active')
-      .eq('name', name)
-      .maybeSingle();
-    if (existing) {
-      if (!existing.active && reactivateIfInactive) {
-        await supabase.from('master_routes').update({ active: true }).eq('id', existing.id);
-        return { id: existing.id, name: existing.name, active: true, reactivated: true };
-      }
-      const err = new Error(`เส้นทาง/ที่หมาย "${name}" มีอยู่ในระบบแล้ว`);
-      err.status = 409;
-      throw err;
-    }
-
-    const data = await insertWithSequenceFix(
-      'master_routes',
-      { name, active: Boolean(active) },
-      'id, name, active'
-    );
-    return { id: data.id, name: data.name, active: Boolean(data.active) };
-  }
-
-  const existing = db.prepare('SELECT id, name, active FROM master_routes WHERE name = ?').get(name);
-  if (existing) {
-    if (!existing.active && reactivateIfInactive) {
-      db.prepare('UPDATE master_routes SET active = 1 WHERE id = ?').run(existing.id);
-      syncJsonFallbackFile();
-      return { id: existing.id, name: existing.name, active: true, reactivated: true };
-    }
-    const err = new Error(`เส้นทาง/ที่หมาย "${name}" มีอยู่ในระบบแล้ว`);
-    err.status = 409;
-    throw err;
-  }
-  const result = db
-    .prepare('INSERT INTO master_routes (name, active) VALUES (?, ?)')
-    .run(name, active ? 1 : 0);
-  syncJsonFallbackFile();
-  const created = db
-    .prepare('SELECT id, name, active FROM master_routes WHERE id = ?')
-    .get(result.lastInsertRowid);
-  return { id: created.id, name: created.name, active: Boolean(created.active) };
-}
-
-async function updateRoute(id, { name, active }) {
-  if (isSupabaseConfigured && supabase) {
-    const { data: existing, error: fetchErr } = await supabase
-      .from('master_routes')
-      .select('id, name, active')
-      .eq('id', id)
-      .maybeSingle();
-    if (fetchErr) throw new Error(fetchErr.message);
-    if (!existing) {
-      const err = new Error('ไม่พบเส้นทาง/ที่หมายที่ต้องการแก้ไข');
-      err.status = 404;
-      throw err;
-    }
-
-    const newName = name !== undefined ? name : existing.name;
-    const newActive = active !== undefined ? Boolean(active) : Boolean(existing.active);
-
-    if (newName !== existing.name) {
-      const { data: dup } = await supabase
-        .from('master_routes')
-        .select('id')
-        .eq('name', newName)
-        .neq('id', id)
-        .maybeSingle();
-      if (dup) {
-        const err = new Error(`เส้นทาง/ที่หมาย "${newName}" มีอยู่ในระบบแล้ว`);
-        err.status = 409;
-        throw err;
-      }
-    }
-
-    const { data: updated, error: updErr } = await supabase
-      .from('master_routes')
-      .update({ name: newName, active: newActive })
-      .eq('id', id)
-      .select('id, name, active')
-      .single();
-    if (updErr) throw new Error(updErr.message);
-
-    let cascadedLogsCount = 0;
-    let cascadedWorkersCount = 0;
-    if (newName !== existing.name) {
-      const { data: lUpd } = await supabase
-        .from('travel_logs')
-        .update({ route: newName, updated_at: new Date().toISOString() })
-        .eq('route', existing.name)
-        .select('worker_name');
-      cascadedLogsCount = (lUpd || []).length;
-
-      const { data: wUpd } = await supabase
-        .from('master_workers')
-        .update({ default_route: newName })
-        .eq('default_route', existing.name)
-        .select('id');
-      cascadedWorkersCount = (wUpd || []).length;
-    }
-
-    return {
-      id: updated.id,
-      name: updated.name,
-      active: Boolean(updated.active),
-      cascadedLogsCount,
-      cascadedWorkersCount
-    };
-  }
-
-  const existing = db.prepare('SELECT id, name, active FROM master_routes WHERE id = ?').get(id);
-  if (!existing) {
-    const err = new Error('ไม่พบเส้นทาง/ที่หมายที่ต้องการแก้ไข');
-    err.status = 404;
-    throw err;
-  }
-  const newName = name !== undefined ? name : existing.name;
-  const newActive = active !== undefined ? (active ? 1 : 0) : existing.active ? 1 : 0;
-
-  if (newName !== existing.name) {
-    const dup = db
-      .prepare('SELECT id FROM master_routes WHERE name = ? AND id != ?')
-      .get(newName, id);
-    if (dup) {
-      const err = new Error(`เส้นทาง/ที่หมาย "${newName}" มีอยู่ในระบบแล้ว`);
-      err.status = 409;
-      throw err;
-    }
-  }
-
-  let cascadedLogsCount = 0;
-  let cascadedWorkersCount = 0;
-  db.exec('BEGIN');
-  try {
-    db.prepare('UPDATE master_routes SET name = ?, active = ? WHERE id = ?').run(
-      newName,
-      newActive,
-      id
-    );
-    if (newName !== existing.name) {
-      const logRes = db
-        .prepare(
-          "UPDATE travel_logs SET route = ?, updated_at = datetime('now', 'localtime') WHERE route = ?"
-        )
-        .run(newName, existing.name);
-      cascadedLogsCount = Number(logRes.changes || 0);
-
-      const workerRes = db
-        .prepare('UPDATE master_workers SET default_route = ? WHERE default_route = ?')
-        .run(newName, existing.name);
-      cascadedWorkersCount = Number(workerRes.changes || 0);
-    }
-    db.exec('COMMIT');
-  } catch (e) {
-    db.exec('ROLLBACK');
-    throw e;
-  }
-  syncJsonFallbackFile();
-  const updated = db.prepare('SELECT id, name, active FROM master_routes WHERE id = ?').get(id);
-  return {
-    id: updated.id,
-    name: updated.name,
-    active: Boolean(updated.active),
-    cascadedLogsCount,
-    cascadedWorkersCount
-  };
-}
-
-async function deleteRoute(id) {
-  if (isSupabaseConfigured && supabase) {
-    const { data: existing } = await supabase
-      .from('master_routes')
-      .select('id, name')
-      .eq('id', id)
-      .maybeSingle();
-    if (!existing) {
-      const err = new Error('ไม่พบเส้นทาง/ที่หมายที่ต้องการลบ');
-      err.status = 404;
-      throw err;
-    }
-    const { error } = await supabase.from('master_routes').delete().eq('id', id);
-    if (error) throw new Error(error.message);
-    await supabase
-      .from('master_workers')
-      .update({ default_route: '' })
-      .eq('default_route', existing.name);
-    return existing;
-  }
-
-  const existing = db.prepare('SELECT id, name FROM master_routes WHERE id = ?').get(id);
-  if (!existing) {
-    const err = new Error('ไม่พบเส้นทาง/ที่หมายที่ต้องการลบ');
-    err.status = 404;
-    throw err;
-  }
-  db.exec('BEGIN');
-  try {
-    db.prepare('DELETE FROM master_routes WHERE id = ?').run(id);
-    db.prepare("UPDATE master_workers SET default_route = '' WHERE default_route = ?").run(
-      existing.name
-    );
-    db.exec('COMMIT');
-  } catch (e) {
-    db.exec('ROLLBACK');
-    throw e;
-  }
-  syncJsonFallbackFile();
-  return existing;
-}
-
-// ============================================================================
-// MASTER VEHICLES
-// ============================================================================
+const vehicleFromRow = (r) => ({
+  id: Number(r.id),
+  license_plate: r.plate,
+  active: Boolean(r.active)
+});
 
 async function listVehicles(activeOnly = false) {
-  if (isSupabaseConfigured && supabase) {
-    let query = supabase
-      .from('master_vehicles')
-      .select('id, plate, active')
-      .order('id', { ascending: true });
-    if (activeOnly) query = query.eq('active', true);
-    const { data, error } = await query;
-    if (error) throw new Error(error.message);
-    return (data || []).map((r) => ({ id: r.id, plate: r.plate, active: Boolean(r.active) }));
-  }
-
-  const sql = activeOnly
-    ? 'SELECT id, plate, active FROM master_vehicles WHERE active = 1 ORDER BY id ASC'
-    : 'SELECT id, plate, active FROM master_vehicles ORDER BY id ASC';
-  return db
-    .prepare(sql)
-    .all()
-    .map((r) => ({ id: r.id, plate: r.plate, active: Boolean(r.active) }));
+  const rows = (await selectAll(T.vehicles, 'id')).map(vehicleFromRow);
+  return activeOnly ? rows.filter((r) => r.active) : rows;
 }
 
-async function createVehicle({ plate, active }) {
-  if (isSupabaseConfigured && supabase) {
-    const { data: existing } = await supabase
-      .from('master_vehicles')
-      .select('id')
-      .eq('plate', plate)
-      .maybeSingle();
-    if (existing) {
-      const err = new Error(`ทะเบียนรถ "${plate}" มีอยู่ในระบบแล้ว`);
-      err.status = 409;
-      throw err;
-    }
-
-    const data = await insertWithSequenceFix(
-      'master_vehicles',
-      { plate, active: Boolean(active) },
-      'id, plate, active'
-    );
-    return { id: data.id, plate: data.plate, active: Boolean(data.active) };
+async function createVehicle({ license_plate, active }) {
+  const plate = str(license_plate);
+  if (!plate) throw httpError(400, 'กรุณาระบุเลขทะเบียนรถ');
+  const existing = await listVehicles();
+  if (existing.some((v) => v.license_plate === plate)) {
+    throw httpError(409, `ทะเบียนรถ "${plate}" มีอยู่ในระบบแล้ว`);
   }
-
-  const existing = db.prepare('SELECT id FROM master_vehicles WHERE plate = ?').get(plate);
-  if (existing) {
-    const err = new Error(`ทะเบียนรถ "${plate}" มีอยู่ในระบบแล้ว`);
-    err.status = 409;
-    throw err;
-  }
-  const result = db
-    .prepare('INSERT INTO master_vehicles (plate, active) VALUES (?, ?)')
-    .run(plate, active ? 1 : 0);
-  syncJsonFallbackFile();
-  const created = db
-    .prepare('SELECT id, plate, active FROM master_vehicles WHERE id = ?')
-    .get(result.lastInsertRowid);
-  return { id: created.id, plate: created.plate, active: Boolean(created.active) };
+  const row = await insertRow(
+    T.vehicles,
+    { plate, active: active === undefined ? true : Boolean(active) },
+    'id'
+  );
+  return vehicleFromRow(row);
 }
 
-async function updateVehicle(id, { plate, active }) {
-  if (isSupabaseConfigured && supabase) {
-    const { data: existing, error: fetchErr } = await supabase
-      .from('master_vehicles')
-      .select('id, plate, active')
-      .eq('id', id)
-      .maybeSingle();
-    if (fetchErr) throw new Error(fetchErr.message);
-    if (!existing) {
-      const err = new Error('ไม่พบทะเบียนรถที่ต้องการแก้ไข');
-      err.status = 404;
-      throw err;
-    }
-
-    const newPlate = plate !== undefined ? plate : existing.plate;
-    const newActive = active !== undefined ? Boolean(active) : Boolean(existing.active);
-
-    if (newPlate !== existing.plate) {
-      const { data: dup } = await supabase
-        .from('master_vehicles')
-        .select('id')
-        .eq('plate', newPlate)
-        .neq('id', id)
-        .maybeSingle();
-      if (dup) {
-        const err = new Error(`ทะเบียนรถ "${newPlate}" มีอยู่ในระบบแล้ว`);
-        err.status = 409;
-        throw err;
-      }
-    }
-
-    const { data: updated, error: updErr } = await supabase
-      .from('master_vehicles')
-      .update({ plate: newPlate, active: newActive })
-      .eq('id', id)
-      .select('id, plate, active')
-      .single();
-    if (updErr) throw new Error(updErr.message);
-
-    let cascadedLogsCount = 0;
-    if (newPlate !== existing.plate) {
-      const { data: lUpd } = await supabase
-        .from('travel_logs')
-        .update({ vehicle_plate: newPlate, updated_at: new Date().toISOString() })
-        .eq('vehicle_plate', existing.plate)
-        .select('worker_name');
-      cascadedLogsCount = (lUpd || []).length;
-    }
-
-    return {
-      id: updated.id,
-      plate: updated.plate,
-      active: Boolean(updated.active),
-      cascadedLogsCount
-    };
+async function updateVehicle(id, { license_plate, active }) {
+  const all = await listVehicles();
+  const existing = all.find((v) => v.id === Number(id));
+  if (!existing) throw httpError(404, 'ไม่พบทะเบียนรถที่ต้องการแก้ไข');
+  const newPlate = license_plate !== undefined ? str(license_plate) : existing.license_plate;
+  if (!newPlate) throw httpError(400, 'เลขทะเบียนรถห้ามเว้นว่าง');
+  if (newPlate !== existing.license_plate && all.some((v) => v.license_plate === newPlate)) {
+    throw httpError(409, `ทะเบียนรถ "${newPlate}" มีอยู่ในระบบแล้ว`);
   }
-
-  const existing = db.prepare('SELECT id, plate, active FROM master_vehicles WHERE id = ?').get(id);
-  if (!existing) {
-    const err = new Error('ไม่พบทะเบียนรถที่ต้องการแก้ไข');
-    err.status = 404;
-    throw err;
-  }
-  const newPlate = plate !== undefined ? plate : existing.plate;
-  const newActive = active !== undefined ? (active ? 1 : 0) : existing.active ? 1 : 0;
-
-  if (newPlate !== existing.plate) {
-    const dup = db
-      .prepare('SELECT id FROM master_vehicles WHERE plate = ? AND id != ?')
-      .get(newPlate, id);
-    if (dup) {
-      const err = new Error(`ทะเบียนรถ "${newPlate}" มีอยู่ในระบบแล้ว`);
-      err.status = 409;
-      throw err;
-    }
-  }
+  const row = await updateRow(T.vehicles, 'id', existing.id, {
+    plate: newPlate,
+    active: active !== undefined ? Boolean(active) : existing.active
+  });
 
   let cascadedLogsCount = 0;
-  db.exec('BEGIN');
-  try {
-    db.prepare('UPDATE master_vehicles SET plate = ?, active = ? WHERE id = ?').run(
-      newPlate,
-      newActive,
-      id
-    );
-    if (newPlate !== existing.plate) {
-      const logRes = db
-        .prepare(
-          "UPDATE travel_logs SET vehicle_plate = ?, updated_at = datetime('now', 'localtime') WHERE vehicle_plate = ?"
-        )
-        .run(newPlate, existing.plate);
-      cascadedLogsCount = Number(logRes.changes || 0);
+  if (newPlate !== existing.license_plate) {
+    cascadedLogsCount = await cascadeLogField('license_plate', existing.license_plate, newPlate);
+    for (const w of await listWorkers()) {
+      if (w.default_vehicle === existing.license_plate) {
+        await updateRow(T.workers, 'id', w.id, { default_route: newPlate });
+      }
     }
-    db.exec('COMMIT');
-  } catch (e) {
-    db.exec('ROLLBACK');
-    throw e;
   }
-  syncJsonFallbackFile();
-  const updated = db.prepare('SELECT id, plate, active FROM master_vehicles WHERE id = ?').get(id);
-  return {
-    id: updated.id,
-    plate: updated.plate,
-    active: Boolean(updated.active),
-    cascadedLogsCount
-  };
+  return { ...vehicleFromRow(row), cascadedLogsCount };
 }
 
 async function deleteVehicle(id) {
-  if (isSupabaseConfigured && supabase) {
-    const { data: existing } = await supabase
-      .from('master_vehicles')
-      .select('id, plate')
-      .eq('id', id)
-      .maybeSingle();
-    if (!existing) {
-      const err = new Error('ไม่พบทะเบียนรถที่ต้องการลบ');
-      err.status = 404;
-      throw err;
+  const existing = (await listVehicles()).find((v) => v.id === Number(id));
+  if (!existing) throw httpError(404, 'ไม่พบทะเบียนรถที่ต้องการลบ');
+  await deleteRow(T.vehicles, 'id', existing.id);
+  for (const w of await listWorkers()) {
+    if (w.default_vehicle === existing.license_plate) {
+      await updateRow(T.workers, 'id', w.id, { default_route: '' });
     }
-    const { error } = await supabase.from('master_vehicles').delete().eq('id', id);
-    if (error) throw new Error(error.message);
-    return existing;
   }
-
-  const existing = db.prepare('SELECT id, plate FROM master_vehicles WHERE id = ?').get(id);
-  if (!existing) {
-    const err = new Error('ไม่พบทะเบียนรถที่ต้องการลบ');
-    err.status = 404;
-    throw err;
-  }
-  db.prepare('DELETE FROM master_vehicles WHERE id = ?').run(id);
-  syncJsonFallbackFile();
   return existing;
 }
 
 // ============================================================================
-// MASTER SITES (ไซต์งาน / โครงการ - หัวตาราง เช่น ไลฟ์รัชดา-พระราม9)
+// Master: Sites  (id, site_name, zone_name, active)  — เก็บใน system_settings
 // ============================================================================
 
-async function getSupabaseSitesArray() {
-  const { data, error } = await supabase
-    .from('system_settings')
-    .select('value')
-    .eq('key', 'master_sites_json')
-    .maybeSingle();
-  if (error) throw new Error(error.message);
-  if (!data || !data.value) return [];
-  try {
-    const parsed = JSON.parse(data.value);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-async function saveSupabaseSitesArray(sitesArray) {
-  const { error } = await supabase
-    .from('system_settings')
-    .upsert([{ key: 'master_sites_json', value: JSON.stringify(sitesArray) }], {
-      onConflict: 'key'
-    });
-  if (error) throw new Error(error.message);
-}
+const siteFromItem = (s) => ({
+  id: Number(s.id),
+  site_name: String(s.site_name || ''),
+  zone_name: String(s.zone_name || ''),
+  active: s.active === undefined ? true : Boolean(s.active)
+});
 
 async function listSites(activeOnly = false) {
-  if (isSupabaseConfigured && supabase) {
-    const sites = await getSupabaseSitesArray();
-    const mapped = sites.map((s) => ({
-      id: Number(s.id),
-      name: String(s.name || ''),
-      active: Boolean(s.active)
-    }));
-    return activeOnly ? mapped.filter((s) => s.active) : mapped;
-  }
-
-  const sql = activeOnly
-    ? 'SELECT id, name, active FROM master_sites WHERE active = 1 ORDER BY id ASC'
-    : 'SELECT id, name, active FROM master_sites ORDER BY id ASC';
-  return db
-    .prepare(sql)
-    .all()
-    .map((r) => ({ id: r.id, name: r.name, active: Boolean(r.active) }));
+  const items = (await getKV(KV_SITES, [])).map(siteFromItem);
+  return activeOnly ? items.filter((s) => s.active) : items;
 }
 
-async function createSite({ name, active, reactivateIfInactive }) {
-  if (isSupabaseConfigured && supabase) {
-    const sites = await getSupabaseSitesArray();
-    const existing = sites.find((s) => String(s.name).toLowerCase() === name.toLowerCase());
-    if (existing) {
-      if (!existing.active && reactivateIfInactive) {
-        existing.active = true;
-        await saveSupabaseSitesArray(sites);
-        return { id: existing.id, name: existing.name, active: true, reactivated: true };
-      }
-      const err = new Error(`ไซต์งาน/โครงการ "${name}" มีอยู่ในระบบแล้ว`);
-      err.status = 409;
-      throw err;
-    }
-    const nextId = sites.reduce((max, s) => Math.max(max, Number(s.id) || 0), 0) + 1;
-    const newItem = { id: nextId, name, active: Boolean(active) };
-    sites.push(newItem);
-    await saveSupabaseSitesArray(sites);
-    return newItem;
+async function createSite({ site_name, zone_name, active }) {
+  const name = str(site_name);
+  if (!name) throw httpError(400, 'กรุณาระบุชื่อไซต์งาน / โครงการ');
+  const items = await listSites();
+  if (items.some((s) => s.site_name === name)) {
+    throw httpError(409, `ไซต์งาน/โครงการ "${name}" มีอยู่ในระบบแล้ว`);
   }
-
-  const existing = db.prepare('SELECT id, name, active FROM master_sites WHERE name = ?').get(name);
-  if (existing) {
-    if (!existing.active && reactivateIfInactive) {
-      db.prepare('UPDATE master_sites SET active = 1 WHERE id = ?').run(existing.id);
-      syncJsonFallbackFile();
-      return { id: existing.id, name: existing.name, active: true, reactivated: true };
-    }
-    const err = new Error(`ไซต์งาน/โครงการ "${name}" มีอยู่ในระบบแล้ว`);
-    err.status = 409;
-    throw err;
-  }
-  const result = db
-    .prepare('INSERT INTO master_sites (name, active) VALUES (?, ?)')
-    .run(name, active ? 1 : 0);
-  syncJsonFallbackFile();
-  const created = db
-    .prepare('SELECT id, name, active FROM master_sites WHERE id = ?')
-    .get(result.lastInsertRowid);
-  return { id: created.id, name: created.name, active: Boolean(created.active) };
-}
-
-async function updateSite(id, { name, active }) {
-  if (isSupabaseConfigured && supabase) {
-    const sites = await getSupabaseSitesArray();
-    const idx = sites.findIndex((s) => Number(s.id) === Number(id));
-    if (idx === -1) {
-      const err = new Error('ไม่พบไซต์งาน/โครงการที่ต้องการแก้ไข');
-      err.status = 404;
-      throw err;
-    }
-    const existing = sites[idx];
-    const newName = name !== undefined ? name : existing.name;
-    const newActive = active !== undefined ? Boolean(active) : Boolean(existing.active);
-
-    if (newName !== existing.name) {
-      const dup = sites.find(
-        (s) => Number(s.id) !== Number(id) && String(s.name).toLowerCase() === newName.toLowerCase()
-      );
-      if (dup) {
-        const err = new Error(`ไซต์งาน/โครงการ "${newName}" มีอยู่ในระบบแล้ว`);
-        err.status = 409;
-        throw err;
-      }
-    }
-
-    sites[idx] = { id: Number(existing.id), name: newName, active: newActive };
-    await saveSupabaseSitesArray(sites);
-
-    let cascadedLogsCount = 0;
-    if (newName !== existing.name) {
-      const allLogs = await listLogs();
-      for (const log of allLogs) {
-        if ((log.site_name || '') === existing.name) {
-          await updateLog(log.log_id || log.worker_name, { site_name: newName });
-          cascadedLogsCount += 1;
-        }
-      }
-    }
-
-    return {
-      id: Number(existing.id),
-      name: newName,
-      active: newActive,
-      cascadedLogsCount
-    };
-  }
-
-  const existing = db.prepare('SELECT id, name, active FROM master_sites WHERE id = ?').get(id);
-  if (!existing) {
-    const err = new Error('ไม่พบไซต์งาน/โครงการที่ต้องการแก้ไข');
-    err.status = 404;
-    throw err;
-  }
-  const newName = name !== undefined ? name : existing.name;
-  const newActive = active !== undefined ? (active ? 1 : 0) : existing.active ? 1 : 0;
-
-  if (newName !== existing.name) {
-    const dup = db
-      .prepare('SELECT id FROM master_sites WHERE name = ? AND id != ?')
-      .get(newName, id);
-    if (dup) {
-      const err = new Error(`ไซต์งาน/โครงการ "${newName}" มีอยู่ในระบบแล้ว`);
-      err.status = 409;
-      throw err;
-    }
-  }
-
-  let cascadedLogsCount = 0;
-  db.exec('BEGIN');
-  try {
-    db.prepare('UPDATE master_sites SET name = ?, active = ? WHERE id = ?').run(
-      newName,
-      newActive,
-      id
-    );
-    if (newName !== existing.name) {
-      const logRes = db
-        .prepare(
-          "UPDATE travel_logs SET site_name = ?, updated_at = datetime('now', 'localtime') WHERE site_name = ?"
-        )
-        .run(newName, existing.name);
-      cascadedLogsCount = Number(logRes.changes || 0);
-    }
-    db.exec('COMMIT');
-  } catch (e) {
-    db.exec('ROLLBACK');
-    throw e;
-  }
-  syncJsonFallbackFile();
-  const updated = db.prepare('SELECT id, name, active FROM master_sites WHERE id = ?').get(id);
-  return {
-    id: updated.id,
-    name: updated.name,
-    active: Boolean(updated.active),
-    cascadedLogsCount
+  const created = {
+    id: items.reduce((m, s) => Math.max(m, s.id), 0) + 1,
+    site_name: name,
+    zone_name: str(zone_name),
+    active: active === undefined ? true : Boolean(active)
   };
+  items.push(created);
+  await setKV(KV_SITES, items);
+  return created;
+}
+
+async function updateSite(id, { site_name, zone_name, active }) {
+  const items = await listSites();
+  const idx = items.findIndex((s) => s.id === Number(id));
+  if (idx === -1) throw httpError(404, 'ไม่พบไซต์งาน/โครงการที่ต้องการแก้ไข');
+  const existing = items[idx];
+  const newName = site_name !== undefined ? str(site_name) : existing.site_name;
+  if (!newName) throw httpError(400, 'ชื่อไซต์งาน/โครงการห้ามเว้นว่าง');
+  if (newName !== existing.site_name && items.some((s) => s.site_name === newName)) {
+    throw httpError(409, `ไซต์งาน/โครงการ "${newName}" มีอยู่ในระบบแล้ว`);
+  }
+  items[idx] = {
+    id: existing.id,
+    site_name: newName,
+    zone_name: zone_name !== undefined ? str(zone_name) : existing.zone_name,
+    active: active !== undefined ? Boolean(active) : existing.active
+  };
+  await setKV(KV_SITES, items);
+  let cascadedLogsCount = 0;
+  if (newName !== existing.site_name) {
+    cascadedLogsCount = await cascadeLogField('site_name', existing.site_name, newName);
+  }
+  return { ...items[idx], cascadedLogsCount };
 }
 
 async function deleteSite(id) {
-  if (isSupabaseConfigured && supabase) {
-    const sites = await getSupabaseSitesArray();
-    const idx = sites.findIndex((s) => Number(s.id) === Number(id));
-    if (idx === -1) {
-      const err = new Error('ไม่พบไซต์งาน/โครงการที่ต้องการลบ');
-      err.status = 404;
-      throw err;
-    }
-    const [deleted] = sites.splice(idx, 1);
-    await saveSupabaseSitesArray(sites);
-    return deleted;
-  }
-
-  const existing = db.prepare('SELECT id, name FROM master_sites WHERE id = ?').get(id);
-  if (!existing) {
-    const err = new Error('ไม่พบไซต์งาน/โครงการที่ต้องการลบ');
-    err.status = 404;
-    throw err;
-  }
-  db.prepare('DELETE FROM master_sites WHERE id = ?').run(id);
-  syncJsonFallbackFile();
-  return existing;
+  const items = await listSites();
+  const idx = items.findIndex((s) => s.id === Number(id));
+  if (idx === -1) throw httpError(404, 'ไม่พบไซต์งาน/โครงการที่ต้องการลบ');
+  const [deleted] = items.splice(idx, 1);
+  await setKV(KV_SITES, items);
+  return deleted;
 }
 
 // ============================================================================
-// TRAVEL LOGS
+// Master: Routes — เส้นทาง / ที่หมาย  — เก็บใน system_settings
 // ============================================================================
 
-function normalizePassengerCount(val) {
-  if (val === null || val === undefined || String(val).trim() === '') {
+const routeFromItem = (r) => ({
+  id: Number(r.id),
+  origin: String(r.origin || ''),
+  destination: String(r.destination || ''),
+  route_sheet_name: String(r.route_sheet_name || ''),
+  billing_title: String(r.billing_title || ''),
+  default_dep_time: String(r.default_dep_time || ''),
+  default_arr_time: String(r.default_arr_time || ''),
+  unit_price: Number(r.unit_price) || 0,
+  display_mode_zone: normalizeDisplayMode(r.display_mode_zone),
+  active: r.active === undefined ? true : Boolean(r.active)
+});
+
+async function listRoutes(activeOnly = false) {
+  const items = (await getKV(KV_ROUTES, [])).map(routeFromItem);
+  return activeOnly ? items.filter((r) => r.active) : items;
+}
+
+function buildRouteRecord(input, base = {}) {
+  const origin = input.origin !== undefined ? str(input.origin) : base.origin || '';
+  const destination =
+    input.destination !== undefined ? str(input.destination) : base.destination || '';
+  if (!origin || !destination) throw httpError(400, 'กรุณาระบุต้นทางและปลายทางของเส้นทาง');
+  const sheet =
+    (input.route_sheet_name !== undefined ? str(input.route_sheet_name) : base.route_sheet_name) ||
+    `${origin} - ${destination}`;
+  const billing =
+    (input.billing_title !== undefined ? str(input.billing_title) : base.billing_title) || sheet;
+  return {
+    origin,
+    destination,
+    route_sheet_name: sheet,
+    billing_title: billing,
+    default_dep_time:
+      input.default_dep_time !== undefined
+        ? normalizeTime(input.default_dep_time, 'เวลาออกมาตรฐาน')
+        : base.default_dep_time || '',
+    default_arr_time:
+      input.default_arr_time !== undefined
+        ? normalizeTime(input.default_arr_time, 'เวลาถึงมาตรฐาน')
+        : base.default_arr_time || '',
+    unit_price:
+      input.unit_price !== undefined ? normalizeMoney(input.unit_price, 'ราคาต่อเที่ยว') : base.unit_price || 0,
+    display_mode_zone:
+      input.display_mode_zone !== undefined
+        ? normalizeDisplayMode(input.display_mode_zone)
+        : normalizeDisplayMode(base.display_mode_zone),
+    active: input.active !== undefined ? Boolean(input.active) : base.active === undefined ? true : base.active
+  };
+}
+
+async function createRoute(input) {
+  const items = await listRoutes();
+  const record = buildRouteRecord(input);
+  if (items.some((r) => r.origin === record.origin && r.destination === record.destination)) {
+    throw httpError(409, `เส้นทาง "${record.origin} → ${record.destination}" มีอยู่ในระบบแล้ว`);
+  }
+  const created = { id: items.reduce((m, r) => Math.max(m, r.id), 0) + 1, ...record };
+  items.push(created);
+  await setKV(KV_ROUTES, items);
+  return created;
+}
+
+async function updateRoute(id, input) {
+  const items = await listRoutes();
+  const idx = items.findIndex((r) => r.id === Number(id));
+  if (idx === -1) throw httpError(404, 'ไม่พบเส้นทางที่ต้องการแก้ไข');
+  const record = buildRouteRecord(input, items[idx]);
+  if (
+    items.some(
+      (r, i) => i !== idx && r.origin === record.origin && r.destination === record.destination
+    )
+  ) {
+    throw httpError(409, `เส้นทาง "${record.origin} → ${record.destination}" มีอยู่ในระบบแล้ว`);
+  }
+  items[idx] = { id: items[idx].id, ...record };
+  await setKV(KV_ROUTES, items);
+  return items[idx];
+}
+
+async function deleteRoute(id) {
+  const items = await listRoutes();
+  const idx = items.findIndex((r) => r.id === Number(id));
+  if (idx === -1) throw httpError(404, 'ไม่พบเส้นทางที่ต้องการลบ');
+  const [deleted] = items.splice(idx, 1);
+  await setKV(KV_ROUTES, items);
+  return deleted;
+}
+
+// ============================================================================
+// Travel logs
+// ============================================================================
+
+const LOG_FIELDS = [
+  'trip_date',
+  'trip_type',
+  'worker_name',
+  'license_plate',
+  'site_name',
+  'route_sheet_name',
+  'billing_title',
+  'origin',
+  'dep_time',
+  'destination',
+  'arr_time',
+  'passengers',
+  'unit_price',
+  'display_mode_zone',
+  'remark'
+];
+
+function logToRow(id, log) {
+  const body = { v: LOG_VERSION };
+  for (const f of LOG_FIELDS) body[f] = log[f];
+  return {
+    worker_name: id,
+    travel_date: log.trip_date,
+    route: log.route_sheet_name,
+    departure_time: log.dep_time,
+    arrival_time: log.arr_time,
+    vehicle_plate: log.license_plate,
+    gps_status: JSON.stringify(body),
+    updated_at: new Date().toISOString()
+  };
+}
+
+function logFromRow(r) {
+  let body = null;
+  try {
+    body = JSON.parse(r.gps_status);
+  } catch {
     return null;
   }
-  const num = Number.parseInt(String(val).trim(), 10);
-  if (Number.isNaN(num) || num < 0) return null;
-  return num;
+  if (!body || body.v !== LOG_VERSION) return null;
+  const out = { id: r.worker_name };
+  for (const f of LOG_FIELDS) out[f] = body[f];
+  out.passengers = body.passengers === null || body.passengers === undefined ? null : Number(body.passengers);
+  out.unit_price = Number(body.unit_price) || 0;
+  return out;
 }
 
-function encodeExtraFieldsToGpsStatus(passenger_count, site_name, note) {
-  const cleanSite = String(site_name || '').trim();
-  const cleanNote = String(note || '').trim();
-  if (passenger_count === null && !cleanSite && !cleanNote) {
-    return '';
-  }
-  return JSON.stringify({
-    passenger_count,
-    site_name: cleanSite,
-    note: cleanNote
-  });
+async function loadAllLogs() {
+  return (await selectAll(T.logs, 'worker_name')).map(logFromRow).filter(Boolean);
 }
 
-function splitWorkerLogKey(rawKey) {
-  const str = String(rawKey || '');
-  const sepIdx = str.indexOf('__#');
-  if (sepIdx === -1) {
-    return {
-      log_id: str,
-      worker_name: str,
-      suffix: ''
-    };
-  }
-  return {
-    log_id: str,
-    worker_name: str.slice(0, sepIdx),
-    suffix: str.slice(sepIdx)
-  };
+function compareLogsChrono(a, b) {
+  if (a.trip_date !== b.trip_date) return String(a.trip_date).localeCompare(String(b.trip_date));
+  return String(a.dep_time || a.arr_time || '').localeCompare(String(b.dep_time || b.arr_time || ''));
 }
 
-function withResolvedPassengerCount(row) {
-  if (!row) return row;
-  const { log_id, worker_name } = splitWorkerLogKey(row.worker_name);
-  let count =
-    row.passenger_count !== undefined && row.passenger_count !== null
-      ? normalizePassengerCount(row.passenger_count)
-      : null;
-  let siteName =
-    row.site_name !== undefined && row.site_name !== null ? String(row.site_name).trim() : '';
-  let noteText =
-    row.note !== undefined && row.note !== null ? String(row.note).trim() : '';
+function normalizeLogInput(input, base = {}) {
+  const pick = (field) => (input[field] !== undefined ? input[field] : base[field]);
 
-  if (row.gps_status) {
-    try {
-      const parsed = JSON.parse(row.gps_status);
-      if (parsed && typeof parsed === 'object') {
-        if (count === null && parsed.passenger_count !== undefined && parsed.passenger_count !== null) {
-          count = normalizePassengerCount(parsed.passenger_count);
-        }
-        if (!siteName && parsed.site_name) {
-          siteName = String(parsed.site_name).trim();
-        }
-        if (!noteText && parsed.note) {
-          noteText = String(parsed.note).trim();
-        }
-      }
-    } catch {
-      // ignore non-JSON gps_status
-    }
+  const trip_date = str(pick('trip_date'));
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(trip_date)) throw httpError(400, 'กรุณาระบุวันที่เดินทางให้ถูกต้อง');
+
+  const trip_type = str(pick('trip_type')) || 'normal';
+  if (!['normal', 'charter'].includes(trip_type)) {
+    throw httpError(400, 'ประเภทงานต้องเป็น normal (รับ-ส่งปกติ) หรือ charter (งานเหมา/ขนย้าย)');
   }
+
+  const worker_name = str(pick('worker_name'));
+  if (!worker_name) throw httpError(400, 'กรุณาเลือกชื่อคนขับ');
+
+  const origin = str(pick('origin'));
+  const destination = str(pick('destination'));
+  if (!origin || !destination) throw httpError(400, 'กรุณาระบุต้นทาง (จาก) และปลายทาง (ถึง)');
+
+  const route_sheet_name = str(pick('route_sheet_name')) || `${origin} - ${destination}`;
+  const billing_title = str(pick('billing_title')) || route_sheet_name;
 
   return {
-    ...row,
-    log_id,
+    trip_date,
+    trip_type,
     worker_name,
-    site_name: siteName,
-    passenger_count: count,
-    note: noteText
+    license_plate: str(pick('license_plate')),
+    site_name: str(pick('site_name')),
+    route_sheet_name,
+    billing_title,
+    origin,
+    dep_time: normalizeTime(pick('dep_time'), 'เวลาออก'),
+    destination,
+    arr_time: normalizeTime(pick('arr_time'), 'เวลาถึง'),
+    passengers: normalizeIntOrNull(pick('passengers'), 'จำนวนคนโดยสาร'),
+    unit_price: normalizeMoney(pick('unit_price'), 'ราคาต่อเที่ยว'),
+    display_mode_zone: normalizeDisplayMode(pick('display_mode_zone')),
+    remark: str(pick('remark'))
   };
 }
 
-function isMissingExtraColumnError(error) {
-  if (!error) return false;
-  const msg = String(error.message || '').toLowerCase();
-  return (
-    error.code === 'PGRST204' ||
-    error.code === '42703' ||
-    msg.includes('passenger_count') ||
-    msg.includes('site_name')
-  );
+async function assertQuotaAllows(extra = 1) {
+  const quota = await getQuotaStatus();
+  if (quota.currentCount + extra > quota.maxLimit) {
+    throw httpError(
+      507,
+      `พื้นที่เก็บข้อมูลไม่พอ (${quota.currentCount}/${quota.maxLimit} รายการ) กรุณาส่งออกไฟล์สำรองแล้วล้างข้อมูลเก่า หรือเพิ่มขีดจำกัดในระบบหลังบ้าน`,
+      { code: 'STORAGE_FULL', storageQuota: quota }
+    );
+  }
+  return quota;
 }
 
-async function listLogs(dateFilter = '', searchFilter = '') {
-  if (dateFilter && typeof dateFilter === 'object') {
-    searchFilter = dateFilter.search || '';
-    dateFilter = dateFilter.date || '';
-  }
-  let rows = [];
-  if (isSupabaseConfigured && supabase) {
-    const { data, error } = await supabase
-      .from('travel_logs')
-      .select('*')
-      .order('travel_date', { ascending: false })
-      .order('departure_time', { ascending: true })
-      .order('worker_name', { ascending: true });
-    if (error) throw new Error(error.message);
-    rows = (data || []).map(withResolvedPassengerCount);
-  } else {
-    rows = db
-      .prepare(
-        `SELECT worker_name, site_name, travel_date, route, departure_time, arrival_time, vehicle_plate, passenger_count, gps_status, updated_at
-         FROM travel_logs
-         ORDER BY travel_date DESC, departure_time ASC, worker_name ASC`
-      )
-      .all()
-      .map(withResolvedPassengerCount);
-  }
-
-  if (dateFilter) {
-    rows = rows.filter((r) => (r.travel_date || '') === dateFilter);
-  }
-
-  if (searchFilter) {
-    const q = searchFilter.toLowerCase();
-    rows = rows.filter((r) => {
-      const combined = [
-        r.worker_name || '',
-        r.site_name || '',
-        r.travel_date || '',
-        r.route || '',
-        r.vehicle_plate || '',
-        r.passenger_count !== null && r.passenger_count !== undefined ? `${r.passenger_count} คน` : '',
-        r.note || '',
-        r.departure_time || '',
-        r.arrival_time || ''
-      ]
+async function listLogs(filters = {}) {
+  const { date_from, date_to, site_name, trip_type, search } = filters;
+  let rows = await loadAllLogs();
+  if (date_from) rows = rows.filter((r) => r.trip_date >= date_from);
+  if (date_to) rows = rows.filter((r) => r.trip_date <= date_to);
+  if (site_name) rows = rows.filter((r) => r.site_name === site_name);
+  if (trip_type) rows = rows.filter((r) => r.trip_type === trip_type);
+  if (search) {
+    const q = String(search).toLowerCase();
+    rows = rows.filter((r) =>
+      [r.worker_name, r.license_plate, r.site_name, r.route_sheet_name, r.origin, r.destination, r.remark]
         .join(' ')
-        .toLowerCase();
-      return combined.includes(q);
-    });
+        .toLowerCase()
+        .includes(q)
+    );
   }
-
+  // ใหม่สุดขึ้นก่อน (วันที่มาก → น้อย) และเวลาออกเรียงจากเช้า → เย็น
+  rows.sort((a, b) => {
+    if (a.trip_date !== b.trip_date) return String(b.trip_date).localeCompare(String(a.trip_date));
+    return String(a.dep_time || a.arr_time || '').localeCompare(String(b.dep_time || b.arr_time || ''));
+  });
   return rows;
 }
 
-async function createLog(payload) {
-  const {
-    worker_name,
-    site_name,
-    travel_date,
-    route,
-    departure_time,
-    arrival_time,
-    vehicle_plate,
-    note
-  } = payload;
-  const cleanWorkerName = String(worker_name || '').trim();
-  const cleanSiteName = String(site_name || '').trim();
-  const cleanNote = String(note || '').trim();
-  const passenger_count = normalizePassengerCount(payload.passenger_count);
-  const encodedExtra = encodeExtraFieldsToGpsStatus(passenger_count, cleanSiteName, cleanNote);
-  const uniqueLogKey = `${cleanWorkerName}__#${Date.now()}_${Math.floor(Math.random() * 10000)}`;
-
-  if (isSupabaseConfigured && supabase) {
-    const quota = await getQuotaStatus();
-    if (quota.isFull) {
-      const err = new Error(
-        `พื้นที่เก็บข้อมูลเต็ม (${quota.currentCount}/${quota.maxLimit} รายการ - 100%) ไม่สามารถบันทึกข้อมูลใหม่ได้ชั่วคราว กรุณาส่งออกไฟล์สำรองข้อมูลหรือล้างข้อมูลเก่า`
-      );
-      err.status = 507;
-      err.code = 'STORAGE_FULL';
-      err.storageQuota = quota;
-      throw err;
-    }
-
-    const insertRow = {
-      worker_name: uniqueLogKey,
-      travel_date: travel_date || '',
-      route: route || '',
-      departure_time: departure_time || '',
-      arrival_time: arrival_time || '',
-      vehicle_plate: vehicle_plate || '',
-      passenger_count,
-      gps_status: encodedExtra,
-      updated_at: new Date().toISOString()
-    };
-
-    let { data: created, error } = await supabase
-      .from('travel_logs')
-      .insert(insertRow)
-      .select('*')
-      .single();
-
-    if (error && isMissingExtraColumnError(error)) {
-      const { passenger_count: _omit, ...fallbackRow } = insertRow;
-      const retry = await supabase
-        .from('travel_logs')
-        .insert(fallbackRow)
-        .select('*')
-        .single();
-      created = retry.data;
-      error = retry.error;
-    }
-
-    if (error) throw new Error(error.message);
-
-    return {
-      ...withResolvedPassengerCount(created),
-      storageQuota: await getQuotaStatus()
-    };
-  }
-
-  const quota = await getQuotaStatus();
-  if (quota.isFull) {
-    const err = new Error(
-      `พื้นที่เก็บข้อมูลเต็ม (${quota.currentCount}/${quota.maxLimit} รายการ - 100%) ไม่สามารถบันทึกข้อมูลใหม่ได้ชั่วคราว กรุณาส่งออกไฟล์สำรองข้อมูลหรือล้างข้อมูลเก่า`
-    );
-    err.status = 507;
-    err.code = 'STORAGE_FULL';
-    err.storageQuota = quota;
-    throw err;
-  }
-
-  db.prepare(
-    `INSERT INTO travel_logs (worker_name, site_name, travel_date, route, departure_time, arrival_time, vehicle_plate, passenger_count, gps_status, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))`
-  ).run(
-    uniqueLogKey,
-    cleanSiteName,
-    travel_date || '',
-    route || '',
-    departure_time || '',
-    arrival_time || '',
-    vehicle_plate || '',
-    passenger_count,
-    encodedExtra
-  );
-
-  syncJsonFallbackFile();
-  const created = db.prepare('SELECT * FROM travel_logs WHERE worker_name = ?').get(uniqueLogKey);
-  return { ...withResolvedPassengerCount(created), storageQuota: await getQuotaStatus() };
+async function createLog(input) {
+  await assertQuotaAllows(1);
+  const log = normalizeLogInput(input);
+  const id = makeId('T');
+  const row = await insertRow(T.logs, logToRow(id, log), 'worker_name');
+  return { ...logFromRow(row), storageQuota: await getQuotaStatus() };
 }
 
-async function updateLog(log_id, updates) {
-  if (isSupabaseConfigured && supabase) {
-    const { data: existing } = await supabase
-      .from('travel_logs')
-      .select('*')
-      .eq('worker_name', log_id)
-      .maybeSingle();
-    if (!existing) {
-      const err = new Error(`ไม่พบข้อมูลการเดินทางที่ต้องการแก้ไข`);
-      err.status = 404;
-      throw err;
-    }
-
-    const resolvedExisting = withResolvedPassengerCount(existing);
-    const { suffix } = splitWorkerLogKey(existing.worker_name);
-    const nextWorkerName =
-      updates.worker_name !== undefined && String(updates.worker_name).trim()
-        ? String(updates.worker_name).trim()
-        : resolvedExisting.worker_name;
-    const nextLogKey = suffix ? `${nextWorkerName}${suffix}` : existing.worker_name;
-
-    const nextPassengerCount =
-      updates.passenger_count !== undefined
-        ? normalizePassengerCount(updates.passenger_count)
-        : resolvedExisting.passenger_count;
-    const nextSiteName =
-      updates.site_name !== undefined
-        ? String(updates.site_name || '').trim()
-        : resolvedExisting.site_name || '';
-    const nextNote =
-      updates.note !== undefined
-        ? String(updates.note || '').trim()
-        : resolvedExisting.note || '';
-    const encodedExtra = encodeExtraFieldsToGpsStatus(nextPassengerCount, nextSiteName, nextNote);
-
-    const nextRow = {
-      worker_name: nextLogKey,
-      travel_date:
-        updates.travel_date !== undefined ? updates.travel_date : existing.travel_date || '',
-      route: updates.route !== undefined ? updates.route : existing.route || '',
-      departure_time:
-        updates.departure_time !== undefined
-          ? updates.departure_time
-          : existing.departure_time || '',
-      arrival_time:
-        updates.arrival_time !== undefined ? updates.arrival_time : existing.arrival_time || '',
-      vehicle_plate:
-        updates.vehicle_plate !== undefined ? updates.vehicle_plate : existing.vehicle_plate || '',
-      passenger_count: nextPassengerCount,
-      gps_status: encodedExtra,
-      updated_at: new Date().toISOString()
-    };
-
-    let { data: updated, error } = await supabase
-      .from('travel_logs')
-      .update(nextRow)
-      .eq('worker_name', log_id)
-      .select('*')
-      .single();
-
-    if (error && isMissingExtraColumnError(error)) {
-      const { passenger_count: _omit, ...fallbackRow } = nextRow;
-      const retry = await supabase
-        .from('travel_logs')
-        .update(fallbackRow)
-        .eq('worker_name', log_id)
-        .select('*')
-        .single();
-      updated = retry.data;
-      error = retry.error;
-    }
-
-    if (error) throw new Error(error.message);
-
-    return {
-      ...withResolvedPassengerCount(updated),
-      storageQuota: await getQuotaStatus()
-    };
-  }
-
-  const existing = db
-    .prepare('SELECT * FROM travel_logs WHERE worker_name = ?')
-    .get(log_id);
-  if (!existing) {
-    const err = new Error(`ไม่พบข้อมูลการเดินทางที่ต้องการแก้ไข`);
-    err.status = 404;
-    throw err;
-  }
-
-  const resolvedExisting = withResolvedPassengerCount(existing);
-  const { suffix } = splitWorkerLogKey(existing.worker_name);
-  const nextWorkerName =
-    updates.worker_name !== undefined && String(updates.worker_name).trim()
-      ? String(updates.worker_name).trim()
-      : resolvedExisting.worker_name;
-  const nextLogKey = suffix ? `${nextWorkerName}${suffix}` : existing.worker_name;
-
-  const site_name =
-    updates.site_name !== undefined
-      ? String(updates.site_name || '').trim()
-      : resolvedExisting.site_name || '';
-  const note =
-    updates.note !== undefined
-      ? String(updates.note || '').trim()
-      : resolvedExisting.note || '';
-  const travel_date =
-    updates.travel_date !== undefined ? updates.travel_date : existing.travel_date;
-  const route = updates.route !== undefined ? updates.route : existing.route;
-  const departure_time =
-    updates.departure_time !== undefined ? updates.departure_time : existing.departure_time;
-  const arrival_time =
-    updates.arrival_time !== undefined ? updates.arrival_time : existing.arrival_time;
-  const vehicle_plate =
-    updates.vehicle_plate !== undefined ? updates.vehicle_plate : existing.vehicle_plate;
-  const passenger_count =
-    updates.passenger_count !== undefined
-      ? normalizePassengerCount(updates.passenger_count)
-      : resolvedExisting.passenger_count;
-  const gps_status = encodeExtraFieldsToGpsStatus(passenger_count, site_name, note);
-
-  db.prepare(
-    `UPDATE travel_logs
-     SET worker_name = ?, site_name = ?, travel_date = ?, route = ?, departure_time = ?, arrival_time = ?, vehicle_plate = ?, passenger_count = ?, gps_status = ?, updated_at = datetime('now', 'localtime')
-     WHERE worker_name = ?`
-  ).run(
-    nextLogKey,
-    site_name,
-    travel_date,
-    route,
-    departure_time,
-    arrival_time,
-    vehicle_plate,
-    passenger_count,
-    gps_status,
-    log_id
-  );
-
-  syncJsonFallbackFile();
-  const updated = db.prepare('SELECT * FROM travel_logs WHERE worker_name = ?').get(nextLogKey);
-  return { ...withResolvedPassengerCount(updated), storageQuota: await getQuotaStatus() };
+async function updateLog(id, updates) {
+  const existingRow = await selectOne(T.logs, 'worker_name', id);
+  const existing = existingRow ? logFromRow(existingRow) : null;
+  if (!existing) throw httpError(404, 'ไม่พบข้อมูลการเดินทางที่ต้องการแก้ไข');
+  const merged = normalizeLogInput(updates, existing);
+  const { worker_name: _key, ...patch } = logToRow(id, merged);
+  const row = await updateRow(T.logs, 'worker_name', id, patch);
+  return logFromRow(row);
 }
 
-async function deleteLog(log_id) {
-  if (isSupabaseConfigured && supabase) {
-    const { data: existing } = await supabase
-      .from('travel_logs')
-      .select('*')
-      .eq('worker_name', log_id)
-      .maybeSingle();
-    if (!existing) {
-      const err = new Error(`ไม่พบข้อมูลการเดินทางที่ต้องการลบ`);
-      err.status = 404;
-      throw err;
-    }
-
-    const { error } = await supabase.from('travel_logs').delete().eq('worker_name', log_id);
-    if (error) throw new Error(error.message);
-    return { deleted: withResolvedPassengerCount(existing), storageQuota: await getQuotaStatus() };
-  }
-
-  const existing = db
-    .prepare('SELECT * FROM travel_logs WHERE worker_name = ?')
-    .get(log_id);
-  if (!existing) {
-    const err = new Error(`ไม่พบข้อมูลการเดินทางที่ต้องการลบ`);
-    err.status = 404;
-    throw err;
-  }
-
-  db.prepare('DELETE FROM travel_logs WHERE worker_name = ?').run(log_id);
-  syncJsonFallbackFile();
-  return { deleted: withResolvedPassengerCount(existing), storageQuota: await getQuotaStatus() };
+async function deleteLog(id) {
+  const row = await selectOne(T.logs, 'worker_name', id);
+  const existing = row ? logFromRow(row) : null;
+  if (!existing) throw httpError(404, 'ไม่พบข้อมูลการเดินทางที่ต้องการลบ');
+  await deleteRow(T.logs, 'worker_name', id);
+  return { deleted: existing, storageQuota: await getQuotaStatus() };
 }
 
-async function clearOldLogs(mode = 'all') {
-  if (isSupabaseConfigured && supabase) {
-    const { data: allRows } = await supabase.from('travel_logs').select('worker_name, travel_date');
-    const rows = allRows || [];
-    const today = getTodayDateString();
-    const toDelete =
-      mode === 'before_today'
-        ? rows.filter((r) => !r.travel_date || r.travel_date < today)
-        : rows;
-    const targets = toDelete.length > 0 ? toDelete : rows;
-    const names = targets.map((r) => r.worker_name);
-
-    if (names.length > 0) {
-      const { error } = await supabase.from('travel_logs').delete().in('worker_name', names);
-      if (error) throw new Error(error.message);
-    }
-
-    return { deletedCount: names.length, storageQuota: await getQuotaStatus() };
+async function cascadeLogField(field, oldValue, newValue) {
+  const rows = await selectAll(T.logs, 'worker_name');
+  let count = 0;
+  for (const r of rows) {
+    const log = logFromRow(r);
+    if (!log || log[field] !== oldValue) continue;
+    const updated = { ...log, [field]: newValue };
+    const { worker_name: _k, ...patch } = logToRow(r.worker_name, updated);
+    await updateRow(T.logs, 'worker_name', r.worker_name, patch);
+    count += 1;
   }
-
-  let deletedCount = 0;
-  if (mode === 'before_today') {
-    const today = getTodayDateString();
-    const result = db
-      .prepare('DELETE FROM travel_logs WHERE travel_date < ? OR travel_date = ""')
-      .run(today);
-    deletedCount = Number(result.changes || 0);
-    if (deletedCount === 0) {
-      const allRes = db.prepare('DELETE FROM travel_logs').run();
-      deletedCount = Number(allRes.changes || 0);
-    }
-  } else {
-    const result = db.prepare('DELETE FROM travel_logs').run();
-    deletedCount = Number(result.changes || 0);
-  }
-  syncJsonFallbackFile();
-  return { deletedCount, storageQuota: await getQuotaStatus() };
+  return count;
 }
 
-async function resetAllToSeed() {
-  seedDatabase(true);
+// คัดลอกคิววิ่งจากวันก่อนหน้า → วันที่เลือก
+async function copyPreviousDay({ to_date, from_date }) {
+  const target = str(to_date);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(target)) throw httpError(400, 'กรุณาระบุวันที่ปลายทางให้ถูกต้อง');
+  const all = await loadAllLogs();
 
-  if (isSupabaseConfigured && supabase) {
-    // Clear existing rows in Supabase and re-insert clean seed data
-    await supabase.from('travel_logs').delete().neq('worker_name', '__never__');
-    await supabase.from('master_workers').delete().gte('id', 0);
-    await supabase.from('master_routes').delete().gte('id', 0);
-    await supabase.from('master_vehicles').delete().gte('id', 0);
-
-    const workers = db
-      .prepare('SELECT id, name, default_route, active FROM master_workers')
-      .all()
-      .map((w) => ({ ...w, active: Boolean(w.active) }));
-    const routes = db
-      .prepare('SELECT id, name, active FROM master_routes')
-      .all()
-      .map((r) => ({ ...r, active: Boolean(r.active) }));
-    const vehicles = db
-      .prepare('SELECT id, plate, active FROM master_vehicles')
-      .all()
-      .map((v) => ({ ...v, active: Boolean(v.active) }));
-    const logs = db
-      .prepare(
-        'SELECT worker_name, travel_date, route, departure_time, arrival_time, vehicle_plate, gps_status FROM travel_logs'
-      )
-      .all();
-    const settings = db.prepare('SELECT key, value FROM system_settings').all();
-
-    await supabase.from('master_workers').upsert(workers, { onConflict: 'name' });
-    await supabase.from('master_routes').upsert(routes, { onConflict: 'name' });
-    await supabase.from('master_vehicles').upsert(vehicles, { onConflict: 'plate' });
-    await supabase.from('travel_logs').upsert(logs, { onConflict: 'worker_name' });
-    await supabase.from('system_settings').upsert(settings, { onConflict: 'key' });
+  let source = str(from_date);
+  if (!source) {
+    const earlier = all.map((l) => l.trip_date).filter((d) => d < target);
+    if (earlier.length === 0) throw httpError(404, 'ไม่พบรายการวันก่อนหน้าให้คัดลอก');
+    source = earlier.sort().pop();
   }
+  const sourceLogs = all.filter((l) => l.trip_date === source).sort(compareLogsChrono);
+  if (sourceLogs.length === 0) throw httpError(404, `ไม่พบรายการของวันที่ ${source} ให้คัดลอก`);
 
-  return getQuotaStatus();
+  await assertQuotaAllows(sourceLogs.length);
+
+  const rows = sourceLogs.map((l, i) => {
+    const id = makeId('T') + String(i).padStart(3, '0');
+    return logToRow(id, { ...l, trip_date: target });
+  });
+  await insertRows(T.logs, rows);
+  return {
+    created: rows.length,
+    from_date: source,
+    to_date: target,
+    storageQuota: await getQuotaStatus()
+  };
+}
+
+async function clearAllLogs() {
+  const before = await countRows(T.logs);
+  await deleteAllRows(T.logs, 'worker_name');
+  return { deletedCount: before, storageQuota: await getQuotaStatus() };
 }
 
 module.exports = {
+  verifyPassword,
   findUserByUsername,
   findUserById,
-  getSettingsMap,
-  saveSettingsMap,
+  getSettings,
+  saveSettings,
   getQuotaStatus,
   listWorkers,
   createWorker,
   updateWorker,
   deleteWorker,
-  listRoutes,
-  createRoute,
-  updateRoute,
-  deleteRoute,
   listVehicles,
   createVehicle,
   updateVehicle,
@@ -1572,10 +843,14 @@ module.exports = {
   createSite,
   updateSite,
   deleteSite,
+  listRoutes,
+  createRoute,
+  updateRoute,
+  deleteRoute,
   listLogs,
   createLog,
   updateLog,
   deleteLog,
-  clearOldLogs,
-  resetAllToSeed
+  copyPreviousDay,
+  clearAllLogs
 };

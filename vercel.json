@@ -20,8 +20,8 @@
       "dest": "/public/vendor/$1"
     },
     {
-      "src": "/excel-sync.js",
-      "dest": "/public/excel-sync.js"
+      "src": "/excel-export.js",
+      "dest": "/public/excel-export.js"
     },
     {
       "src": "/logo.jpg",
