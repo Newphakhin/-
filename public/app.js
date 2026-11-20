@@ -568,7 +568,22 @@
     const activeSites = state.sites.filter((s) => s.active);
     const activeRoutes = state.routes.filter((r) => r.active);
 
-    // Datalist helper สำหรับช่องที่ทั้งเลือกและพิมพ์แก้เองได้ (3. คนขับ, 4. ทะเบียนรถ, 5. โครงการ, 6. เส้นทาง)
+    populateSelect(
+      $('form-worker'),
+      activeWorkers.map((w) => ({
+        value: w.name,
+        label: w.default_vehicle ? `${w.name} (${w.default_vehicle})` : w.name
+      })),
+      '-- เลือกชื่อคนขับ --'
+    );
+
+    populateSelect(
+      $('form-vehicle'),
+      activeVehicles.map((v) => ({ value: v.license_plate, label: v.license_plate })),
+      '-- เลือกทะเบียนรถ --'
+    );
+
+    // Datalist helper สำหรับช่องที่ทั้งเลือกและพิมพ์เองได้ (5. โครงการ & 6. เส้นทาง)
     const fillDatalist = (dlId, items) => {
       const dl = $(dlId);
       if (!dl) return;
@@ -585,25 +600,6 @@
       }
       dl.innerHTML = opts.join('');
     };
-
-    fillDatalist(
-      'dl-workers',
-      activeWorkers.map((w) => ({
-        value: w.name,
-        label: w.default_vehicle ? `${w.name} (รถประจำ: ${w.default_vehicle})` : w.name
-      }))
-    );
-
-    fillDatalist(
-      'dl-vehicles',
-      activeVehicles.map((v) => {
-        const owner = activeWorkers.find((w) => w.default_vehicle === v.license_plate);
-        return {
-          value: v.license_plate,
-          label: owner ? `${v.license_plate} (ประจำ: ${owner.name})` : v.license_plate
-        };
-      })
-    );
 
     fillDatalist(
       'dl-sites',
@@ -634,18 +630,14 @@
       '-- ทุกไซต์งาน / โครงการ --'
     );
 
-    // Back-office worker form default_vehicle dropdown (แสดงให้เห็นว่าคันไหนผูกกับใครอยู่)
+    // Back-office worker form default_vehicle dropdown
     populateSelect(
       $('input-worker-default-vehicle'),
-      state.vehicles.map((v) => {
-        const owner = state.workers.find((w) => w.default_vehicle === v.license_plate);
-        const status = !v.active ? ' (ปิดใช้งาน)' : owner ? ` — ผูกกับ: ${owner.name}` : '';
-        return {
-          value: v.license_plate,
-          label: `${v.license_plate}${status}`
-        };
-      }),
-      '-- เลือกทะเบียนรถที่ผูกประจำ --'
+      state.vehicles.map((v) => ({
+        value: v.license_plate,
+        label: v.active ? v.license_plate : `${v.license_plate} (ปิดใช้งาน)`
+      })),
+      '-- ยังไม่ผูกทะเบียนรถ --'
     );
   }
 
@@ -718,69 +710,24 @@
     btn.textContent = state.routeMetaExpanded ? 'ซ่อนการตั้งค่าเพิ่มเติม' : 'ตั้งค่าเพิ่มเติม (ไม่บังคับ)';
   }
 
-  function updateWorkerVehicleHints() {
-    const workerName = $('form-worker').value.trim();
-    const plate = $('form-vehicle').value.trim();
+  function onWorkerSelectChange() {
+    const workerName = $('form-worker').value;
     const worker = state.workers.find((w) => w.name === workerName);
-    const owner = plate ? state.workers.find((w) => w.default_vehicle === plate) : null;
-    const wHint = $('form-worker-vehicle-hint');
-    const vHint = $('form-vehicle-worker-hint');
-
-    if (wHint) {
-      if (worker && worker.default_vehicle) {
-        if (plate === worker.default_vehicle) {
-          wHint.innerHTML = `<span class="text-emerald-700 font-semibold"><i class="fa-solid fa-wand-magic-sparkles mr-1"></i>รถประจำตัว: ${escapeHtml(worker.default_vehicle)} (เปลี่ยนคันได้อิสระ)</span>`;
-        } else if (plate) {
-          wHint.innerHTML = `<span class="text-amber-700 font-semibold"><i class="fa-solid fa-shuffle mr-1"></i>เปลี่ยนรถเฉพาะเที่ยวนี้ (รถประจำคือ ${escapeHtml(worker.default_vehicle)})</span>`;
-        } else {
-          wHint.textContent = `รถประจำตัว: ${worker.default_vehicle}`;
-        }
-      } else {
-        wHint.textContent = 'เลือกหรือพิมพ์แก้ได้อิสระ — ระบบเติมรถประจำตัวให้';
-      }
-    }
-
-    if (vHint) {
-      if (owner && workerName && owner.name !== workerName) {
-        vHint.innerHTML = `<span class="text-amber-700 font-semibold"><i class="fa-solid fa-user-pen mr-1"></i>ขับแทนเฉพาะเที่ยวนี้ (คนขับประจำคือ ${escapeHtml(owner.name)})</span>`;
-      } else if (owner && owner.name === workerName) {
-        vHint.innerHTML = `<span class="text-emerald-700 font-semibold"><i class="fa-solid fa-check mr-1"></i>ตรงกับคนขับประจำ (${escapeHtml(owner.name)})</span>`;
-      } else {
-        vHint.textContent = 'เลือกหรือพิมพ์แก้ได้อิสระ หากวันไหนใช้รถไม่ตรงคันประจำ';
-      }
-    }
-  }
-
-  function onWorkerInputChange() {
-    const workerName = $('form-worker').value.trim();
-    state.lastAutoWorker = '';
-    const worker = state.workers.find((w) => w.name === workerName);
+    const hint = $('form-worker-vehicle-hint');
     if (worker && worker.default_vehicle) {
-      const vehEl = $('form-vehicle');
-      vehEl.value = worker.default_vehicle;
-      state.lastAutoVehicle = worker.default_vehicle;
-      pulseElement(vehEl);
-    }
-    updateWorkerVehicleHints();
-  }
-
-  function onVehicleInputChange() {
-    const plate = $('form-vehicle').value.trim();
-    state.lastAutoVehicle = '';
-    if (plate) {
-      const owner = state.workers.find((w) => w.active && w.default_vehicle === plate)
-        || state.workers.find((w) => w.default_vehicle === plate);
-      if (owner) {
-        const wEl = $('form-worker');
-        const curWorker = wEl.value.trim();
-        if (!curWorker || curWorker === (state.lastAutoWorker || '')) {
-          wEl.value = owner.name;
-          state.lastAutoWorker = owner.name;
-          pulseElement(wEl);
-        }
+      const vehSelect = $('form-vehicle');
+      if (![...vehSelect.options].some((o) => o.value === worker.default_vehicle)) {
+        const opt = document.createElement('option');
+        opt.value = worker.default_vehicle;
+        opt.textContent = worker.default_vehicle;
+        vehSelect.appendChild(opt);
       }
+      vehSelect.value = worker.default_vehicle;
+      pulseElement(vehSelect);
+      hint.innerHTML = `<span class="text-emerald-700 font-semibold"><i class="fa-solid fa-wand-magic-sparkles mr-1"></i>เติมรถประจำตัวให้แล้ว: ${escapeHtml(worker.default_vehicle)}</span>`;
+    } else {
+      hint.textContent = 'เลือกคนขับแล้วระบบเติมทะเบียนรถประจำตัวให้';
     }
-    updateWorkerVehicleHints();
   }
 
   function onSiteInputChange() {
@@ -880,8 +827,6 @@
 
     state.editingLogId = null;
     state.isSwapped = false;
-    state.lastAutoWorker = '';
-    state.lastAutoVehicle = '';
 
     $('travel-log-form').reset();
     setTripType('normal');
@@ -896,7 +841,7 @@
     $('form-route-sheet-name').value = '';
     $('form-billing-title').value = '';
     $('form-display-mode-zone').value = 'worker_name';
-    updateWorkerVehicleHints();
+    $('form-worker-vehicle-hint').textContent = 'เลือกคนขับแล้วระบบเติมทะเบียนรถประจำตัวให้';
 
     $('swap-status-badge').classList.add('hidden');
     $('swap-status-badge').classList.remove('inline-flex');
@@ -924,13 +869,23 @@
     setTripType(log.trip_type || 'normal');
     $('form-date').value = log.trip_date || todayIso();
 
-    state.lastAutoWorker = '';
-    state.lastAutoVehicle = '';
-    $('form-worker').value = log.worker_name || '';
-    $('form-vehicle').value = log.license_plate || '';
+    // Ensure select contains historical values if archived/deleted
+    const ensureOpt = (selectId, val) => {
+      const sel = $(selectId);
+      if (!sel || !val) return;
+      if (![...sel.options].some((o) => o.value === val)) {
+        const opt = document.createElement('option');
+        opt.value = val;
+        opt.textContent = val;
+        sel.appendChild(opt);
+      }
+      sel.value = val;
+    };
+
+    ensureOpt('form-worker', log.worker_name);
+    ensureOpt('form-vehicle', log.license_plate);
     $('form-site').value = log.site_name || '';
     state.lastLinkedSite = log.site_name || '';
-    updateWorkerVehicleHints();
     $('form-origin').value = log.origin || '';
     $('form-destination').value = log.destination || '';
     $('form-route-sheet-name').value = log.route_sheet_name || '';
@@ -1184,105 +1139,53 @@
     tbody.innerHTML = logs
       .map((l, idx) => {
         const isCharter = l.trip_type === 'charter';
+        const typeBadge = isCharter
+          ? '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300">งานเหมา</span>'
+          : '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200">รับ-ส่งปกติ</span>';
         const dur = calcDurationText(l.dep_time, l.arr_time);
-        const idAttr = escapeHtml(l.id);
-        const passVal = l.passengers === null || l.passengers === undefined ? '' : String(l.passengers);
-        const priceVal = l.unit_price ? String(l.unit_price) : '';
-        const typeCls = isCharter
-          ? 'bg-amber-100 text-amber-900 border-amber-300'
-          : 'bg-indigo-50 text-indigo-700 border-indigo-200';
+        const passText = l.passengers === null || l.passengers === undefined ? '-' : `${l.passengers} คน`;
 
         return `
-          <tr class="hover:bg-slate-50/90 transition align-top" data-row-id="${idAttr}">
-            <td class="py-2.5 px-2 text-center text-xs font-semibold text-slate-500">${idx + 1}</td>
-            <td class="py-2 px-2 whitespace-nowrap min-w-[138px]">
-              <input type="date" data-inline-id="${idAttr}" data-field="trip_date" value="${escapeHtml(l.trip_date)}"
-                title="คลิกเปลี่ยนวันที่"
-                class="inline-edit text-xs font-semibold text-slate-900" />
-              <div class="text-[10px] text-indigo-600 font-semibold px-1.5" data-be-date="${idAttr}">พ.ศ. ${escapeHtml(toBE(l.trip_date))}</div>
-              <select data-inline-id="${idAttr}" data-field="trip_type" title="เปลี่ยนประเภทงาน"
-                class="mt-1 px-2 py-0.5 rounded-full text-[10px] font-bold border cursor-pointer focus:outline-none focus:ring-2 focus:ring-indigo-500 ${typeCls}">
-                <option value="normal" ${!isCharter ? 'selected' : ''}>รับ-ส่งปกติ</option>
-                <option value="charter" ${isCharter ? 'selected' : ''}>งานเหมา</option>
-              </select>
+          <tr class="hover:bg-slate-50/90 transition align-top">
+            <td class="py-3 px-3 text-center text-xs font-semibold text-slate-500">${idx + 1}</td>
+            <td class="py-3 px-3 whitespace-nowrap">
+              <div class="font-semibold text-slate-900 text-xs">${escapeHtml(toBE(l.trip_date))}</div>
+              <div class="mt-1">${typeBadge}</div>
             </td>
-            <td class="py-2 px-2 min-w-[140px]">
-              <input type="text" list="dl-workers" data-inline-id="${idAttr}" data-field="worker_name"
-                value="${escapeHtml(l.worker_name)}" placeholder="ชื่อคนขับ *" title="คลิกแก้ชื่อคนขับ"
-                class="inline-edit font-semibold text-slate-900 text-xs sm:text-sm" />
-              <input type="text" list="dl-vehicles" data-inline-id="${idAttr}" data-field="license_plate"
-                value="${escapeHtml(l.license_plate || '')}" placeholder="ทะเบียนรถ" title="คลิกแก้ทะเบียนรถ"
-                class="inline-edit mt-1 !w-auto max-w-[125px] text-[11px] font-semibold text-slate-800 !bg-white !border-slate-300" />
-            </td>
-            <td class="py-2 px-2 min-w-[155px]">
-              <input type="text" list="dl-sites" data-inline-id="${idAttr}" data-field="site_name"
-                value="${escapeHtml(l.site_name || '')}" placeholder="โครงการ" title="คลิกแก้โครงการ"
-                class="inline-edit font-semibold text-slate-800 text-xs" />
+            <td class="py-3 px-3">
+              <div class="font-semibold text-slate-900 text-xs sm:text-sm">${escapeHtml(l.worker_name)}</div>
               ${
-                isCharter
-                  ? '<div class="text-[11px] text-amber-700 font-medium px-1.5 mt-0.5">ชีต: งานเหมา / เหมา</div>'
-                  : `<div class="flex items-center gap-1 mt-0.5 px-1">
-                      <span class="text-[10px] text-slate-400 shrink-0">ชีต:</span>
-                      <input type="text" data-inline-id="${idAttr}" data-field="route_sheet_name"
-                        value="${escapeHtml(l.route_sheet_name || '')}" placeholder="ชื่อแผ่นงาน" title="คลิกแก้ชื่อแผ่นงาน Excel"
-                        class="inline-edit text-[11px] text-slate-600 !py-0.5" />
-                    </div>`
+                l.license_plate
+                  ? `<div class="mt-1"><span class="license-plate-badge !text-[11px] !py-0.5 !px-2">${escapeHtml(l.license_plate)}</span></div>`
+                  : '<div class="text-[11px] text-slate-400 mt-0.5">ไม่ระบุทะเบียน</div>'
               }
             </td>
-            <td class="py-2 px-2 min-w-[230px]">
-              <div class="flex items-center gap-1">
-                <input type="text" list="dl-routes" data-inline-id="${idAttr}" data-field="origin"
-                  value="${escapeHtml(l.origin)}" placeholder="ต้นทาง *" title="คลิกแก้ต้นทาง"
-                  class="inline-edit text-xs font-medium text-slate-900 min-w-[85px]" />
-                <button type="button" data-action="inline-swap" data-id="${idAttr}" title="สลับต้นทาง ↔ ปลายทาง"
-                  class="w-6 h-6 rounded-md bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 inline-flex items-center justify-center shrink-0 cursor-pointer transition">
-                  <i class="fa-solid fa-right-left text-[10px]"></i>
-                </button>
-                <input type="text" list="dl-destinations" data-inline-id="${idAttr}" data-field="destination"
-                  value="${escapeHtml(l.destination)}" placeholder="ปลายทาง *" title="คลิกแก้ปลายทาง"
-                  class="inline-edit text-xs font-medium text-slate-900 min-w-[85px]" />
+            <td class="py-3 px-3">
+              <div class="font-semibold text-slate-800 text-xs">${escapeHtml(l.site_name || '-')}</div>
+              <div class="text-[11px] text-slate-500 mt-0.5">ชีต: ${escapeHtml(isCharter ? 'งานเหมา / เหมา' : l.route_sheet_name)}</div>
+            </td>
+            <td class="py-3 px-3">
+              <div class="text-xs font-medium text-slate-900">
+                <span>${escapeHtml(l.origin)}</span>
+                <i class="fa-solid fa-arrow-right text-[10px] text-amber-500 mx-1"></i>
+                <span>${escapeHtml(l.destination)}</span>
               </div>
-              <div class="flex items-center gap-1 mt-0.5 px-1">
-                <span class="text-[10px] text-slate-400 shrink-0">ใบเบิก:</span>
-                <input type="text" data-inline-id="${idAttr}" data-field="billing_title"
-                  value="${escapeHtml(l.billing_title || l.route_sheet_name || '')}" placeholder="ชื่อในใบเบิก" title="คลิกแก้ชื่อรายการในใบเบิก"
-                  class="inline-edit text-[11px] text-slate-600 !py-0.5" />
-              </div>
+              <div class="text-[11px] text-slate-500 mt-0.5">ใบเบิก: ${escapeHtml(l.billing_title || l.route_sheet_name)}</div>
             </td>
-            <td class="py-2 px-2 text-center whitespace-nowrap min-w-[132px]">
-              <div class="flex items-center justify-center gap-0.5">
-                <input type="text" data-inline-id="${idAttr}" data-field="dep_time"
-                  value="${escapeHtml(l.dep_time || '')}" placeholder="ออก" title="เวลาออก เช่น 06:30 หรือ 15.00"
-                  class="inline-edit !w-[56px] text-center text-xs font-semibold text-slate-800" />
-                <span class="text-slate-400 text-xs">–</span>
-                <input type="text" data-inline-id="${idAttr}" data-field="arr_time"
-                  value="${escapeHtml(l.arr_time || '')}" placeholder="ถึง" title="เวลาถึง เช่น 07:15 หรือ 16.30"
-                  class="inline-edit !w-[56px] text-center text-xs font-semibold text-slate-800" />
-              </div>
-              <div class="text-[11px] text-emerald-700 font-medium mt-0.5" data-dur="${idAttr}">${dur ? `<i class="fa-solid fa-stopwatch mr-0.5"></i>${escapeHtml(dur)}` : ''}</div>
+            <td class="py-3 px-3 text-center whitespace-nowrap">
+              <div class="text-xs font-semibold text-slate-800">${escapeHtml(l.dep_time || '-')} – ${escapeHtml(l.arr_time || '-')}</div>
+              ${dur ? `<div class="text-[11px] text-emerald-700 font-medium mt-0.5"><i class="fa-solid fa-stopwatch mr-0.5"></i>${escapeHtml(dur)}</div>` : ''}
             </td>
-            <td class="py-2 px-2 text-center whitespace-nowrap">
-              <input type="number" min="0" step="1" data-inline-id="${idAttr}" data-field="passengers"
-                value="${escapeHtml(passVal)}" placeholder="-" title="คลิกแก้จำนวนคน"
-                class="inline-edit !w-[62px] text-center text-xs font-semibold text-slate-700" />
-            </td>
-            <td class="py-2 px-2 text-right whitespace-nowrap">
-              <input type="number" min="0" step="0.01" data-inline-id="${idAttr}" data-field="unit_price"
-                value="${escapeHtml(priceVal)}" placeholder="0" title="คลิกแก้ราคา/เที่ยว"
-                class="inline-edit !w-[82px] text-right text-xs font-bold text-emerald-700" />
-            </td>
-            <td class="py-2 px-2 min-w-[125px]">
-              <input type="text" data-inline-id="${idAttr}" data-field="remark"
-                value="${escapeHtml(l.remark || '')}" placeholder="-" title="คลิกแก้หมายเหตุ"
-                class="inline-edit text-xs text-slate-600" />
-            </td>
-            <td class="py-2 px-2 text-right whitespace-nowrap">
+            <td class="py-3 px-3 text-center text-xs font-semibold text-slate-700 whitespace-nowrap">${escapeHtml(passText)}</td>
+            <td class="py-3 px-3 text-right text-xs font-bold text-emerald-700 whitespace-nowrap">${formatMoney(l.unit_price)}</td>
+            <td class="py-3 px-3 text-xs text-slate-600 max-w-[160px] break-words">${escapeHtml(l.remark || '-')}</td>
+            <td class="py-3 px-3 text-right whitespace-nowrap">
               <div class="inline-flex items-center gap-1">
-                <button type="button" data-action="edit-log" data-id="${idAttr}" title="เปิดแก้ไขในฟอร์มด้านบน"
+                <button type="button" data-action="edit-log" data-id="${escapeHtml(l.id)}" title="แก้ไข"
                   class="w-8 h-8 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 inline-flex items-center justify-center cursor-pointer transition">
                   <i class="fa-solid fa-pen text-xs"></i>
                 </button>
-                <button type="button" data-action="delete-log" data-id="${idAttr}" title="ลบ"
+                <button type="button" data-action="delete-log" data-id="${escapeHtml(l.id)}" title="ลบ"
                   class="w-8 h-8 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 inline-flex items-center justify-center cursor-pointer transition">
                   <i class="fa-solid fa-trash text-xs"></i>
                 </button>
@@ -1297,76 +1200,45 @@
       .map((l, idx) => {
         const isCharter = l.trip_type === 'charter';
         const dur = calcDurationText(l.dep_time, l.arr_time);
-        const idAttr = escapeHtml(l.id);
-        const passVal = l.passengers === null || l.passengers === undefined ? '' : String(l.passengers);
-        const priceVal = l.unit_price ? String(l.unit_price) : '';
+        const passText = l.passengers === null || l.passengers === undefined ? '-' : `${l.passengers} คน`;
         return `
-          <div class="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-2.5" data-row-id="${idAttr}">
-            <div class="flex flex-wrap items-center justify-between gap-2">
-              <div class="flex items-center gap-1.5">
-                <span class="text-xs font-bold text-slate-400">#${idx + 1}</span>
-                <input type="date" data-inline-id="${idAttr}" data-field="trip_date" value="${escapeHtml(l.trip_date)}"
-                  class="inline-edit !w-auto text-xs font-bold text-slate-900 !bg-white !border-slate-200" />
-                <select data-inline-id="${idAttr}" data-field="trip_type"
-                  class="px-2 py-1 rounded-full text-[10px] font-bold border ${isCharter ? 'bg-amber-100 text-amber-900 border-amber-300' : 'bg-indigo-100 text-indigo-800 border-indigo-200'}">
-                  <option value="normal" ${!isCharter ? 'selected' : ''}>รับ-ส่งปกติ</option>
-                  <option value="charter" ${isCharter ? 'selected' : ''}>งานเหมา</option>
-                </select>
-              </div>
-              <button type="button" data-action="delete-log" data-id="${idAttr}"
-                class="w-8 h-8 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 inline-flex items-center justify-center cursor-pointer">
-                <i class="fa-solid fa-trash text-xs"></i>
-              </button>
-            </div>
-
-            <div class="grid grid-cols-2 gap-2">
-              <input type="text" list="dl-workers" data-inline-id="${idAttr}" data-field="worker_name"
-                value="${escapeHtml(l.worker_name)}" placeholder="ชื่อคนขับ *"
-                class="inline-edit text-xs font-bold text-slate-900 !bg-white !border-slate-200" />
-              <input type="text" list="dl-vehicles" data-inline-id="${idAttr}" data-field="license_plate"
-                value="${escapeHtml(l.license_plate || '')}" placeholder="ทะเบียนรถ"
-                class="inline-edit text-xs font-semibold text-slate-800 !bg-white !border-slate-300" />
-            </div>
-
-            <div class="bg-white rounded-lg p-2.5 border border-slate-200/80 space-y-2 text-xs">
-              <div class="flex items-center gap-1">
-                <input type="text" list="dl-routes" data-inline-id="${idAttr}" data-field="origin"
-                  value="${escapeHtml(l.origin)}" placeholder="ต้นทาง *"
-                  class="inline-edit font-semibold text-slate-900 !border-slate-200" />
-                <button type="button" data-action="inline-swap" data-id="${idAttr}" title="สลับ"
-                  class="w-7 h-7 rounded-md bg-amber-50 text-amber-800 border border-amber-200 inline-flex items-center justify-center shrink-0 cursor-pointer">
-                  <i class="fa-solid fa-right-left text-[10px]"></i>
-                </button>
-                <input type="text" list="dl-destinations" data-inline-id="${idAttr}" data-field="destination"
-                  value="${escapeHtml(l.destination)}" placeholder="ปลายทาง *"
-                  class="inline-edit font-semibold text-slate-900 !border-slate-200" />
-              </div>
-              <div class="grid grid-cols-2 gap-1.5">
-                <input type="text" list="dl-sites" data-inline-id="${idAttr}" data-field="site_name"
-                  value="${escapeHtml(l.site_name || '')}" placeholder="โครงการ"
-                  class="inline-edit text-[11px] text-slate-700 !border-slate-200" />
-                <div class="flex items-center gap-1">
-                  <input type="text" data-inline-id="${idAttr}" data-field="dep_time"
-                    value="${escapeHtml(l.dep_time || '')}" placeholder="ออก"
-                    class="inline-edit text-center text-[11px] !border-slate-200" />
-                  <span>–</span>
-                  <input type="text" data-inline-id="${idAttr}" data-field="arr_time"
-                    value="${escapeHtml(l.arr_time || '')}" placeholder="ถึง"
-                    class="inline-edit text-center text-[11px] !border-slate-200" />
+          <div class="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
+            <div class="flex items-start justify-between gap-2">
+              <div>
+                <div class="flex items-center gap-1.5">
+                  <span class="text-xs font-bold text-slate-400">#${idx + 1}</span>
+                  <span class="text-xs font-bold text-slate-900">${escapeHtml(toBE(l.trip_date))}</span>
+                  <span class="px-2 py-0.5 rounded-full text-[10px] font-bold ${isCharter ? 'bg-amber-100 text-amber-900' : 'bg-indigo-100 text-indigo-800'}">
+                    ${isCharter ? 'งานเหมา' : 'รับ-ส่งปกติ'}
+                  </span>
                 </div>
+                <div class="font-bold text-sm text-slate-900 mt-1">${escapeHtml(l.worker_name)}</div>
               </div>
-              <div class="grid grid-cols-3 gap-1.5">
-                <input type="number" min="0" step="1" data-inline-id="${idAttr}" data-field="passengers"
-                  value="${escapeHtml(passVal)}" placeholder="คน"
-                  class="inline-edit text-[11px] !border-slate-200" />
-                <input type="number" min="0" step="0.01" data-inline-id="${idAttr}" data-field="unit_price"
-                  value="${escapeHtml(priceVal)}" placeholder="ราคา (บ.)"
-                  class="inline-edit text-[11px] font-bold text-emerald-700 !border-slate-200" />
-                <input type="text" data-inline-id="${idAttr}" data-field="remark"
-                  value="${escapeHtml(l.remark || '')}" placeholder="หมายเหตุ"
-                  class="inline-edit text-[11px] text-slate-600 !border-slate-200" />
+              ${l.license_plate ? `<span class="license-plate-badge !text-[11px] !py-0.5 !px-2">${escapeHtml(l.license_plate)}</span>` : ''}
+            </div>
+
+            <div class="text-xs text-slate-700 bg-white rounded-lg p-2.5 border border-slate-200/80 space-y-1">
+              <div class="font-semibold text-slate-900">
+                ${escapeHtml(l.origin)} <i class="fa-solid fa-arrow-right text-amber-500 text-[10px] mx-1"></i> ${escapeHtml(l.destination)}
               </div>
-              ${dur ? `<div class="text-[11px] text-emerald-700 font-medium" data-dur="${idAttr}"><i class="fa-solid fa-stopwatch mr-0.5"></i>${escapeHtml(dur)}</div>` : ''}
+              <div class="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-slate-600">
+                <span><i class="fa-solid fa-building text-amber-500 mr-1"></i>${escapeHtml(l.site_name || '-')}</span>
+                <span><i class="fa-regular fa-clock text-indigo-500 mr-1"></i>${escapeHtml(l.dep_time || '-')}–${escapeHtml(l.arr_time || '-')}${dur ? ` (${escapeHtml(dur)})` : ''}</span>
+                <span><i class="fa-solid fa-users text-slate-400 mr-1"></i>${escapeHtml(passText)}</span>
+                <span class="font-bold text-emerald-700">${formatMoney(l.unit_price)} บ.</span>
+              </div>
+              ${l.remark ? `<div class="text-[11px] text-slate-500"><i class="fa-regular fa-note-sticky mr-1"></i>${escapeHtml(l.remark)}</div>` : ''}
+            </div>
+
+            <div class="flex items-center justify-end gap-2">
+              <button type="button" data-action="edit-log" data-id="${escapeHtml(l.id)}"
+                class="min-h-[36px] px-3 py-1 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 text-xs font-semibold cursor-pointer">
+                <i class="fa-solid fa-pen mr-1"></i>แก้ไข
+              </button>
+              <button type="button" data-action="delete-log" data-id="${escapeHtml(l.id)}"
+                class="min-h-[36px] px-3 py-1 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-semibold cursor-pointer">
+                <i class="fa-solid fa-trash mr-1"></i>ลบ
+              </button>
             </div>
           </div>
         `;
@@ -1374,136 +1246,13 @@
       .join('');
   }
 
-  function handleInlineKeydown(e) {
-    const el = e.target.closest('[data-inline-id]');
-    if (!el) return;
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      el.blur();
-    }
-  }
-
-  async function handleInlineLogChange(e) {
-    const el = e.target.closest('[data-inline-id]');
-    if (!el) return;
-    const id = el.dataset.inlineId;
-    const field = el.dataset.field;
-    const idx = state.logs.findIndex((l) => l.id === id);
-    if (idx === -1) return;
-    const cur = state.logs[idx];
-
-    const raw = el.value.trim();
-    let newVal = raw;
-    if (field === 'passengers') {
-      newVal = raw === '' ? null : Number(raw);
-    } else if (field === 'unit_price') {
-      newVal = raw === '' ? 0 : Number(raw);
-    }
-
-    // Revert if required field cleared
-    if (['trip_date', 'worker_name', 'origin', 'destination'].includes(field) && !raw) {
-      showToast('ช่องนี้ไม่สามารถเว้นว่างได้', 'warning');
-      el.value = cur[field] || '';
-      return;
-    }
-
-    // Skip if unchanged
-    const oldVal = field === 'passengers'
-      ? (cur.passengers === null || cur.passengers === undefined ? null : Number(cur.passengers))
-      : field === 'unit_price'
-        ? (Number(cur.unit_price) || 0)
-        : String(cur[field] || '');
-    if (newVal === oldVal) return;
-
-    const payload = { ...cur, [field]: newVal };
-    // เมื่อเปลี่ยนชื่อคนขับในตาราง ให้ผูกเปลี่ยนทะเบียนรถเป็นคันประจำของคนขับคนนั้นทันที (แล้วค่อยแก้ทะเบียนแยกได้ถ้าวันนั้นขับรถแทน)
-    if (field === 'worker_name') {
-      const wObj = state.workers.find((w) => w.name === raw);
-      if (wObj && wObj.default_vehicle) {
-        payload.license_plate = wObj.default_vehicle;
-      }
-    }
-
-    el.classList.add('inline-saving');
-    try {
-      const updated = await apiFetch(`/api/logs/${encodeURIComponent(id)}`, {
-        method: 'PUT',
-        body: JSON.stringify(payload)
-      });
-      state.logs[idx] = updated;
-      el.classList.remove('inline-saving');
-      el.classList.add('inline-saved');
-      setTimeout(() => el.classList.remove('inline-saved'), 900);
-
-      // Update normalized value in-place (e.g. 15.00 -> 15:00) without stealing focus
-      if (field === 'passengers') {
-        el.value = updated.passengers === null || updated.passengers === undefined ? '' : String(updated.passengers);
-      } else if (field === 'unit_price') {
-        el.value = updated.unit_price ? String(updated.unit_price) : '';
-      } else if (updated[field] !== undefined) {
-        el.value = String(updated[field] || '');
-      }
-
-      // Refresh totals & row secondary indicators
-      const totalAmount = state.logs.reduce((acc, l) => acc + (Number(l.unit_price) || 0), 0);
-      $('stat-filtered-amount').textContent = formatMoney(totalAmount);
-
-      if (field === 'trip_date') {
-        document.querySelectorAll(`[data-be-date="${CSS.escape(id)}"]`).forEach((node) => {
-          node.textContent = `พ.ศ. ${toBE(updated.trip_date)}`;
-        });
-      }
-      if (field === 'dep_time' || field === 'arr_time') {
-        const dur = calcDurationText(updated.dep_time, updated.arr_time);
-        document.querySelectorAll(`[data-dur="${CSS.escape(id)}"]`).forEach((node) => {
-          node.innerHTML = dur ? `<i class="fa-solid fa-stopwatch mr-0.5"></i>${escapeHtml(dur)}` : '';
-        });
-      }
-      // If trip_type changed or worker auto-updated plate, refresh row visuals cleanly
-      if (field === 'trip_type' || (field === 'worker_name' && payload.license_plate !== cur.license_plate)) {
-        renderLogs();
-      }
-
-      showToast('บันทึกการแก้ไขแล้ว', 'success', 2000);
-      await autoSyncBoundFiles();
-    } catch (err) {
-      el.classList.remove('inline-saving');
-      // Revert to last saved value
-      if (field === 'passengers') {
-        el.value = cur.passengers === null || cur.passengers === undefined ? '' : String(cur.passengers);
-      } else if (field === 'unit_price') {
-        el.value = cur.unit_price ? String(cur.unit_price) : '';
-      } else {
-        el.value = String(cur[field] || '');
-      }
-      showToast(err.message || 'ไม่สามารถบันทึกการแก้ไขได้', 'error', 4000);
-    }
-  }
-
   async function handleLogsActionClick(e) {
     const btn = e.target.closest('button[data-action]');
     if (!btn) return;
     const action = btn.dataset.action;
     const id = btn.dataset.id;
-    const idx = state.logs.findIndex((l) => l.id === id);
-    if (idx === -1) return;
-    const log = state.logs[idx];
-
-    if (action === 'inline-swap') {
-      try {
-        const updated = await apiFetch(`/api/logs/${encodeURIComponent(id)}`, {
-          method: 'PUT',
-          body: JSON.stringify({ ...log, origin: log.destination, destination: log.origin })
-        });
-        state.logs[idx] = updated;
-        renderLogs();
-        showToast('สลับต้นทาง–ปลายทางเรียบร้อยแล้ว', 'success', 2000);
-        await autoSyncBoundFiles();
-      } catch (err) {
-        showToast(err.message || 'ไม่สามารถสลับเส้นทางได้', 'error');
-      }
-      return;
-    }
+    const log = state.logs.find((l) => l.id === id);
+    if (!log) return;
 
     if (action === 'edit-log') {
       startEditLog(log);
@@ -2313,76 +2062,51 @@
       return;
     }
     el.innerHTML = state.vehicles
-      .map((v) => {
-        const owners = state.workers.filter((w) => w.default_vehicle === v.license_plate);
-        const primaryOwner = owners[0] || null;
-        return `
-        <div class="p-3.5 rounded-xl border ${v.active ? 'bg-white border-slate-200' : 'bg-slate-50 border-slate-200 opacity-65'} space-y-2.5">
-          <div class="flex items-center justify-between gap-2">
-            <div class="flex items-center gap-2 min-w-0">
-              <span class="license-plate-badge">${escapeHtml(v.license_plate)}</span>
-              ${v.active ? '' : '<span class="text-[10px] px-1.5 py-0.5 rounded bg-slate-200 text-slate-600 font-semibold">ปิดใช้งาน</span>'}
-            </div>
-            <div class="flex items-center gap-1 shrink-0">
-              <button type="button" data-bo="toggle-vehicle" data-id="${v.id}" title="${v.active ? 'ปิดใช้งาน' : 'เปิดใช้งาน'}"
-                class="w-8 h-8 rounded-lg ${v.active ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-slate-200 text-slate-600 border-slate-300'} border inline-flex items-center justify-center cursor-pointer">
-                <i class="fa-solid ${v.active ? 'fa-toggle-on' : 'fa-toggle-off'}"></i>
-              </button>
-              <button type="button" data-bo="edit-vehicle" data-id="${v.id}" title="แก้ไขทะเบียนรถ"
-                class="w-8 h-8 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 inline-flex items-center justify-center cursor-pointer">
-                <i class="fa-solid fa-pen text-xs"></i>
-              </button>
-              <button type="button" data-bo="delete-vehicle" data-id="${v.id}" title="ลบ"
-                class="w-8 h-8 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 inline-flex items-center justify-center cursor-pointer">
-                <i class="fa-solid fa-trash text-xs"></i>
-              </button>
-            </div>
+      .map(
+        (v) => `
+        <div class="p-3.5 rounded-xl border ${v.active ? 'bg-white border-slate-200' : 'bg-slate-50 border-slate-200 opacity-65'} flex items-center justify-between gap-2">
+          <div class="flex items-center gap-2 min-w-0">
+            <span class="license-plate-badge">${escapeHtml(v.license_plate)}</span>
+            ${v.active ? '' : '<span class="text-[10px] px-1.5 py-0.5 rounded bg-slate-200 text-slate-600 font-semibold">ปิดใช้งาน</span>'}
           </div>
-          <div class="flex items-center gap-1.5 pt-2 border-t border-slate-100">
-            <i class="fa-solid fa-id-badge ${primaryOwner ? 'text-emerald-600' : 'text-slate-400'} text-xs shrink-0"></i>
-            <input
-              type="text"
-              list="dl-workers"
-              data-bind-plate="${escapeHtml(v.license_plate)}"
-              value="${escapeHtml(primaryOwner ? primaryOwner.name : '')}"
-              placeholder="พิมพ์ชื่อคนขับประจำรถนี้ + Enter..."
-              class="inline-edit text-xs ${primaryOwner ? 'font-semibold text-slate-800 !bg-emerald-50/50 !border-emerald-200' : 'text-slate-600 !bg-slate-50 !border-slate-200'}"
-            />
+          <div class="flex items-center gap-1 shrink-0">
+            <button type="button" data-bo="toggle-vehicle" data-id="${v.id}" title="${v.active ? 'ปิดใช้งาน' : 'เปิดใช้งาน'}"
+              class="w-8 h-8 rounded-lg ${v.active ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-slate-200 text-slate-600 border-slate-300'} border inline-flex items-center justify-center cursor-pointer">
+              <i class="fa-solid ${v.active ? 'fa-toggle-on' : 'fa-toggle-off'}"></i>
+            </button>
+            <button type="button" data-bo="edit-vehicle" data-id="${v.id}" title="แก้ไข"
+              class="w-8 h-8 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 inline-flex items-center justify-center cursor-pointer">
+              <i class="fa-solid fa-pen text-xs"></i>
+            </button>
+            <button type="button" data-bo="delete-vehicle" data-id="${v.id}" title="ลบ"
+              class="w-8 h-8 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 inline-flex items-center justify-center cursor-pointer">
+              <i class="fa-solid fa-trash text-xs"></i>
+            </button>
           </div>
         </div>
-      `;
-      })
+      `
+      )
       .join('');
   }
 
   function renderWorkersList() {
     const el = $('list-workers');
     if (state.workers.length === 0) {
-      el.innerHTML = '<div class="py-10 text-center text-xs text-slate-400">ยังไม่มีคนขับ — พิมพ์ชื่อในช่องด้านบน เลือกทะเบียนรถประจำตัว แล้วกด "เพิ่มคนขับ" (หรือพิมพ์ผูกตรงในการ์ดหน้า 1. ทะเบียนรถ ได้เลย)</div>';
+      el.innerHTML = '<div class="py-10 text-center text-xs text-slate-400">ยังไม่มีคนขับ — พิมพ์ชื่อในช่องด้านบน เลือกรถประจำตัว แล้วกด "เพิ่มคนขับ"</div>';
       return;
     }
     el.innerHTML = state.workers
       .map(
         (w, i) => `
         <div class="px-4 py-3 flex flex-wrap items-center justify-between gap-3 ${w.active ? 'bg-white' : 'bg-slate-50 opacity-65'}">
-          <div class="flex flex-wrap items-center gap-2.5 flex-1 min-w-[220px]">
+          <div class="flex flex-wrap items-center gap-2.5">
             <span class="text-xs font-bold text-slate-400 w-6">${i + 1}.</span>
-            <span class="font-semibold text-sm text-slate-900 min-w-[110px]">${escapeHtml(w.name)}</span>
-            <div class="flex items-center gap-1.5">
-              <i class="fa-solid fa-truck-front text-amber-600 text-xs"></i>
-              <select data-bind-worker-id="${w.id}" title="เลือกทะเบียนรถที่ผูกประจำกับคนขับนี้"
-                class="min-h-[34px] px-2.5 py-1 rounded-lg border text-xs font-semibold cursor-pointer focus:outline-none focus:ring-2 focus:ring-indigo-500 ${
-                  w.default_vehicle ? 'bg-emerald-50/70 border-emerald-300 text-slate-900' : 'bg-slate-50 border-slate-300 text-slate-500'
-                }">
-                <option value="">-- ยังไม่ผูกทะเบียนรถ --</option>
-                ${state.vehicles
-                  .map(
-                    (v) =>
-                      `<option value="${escapeHtml(v.license_plate)}" ${v.license_plate === w.default_vehicle ? 'selected' : ''}>${escapeHtml(v.license_plate)}</option>`
-                  )
-                  .join('')}
-              </select>
-            </div>
+            <span class="font-semibold text-sm text-slate-900">${escapeHtml(w.name)}</span>
+            ${
+              w.default_vehicle
+                ? `<span class="license-plate-badge !text-[11px] !py-0.5 !px-2"><i class="fa-solid fa-truck-front text-amber-600 text-[10px]"></i>${escapeHtml(w.default_vehicle)}</span>`
+                : '<span class="text-[11px] text-slate-400">ยังไม่ผูกทะเบียนรถประจำตัว</span>'
+            }
             ${w.active ? '' : '<span class="text-[10px] px-2 py-0.5 rounded-full bg-slate-200 text-slate-600 font-semibold">ปิดใช้งาน</span>'}
           </div>
           <div class="flex items-center gap-1.5">
@@ -2509,98 +2233,14 @@
   async function handleAddVehicle(e) {
     e.preventDefault();
     const plate = $('input-vehicle-plate').value.trim();
-    const driverName = $('input-vehicle-driver') ? $('input-vehicle-driver').value.trim() : '';
     if (!plate) return;
     try {
       await apiFetch('/api/master/vehicles', { method: 'POST', body: JSON.stringify({ license_plate: plate }) });
-      if (driverName) {
-        const existingWorker = state.workers.find((w) => w.name === driverName);
-        if (existingWorker) {
-          await apiFetch(`/api/master/workers/${existingWorker.id}`, {
-            method: 'PUT',
-            body: JSON.stringify({ default_vehicle: plate })
-          });
-        } else {
-          await apiFetch('/api/master/workers', {
-            method: 'POST',
-            body: JSON.stringify({ name: driverName, default_vehicle: plate })
-          });
-        }
-      }
       $('input-vehicle-plate').value = '';
-      if ($('input-vehicle-driver')) $('input-vehicle-driver').value = '';
-      showToast(
-        driverName ? `เพิ่มรถ "${plate}" และผูกกับคนขับ "${driverName}" เรียบร้อยแล้ว` : `เพิ่มทะเบียนรถ "${plate}" เรียบร้อยแล้ว`,
-        'success'
-      );
+      showToast(`เพิ่มทะเบียนรถ "${plate}" เรียบร้อยแล้ว`, 'success');
       await loadMasterData();
     } catch (err) {
       showToast(err.message, 'error');
-    }
-  }
-
-  async function handleQuickBindVehicleDriver(inputEl) {
-    const plate = inputEl.dataset.bindPlate;
-    const newName = inputEl.value.trim();
-    const prevOwners = state.workers.filter((w) => w.default_vehicle === plate);
-    const prevPrimary = prevOwners[0] || null;
-    if ((prevPrimary ? prevPrimary.name : '') === newName) return;
-
-    inputEl.classList.add('inline-saving');
-    try {
-      // ยกเลิกการผูกจากคนขับเดิมของคันนี้ (ถ้ามี)
-      for (const oldW of prevOwners) {
-        if (oldW.name !== newName) {
-          await apiFetch(`/api/master/workers/${oldW.id}`, {
-            method: 'PUT',
-            body: JSON.stringify({ default_vehicle: '' })
-          });
-        }
-      }
-      if (newName) {
-        const target = state.workers.find((w) => w.name === newName);
-        if (target) {
-          await apiFetch(`/api/master/workers/${target.id}`, {
-            method: 'PUT',
-            body: JSON.stringify({ default_vehicle: plate })
-          });
-        } else {
-          await apiFetch('/api/master/workers', {
-            method: 'POST',
-            body: JSON.stringify({ name: newName, default_vehicle: plate })
-          });
-        }
-        showToast(`ผูกคนขับ "${newName}" กับทะเบียน "${plate}" เรียบร้อยแล้ว`, 'success', 2500);
-      } else {
-        showToast(`ยกเลิกการผูกคนขับจากทะเบียน "${plate}" แล้ว`, 'info', 2200);
-      }
-      await loadMasterData();
-    } catch (err) {
-      inputEl.classList.remove('inline-saving');
-      inputEl.value = prevPrimary ? prevPrimary.name : '';
-      showToast(err.message || 'ไม่สามารถผูกคนขับกับทะเบียนรถได้', 'error');
-    }
-  }
-
-  async function handleQuickBindWorkerVehicle(selectEl) {
-    const workerId = Number(selectEl.dataset.bindWorkerId);
-    const newPlate = selectEl.value.trim();
-    const w = state.workers.find((x) => x.id === workerId);
-    if (!w || (w.default_vehicle || '') === newPlate) return;
-    try {
-      await apiFetch(`/api/master/workers/${workerId}`, {
-        method: 'PUT',
-        body: JSON.stringify({ default_vehicle: newPlate })
-      });
-      showToast(
-        newPlate ? `ผูกคนขับ "${w.name}" กับทะเบียน "${newPlate}" เรียบร้อยแล้ว` : `ยกเลิกการผูกทะเบียนรถของ "${w.name}" แล้ว`,
-        'success',
-        2500
-      );
-      await loadMasterData();
-    } catch (err) {
-      selectEl.value = w.default_vehicle || '';
-      showToast(err.message || 'ไม่สามารถผูกทะเบียนรถได้', 'error');
     }
   }
 
@@ -3126,10 +2766,7 @@
     $('trip-type-normal').addEventListener('click', () => setTripType('normal'));
     $('trip-type-charter').addEventListener('click', () => setTripType('charter'));
     $('form-date').addEventListener('change', updateFormDatePreview);
-    $('form-worker').addEventListener('input', onWorkerInputChange);
-    $('form-worker').addEventListener('change', onWorkerInputChange);
-    $('form-vehicle').addEventListener('input', onVehicleInputChange);
-    $('form-vehicle').addEventListener('change', onVehicleInputChange);
+    $('form-worker').addEventListener('change', onWorkerSelectChange);
     $('form-site').addEventListener('input', onSiteInputChange);
     $('form-site').addEventListener('change', onSiteInputChange);
     $('btn-swap-route').addEventListener('click', onSwapRouteClick);
@@ -3183,11 +2820,7 @@
     });
     $('btn-clear-all-logs').addEventListener('click', handleClearAllLogs);
     $('logs-table-body').addEventListener('click', handleLogsActionClick);
-    $('logs-table-body').addEventListener('change', handleInlineLogChange);
-    $('logs-table-body').addEventListener('keydown', handleInlineKeydown);
     $('logs-mobile-cards').addEventListener('click', handleLogsActionClick);
-    $('logs-mobile-cards').addEventListener('change', handleInlineLogChange);
-    $('logs-mobile-cards').addEventListener('keydown', handleInlineKeydown);
 
     // Back-Office Forms & Action Delegation
     $('form-add-vehicle').addEventListener('submit', handleAddVehicle);
@@ -3196,24 +2829,6 @@
     $('form-add-route').addEventListener('submit', handleAddRoute);
     $('form-settings-quota').addEventListener('submit', handleQuotaSubmit);
     $('view-back-office').addEventListener('click', handleBackOfficeActionClick);
-    $('view-back-office').addEventListener('change', (e) => {
-      const plateInput = e.target.closest('input[data-bind-plate]');
-      if (plateInput) {
-        handleQuickBindVehicleDriver(plateInput);
-        return;
-      }
-      const workerSelect = e.target.closest('select[data-bind-worker-id]');
-      if (workerSelect) {
-        handleQuickBindWorkerVehicle(workerSelect);
-      }
-    });
-    $('view-back-office').addEventListener('keydown', (e) => {
-      const plateInput = e.target.closest('input[data-bind-plate]');
-      if (plateInput && e.key === 'Enter') {
-        e.preventDefault();
-        plateInput.blur();
-      }
-    });
   }
 
   async function init() {

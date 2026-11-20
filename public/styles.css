@@ -105,35 +105,3 @@ body {
 .input-highlight-pulse {
   animation: pulseRing 0.9s ease-out;
 }
-
-/* Inline editable table cells (looks clean like text, edits smoothly like Excel) */
-.inline-edit {
-  width: 100%;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 0.45rem;
-  padding: 0.2rem 0.35rem;
-  transition: background-color 0.15s, border-color 0.15s, box-shadow 0.15s;
-}
-
-.inline-edit:hover {
-  background: #ffffff;
-  border-color: #cbd5e1;
-}
-
-.inline-edit:focus {
-  outline: none;
-  background: #ffffff;
-  border-color: #4f46e5;
-  box-shadow: 0 0 0 2px rgba(79, 70, 229, 0.2);
-}
-
-.inline-edit.inline-saving {
-  border-color: #f59e0b;
-  background: #fffbeb;
-}
-
-.inline-edit.inline-saved {
-  border-color: #10b981;
-  background: #ecfdf5;
-}

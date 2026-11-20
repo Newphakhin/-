@@ -35,7 +35,7 @@
   </script>
 
   <!-- Custom Styles -->
-  <link rel="stylesheet" href="/styles.css?v=2" />
+  <link rel="stylesheet" href="/styles.css" />
 </head>
 <body class="min-h-screen flex flex-col bg-slate-100 text-slate-800 antialiased selection:bg-zinc-900 selection:text-amber-300 pb-20 md:pb-0">
 
@@ -515,45 +515,37 @@
                 <p id="form-date-thai-preview" class="mt-1.5 text-[11px] text-indigo-600 font-semibold"></p>
               </div>
 
-              <!-- 3. ชื่อคนขับ (เลือกได้ พิมพ์แก้ได้อิสระ เชื่อมกับทะเบียนรถ 2 ทาง) -->
+              <!-- 3. ชื่อคนขับ -->
               <div class="md:col-span-6 lg:col-span-3">
                 <label for="form-worker" class="block text-sm font-semibold text-slate-700 mb-1.5">
                   <i class="fa-solid fa-id-badge text-indigo-600 mr-1"></i>
                   3. ชื่อคนขับ <span class="text-rose-600">*</span>
                 </label>
-                <input
-                  type="text"
+                <select
                   id="form-worker"
-                  list="dl-workers"
-                  autocomplete="off"
-                  placeholder="เลือก หรือ พิมพ์ชื่อคนขับ..."
                   required
                   class="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 transition"
-                />
-                <datalist id="dl-workers"></datalist>
+                >
+                  <option value="">-- เลือกชื่อคนขับ --</option>
+                </select>
                 <p id="form-worker-vehicle-hint" class="mt-1.5 text-[11px] text-slate-500">
-                  เลือกหรือพิมพ์แก้ได้อิสระ — ระบบเติมรถประจำตัวให้
+                  เลือกคนขับแล้วระบบเติมทะเบียนรถประจำตัวให้
                 </p>
               </div>
 
-              <!-- 4. ทะเบียนรถ (เลือกได้ พิมพ์แก้ได้อิสระ เชื่อมกับคนขับ 2 ทาง) -->
+              <!-- 4. ทะเบียนรถ -->
               <div class="md:col-span-6 lg:col-span-3">
                 <label for="form-vehicle" class="block text-sm font-semibold text-slate-700 mb-1.5">
                   <i class="fa-solid fa-truck-front text-indigo-600 mr-1"></i>
                   4. ทะเบียนรถ
                 </label>
-                <input
-                  type="text"
+                <select
                   id="form-vehicle"
-                  list="dl-vehicles"
-                  autocomplete="off"
-                  placeholder="เลือก หรือ พิมพ์ทะเบียนรถ..."
                   class="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 transition"
-                />
-                <datalist id="dl-vehicles"></datalist>
-                <p id="form-vehicle-worker-hint" class="mt-1.5 text-[11px] text-slate-500">
-                  เลือกหรือพิมพ์แก้ได้อิสระ หากวันไหนใช้รถไม่ตรงคันประจำ
-                </p>
+                >
+                  <option value="">-- เลือกทะเบียนรถ --</option>
+                </select>
+                <p class="mt-1.5 text-[11px] text-slate-500">ถ้าวันนี้ใช้รถคันอื่น เปลี่ยนตรงนี้ได้</p>
               </div>
 
             </div>
@@ -835,7 +827,7 @@
                     0 รายการ
                   </span>
                 </div>
-                <p class="text-xs text-slate-500">คลิกแก้ไขข้อมูลในตารางได้ทุกช่องทันที (พิมพ์เสร็จกด Enter หรือคลิกออกเพื่อบันทึกอัตโนมัติ) • เลือกงวดแล้วกดดาวน์โหลด Excel ได้เลย</p>
+                <p class="text-xs text-slate-500">วิธีออกเอกสาร: ① เลือกโครงการด้านล่าง ② กดปุ่มงวด (1-15 หรือ 16-สิ้นเดือน) ③ กดปุ่มดาวน์โหลดสีเขียว หรือสีดำ</p>
               </div>
             </div>
 
@@ -1167,43 +1159,29 @@
           <div class="px-5 sm:px-6 py-4 bg-slate-50 border-b border-slate-200">
             <h2 class="text-base font-bold text-slate-900 flex items-center gap-2">
               <i class="fa-solid fa-truck-front text-indigo-600"></i>
-              <span>1. ทะเบียนรถ &amp; ผูกคนขับประจำรถ</span>
+              <span>1. ทะเบียนรถ</span>
             </h2>
             <p class="text-xs text-slate-500 mt-0.5">
-              เพิ่มเลขทะเบียนรถพร้อมชื่อคนขับประจำรถได้เลย — หรือพิมพ์ชื่อคนขับลงในการ์ดทะเบียนรถด้านล่างแล้วกด Enter เพื่อผูกอัตโนมัติ
+              เพิ่มเลขทะเบียนรถทุกคันที่ใช้วิ่งงาน (พิมพ์ทีละคัน แล้วกดเพิ่ม)
             </p>
           </div>
 
           <div class="p-5 sm:p-6 space-y-5">
-            <form id="form-add-vehicle" class="grid grid-cols-1 sm:grid-cols-12 gap-3">
-              <div class="sm:col-span-5">
-                <input
-                  type="text"
-                  id="input-vehicle-plate"
-                  placeholder="เลขทะเบียนรถ * (เช่น 34-5798)"
-                  required
-                  class="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 transition"
-                />
-              </div>
-              <div class="sm:col-span-4">
-                <input
-                  type="text"
-                  id="input-vehicle-driver"
-                  list="dl-workers"
-                  autocomplete="off"
-                  placeholder="ชื่อคนขับประจำรถ (ผูกเลย — ไม่บังคับ)"
-                  class="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 transition"
-                />
-              </div>
-              <div class="sm:col-span-3">
-                <button
-                  type="submit"
-                  class="w-full min-h-[44px] px-5 py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-white text-sm font-semibold flex items-center justify-center gap-2 transition cursor-pointer"
-                >
-                  <i class="fa-solid fa-plus text-amber-400"></i>
-                  <span>เพิ่มทะเบียนรถ</span>
-                </button>
-              </div>
+            <form id="form-add-vehicle" class="flex flex-col sm:flex-row gap-3">
+              <input
+                type="text"
+                id="input-vehicle-plate"
+                placeholder="กรอกเลขทะเบียนรถ..."
+                required
+                class="flex-1 min-h-[44px] px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 transition"
+              />
+              <button
+                type="submit"
+                class="min-h-[44px] px-5 py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-white text-sm font-semibold flex items-center justify-center gap-2 transition cursor-pointer shrink-0"
+              >
+                <i class="fa-solid fa-plus text-amber-400"></i>
+                <span>เพิ่มทะเบียนรถ</span>
+              </button>
             </form>
 
             <div id="list-vehicles" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3"></div>
@@ -1240,7 +1218,7 @@
                 />
               </div>
               <div class="sm:col-span-4">
-                <label for="input-worker-default-vehicle" class="block text-xs font-semibold text-slate-600 mb-1">ผูกกับทะเบียนรถประจำตัว</label>
+                <label for="input-worker-default-vehicle" class="block text-xs font-semibold text-slate-600 mb-1">ทะเบียนรถประจำตัว (ไม่บังคับ)</label>
                 <select
                   id="input-worker-default-vehicle"
                   class="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 transition"
@@ -1510,6 +1488,6 @@
   <!-- Vendored ExcelJS + Dual Export Engine + Main Frontend Logic -->
   <script src="/vendor/exceljs.min.js?v=6"></script>
   <script src="/excel-export.js?v=6"></script>
-  <script src="/app.js?v=11"></script>
+  <script src="/app.js?v=8"></script>
 </body>
 </html>
