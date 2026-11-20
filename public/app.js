@@ -84,7 +84,9 @@
 
   function calcDurationText(dep, arr) {
     const parse = (t) => {
-      const m = String(t || '').match(/^(\d{1,2}):(\d{2})/);
+      const s = String(t || '').trim();
+      let m = s.match(/^(\d{1,2})[:.](\d{2})$/);
+      if (!m) m = s.match(/^(\d{2})(\d{2})$/);
       return m ? Number(m[1]) * 60 + Number(m[2]) : null;
     };
     const d1 = parse(dep);

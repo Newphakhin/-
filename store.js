@@ -37,9 +37,13 @@ const str = (v) => String(v ?? '').trim();
 function normalizeTime(v, label) {
   const s = str(v);
   if (!s) return '';
-  const m = s.match(/^(\d{1,2}):(\d{2})/);
+  // รองรับทั้งแบบโคลอน 15:00 และแบบจุด 15.00 หรือติดกัน 1500
+  let m = s.match(/^(\d{1,2})[:.](\d{2})$/);
+  if (!m) {
+    m = s.match(/^(\d{2})(\d{2})$/);
+  }
   if (!m || Number(m[1]) > 23 || Number(m[2]) > 59) {
-    throw httpError(400, `รูปแบบ${label}ไม่ถูกต้อง (ต้องเป็น HH:mm)`);
+    throw httpError(400, `รูปแบบ${label}ไม่ถูกต้อง (เช่น 15:00 หรือ 15.00)`);
   }
   return `${String(Number(m[1])).padStart(2, '0')}:${m[2]}`;
 }
