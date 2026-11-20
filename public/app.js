@@ -583,23 +583,42 @@
       '-- เลือกทะเบียนรถ --'
     );
 
-    populateSelect(
-      $('form-site'),
+    // Datalist helper สำหรับช่องที่ทั้งเลือกและพิมพ์เองได้ (5. โครงการ & 6. เส้นทาง)
+    const fillDatalist = (dlId, items) => {
+      const dl = $(dlId);
+      if (!dl) return;
+      const seen = new Set();
+      const opts = [];
+      for (const it of items) {
+        const val = typeof it === 'string' ? it.trim() : String(it.value || '').trim();
+        const label = typeof it === 'string' ? '' : String(it.label || '').trim();
+        if (!val || seen.has(val)) continue;
+        seen.add(val);
+        opts.push(label && label !== val
+          ? `<option value="${escapeHtml(val)}" label="${escapeHtml(label)}"></option>`
+          : `<option value="${escapeHtml(val)}"></option>`);
+      }
+      dl.innerHTML = opts.join('');
+    };
+
+    fillDatalist(
+      'dl-sites',
       activeSites.map((s) => ({
         value: s.site_name,
         label: s.zone_name ? `${s.site_name} [โซน: ${s.zone_name}]` : s.site_name
-      })),
-      '-- เลือกไซต์งาน / โครงการ --'
+      }))
     );
 
-    populateSelect(
-      $('form-route-select'),
-      activeRoutes.map((r) => ({
-        value: String(r.id),
-        label: `${r.destination ? `${r.origin} → ${r.destination}` : r.origin}${r.unit_price ? ` (${formatMoney(r.unit_price)} บ.)` : ''}`
-      })),
-      '-- เลือกเส้นทาง (ระบบเติมข้อมูลให้) --'
-    );
+    fillDatalist('dl-routes', [
+      ...activeRoutes.map((r) => r.origin),
+      ...activeSites.map((s) => s.site_name)
+    ]);
+
+    fillDatalist('dl-destinations', [
+      ...activeSites.map((s) => s.site_name),
+      ...activeRoutes.map((r) => r.destination).filter(Boolean),
+      ...activeRoutes.map((r) => r.origin)
+    ]);
 
     // Filter site dropdown (include all sites + any historical site_name)
     populateSelect(
@@ -711,34 +730,54 @@
     }
   }
 
-  function onRouteSelectChange() {
-    const id = Number($('form-route-select').value);
-    const route = state.routes.find((r) => r.id === id);
+  function onSiteInputChange() {
+    const siteVal = $('form-site').value.trim();
+    const targetEl = state.isSwapped ? $('form-origin') : $('form-destination');
+    const curTarget = targetEl.value.trim();
+    if (!curTarget || curTarget === (state.lastLinkedSite || '')) {
+      targetEl.value = siteVal;
+      if (siteVal) pulseElement(targetEl);
+    }
+    state.lastLinkedSite = siteVal;
+    updateRouteMetaPreview();
+  }
+
+  function applyRoutePresetFromInput() {
+    const origVal = $('form-origin').value.trim();
+    const destVal = $('form-destination').value.trim();
+    const route =
+      state.routes.find((r) => r.active && r.origin === origVal) ||
+      state.routes.find((r) => r.active && r.origin === destVal);
     if (!route) {
       updateRouteMetaPreview();
       return;
     }
 
-    const siteVal = $('form-site').value.trim();
-    const destVal = route.destination || siteVal || $('form-destination').value.trim();
-    const defaultSheet = route.route_sheet_name || (destVal ? `${route.origin} - ${destVal}` : route.origin);
+    // ถ้ามีตั้งค่าปลายทาง/เวลา/ราคาไว้ในเส้นทาง เติมให้เฉพาะช่องที่ยังว่างอยู่ (ไม่ทับสิ่งที่พิมพ์เอง)
+    if (route.destination && !$('form-destination').value.trim() && !state.isSwapped) {
+      $('form-destination').value = route.destination;
+      pulseElement($('form-destination'));
+    }
+    if (route.default_dep_time && !$('form-dep-time').value.trim()) {
+      $('form-dep-time').value = route.default_dep_time;
+    }
+    if (route.default_arr_time && !$('form-arr-time').value.trim()) {
+      $('form-arr-time').value = route.default_arr_time;
+    }
+    if (route.unit_price && !$('form-unit-price').value.trim()) {
+      $('form-unit-price').value = String(route.unit_price);
+      pulseElement($('form-unit-price'));
+    }
+    if (route.display_mode_zone) {
+      $('form-display-mode-zone').value = route.display_mode_zone;
+    }
+    if (route.route_sheet_name && route.route_sheet_name !== route.origin) {
+      $('form-route-sheet-name').value = route.route_sheet_name;
+    }
+    if (route.billing_title && route.billing_title !== route.origin) {
+      $('form-billing-title').value = route.billing_title;
+    }
 
-    $('form-origin').value = route.origin || '';
-    $('form-destination').value = destVal;
-    $('form-dep-time').value = route.default_dep_time || '';
-    $('form-arr-time').value = route.default_arr_time || '';
-    $('form-unit-price').value = route.unit_price ? String(route.unit_price) : '';
-    $('form-route-sheet-name').value = defaultSheet;
-    $('form-billing-title').value = route.billing_title || defaultSheet;
-    $('form-display-mode-zone').value = route.display_mode_zone || 'worker_name';
-
-    state.isSwapped = false;
-    $('swap-status-badge').classList.add('hidden');
-    $('swap-status-badge').classList.remove('inline-flex');
-
-    pulseElement($('form-origin'));
-    pulseElement($('form-destination'));
-    pulseElement($('form-unit-price'));
     updateDurationPreview();
     updateRouteMetaPreview();
   }
@@ -792,7 +831,13 @@
     $('travel-log-form').reset();
     setTripType('normal');
     $('form-date').value = keepDateAndSite ? prevDate : todayIso();
-    if (keepDateAndSite && prevSite) $('form-site').value = prevSite;
+    if (keepDateAndSite && prevSite) {
+      $('form-site').value = prevSite;
+      $('form-destination').value = prevSite;
+      state.lastLinkedSite = prevSite;
+    } else {
+      state.lastLinkedSite = '';
+    }
     $('form-route-sheet-name').value = '';
     $('form-billing-title').value = '';
     $('form-display-mode-zone').value = 'worker_name';
@@ -839,8 +884,8 @@
 
     ensureOpt('form-worker', log.worker_name);
     ensureOpt('form-vehicle', log.license_plate);
-    ensureOpt('form-site', log.site_name);
-    $('form-route-select').value = '';
+    $('form-site').value = log.site_name || '';
+    state.lastLinkedSite = log.site_name || '';
     $('form-origin').value = log.origin || '';
     $('form-destination').value = log.destination || '';
     $('form-route-sheet-name').value = log.route_sheet_name || '';
@@ -2722,20 +2767,14 @@
     $('trip-type-charter').addEventListener('click', () => setTripType('charter'));
     $('form-date').addEventListener('change', updateFormDatePreview);
     $('form-worker').addEventListener('change', onWorkerSelectChange);
-    $('form-site').addEventListener('change', () => {
-      const siteVal = $('form-site').value.trim();
-      const destEl = $('form-destination');
-      if (siteVal && !destEl.value.trim()) {
-        destEl.value = siteVal;
-        pulseElement(destEl);
-        updateRouteMetaPreview();
-      }
-    });
-    $('form-route-select').addEventListener('change', onRouteSelectChange);
+    $('form-site').addEventListener('input', onSiteInputChange);
+    $('form-site').addEventListener('change', onSiteInputChange);
     $('btn-swap-route').addEventListener('click', onSwapRouteClick);
     $('btn-toggle-route-meta').addEventListener('click', () => toggleRouteMetaBox());
-    $('form-origin').addEventListener('input', updateRouteMetaPreview);
-    $('form-destination').addEventListener('input', updateRouteMetaPreview);
+    $('form-origin').addEventListener('input', applyRoutePresetFromInput);
+    $('form-origin').addEventListener('change', applyRoutePresetFromInput);
+    $('form-destination').addEventListener('input', applyRoutePresetFromInput);
+    $('form-destination').addEventListener('change', applyRoutePresetFromInput);
     $('form-route-sheet-name').addEventListener('input', updateRouteMetaPreview);
     $('form-billing-title').addEventListener('input', updateRouteMetaPreview);
     $('form-display-mode-zone').addEventListener('change', updateRouteMetaPreview);

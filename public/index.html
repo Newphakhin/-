@@ -550,45 +550,33 @@
 
             </div>
 
-            <!-- Row 2: ไซต์งาน/โครงการ + เลือกเส้นทาง + จาก + Swap + ถึง -->
+            <!-- Row 2: 5. โครงการ (วางบิล) + 6. เส้นทาง (จาก ↔ ถึง ลิงก์กัน สลับได้ พิมพ์ได้) -->
             <div class="grid grid-cols-1 md:grid-cols-12 gap-4 items-start">
 
-              <!-- 5. ไซต์งาน / โครงการ -->
-              <div class="md:col-span-6 lg:col-span-3">
+              <!-- 5. โครงการ (ที่จะวางบิล) — เลือกได้ พิมพ์ได้ ลิงก์กับเส้นทางอัตโนมัติ -->
+              <div class="md:col-span-5 lg:col-span-4">
                 <label for="form-site" class="block text-sm font-semibold text-slate-700 mb-1.5">
                   <i class="fa-solid fa-building text-amber-500 mr-1"></i>
                   5. โครงการ (ที่จะวางบิล)
                 </label>
-                <select
+                <input
+                  type="text"
                   id="form-site"
+                  list="dl-sites"
+                  autocomplete="off"
+                  placeholder="เลือก หรือ พิมพ์ชื่อโครงการ..."
                   class="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 transition"
-                >
-                  <option value="">-- เลือกโครงการ --</option>
-                </select>
-                <p class="mt-1.5 text-[11px] text-slate-500">ใช้แยกว่าเที่ยวนี้ไปออกใบเบิกของโครงการไหน</p>
+                />
+                <datalist id="dl-sites"></datalist>
+                <p class="mt-1.5 text-[11px] text-slate-500">เลือกหรือพิมพ์ได้ — ลิงก์เข้าช่องปลายทางในข้อ 6 อัตโนมัติ</p>
               </div>
 
-              <!-- 6. เลือกเส้นทาง -->
-              <div class="md:col-span-6 lg:col-span-3">
-                <label for="form-route-select" class="block text-sm font-semibold text-slate-700 mb-1.5">
-                  <i class="fa-solid fa-route text-indigo-600 mr-1"></i>
-                  6. เลือกเส้นทาง
-                </label>
-                <select
-                  id="form-route-select"
-                  class="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 transition"
-                >
-                  <option value="">-- เลือกเส้นทาง (ระบบเติมข้อมูลให้) --</option>
-                </select>
-                <p class="mt-1.5 text-[11px] text-slate-500">เลือกแล้วช่อง 7-11 จะถูกเติมให้อัตโนมัติ</p>
-              </div>
-
-              <!-- 7 & 8. จาก (ต้นทาง) + ปุ่ม Swap + ถึง (ปลายทาง) -->
-              <div class="md:col-span-12 lg:col-span-6">
+              <!-- 6. เส้นทาง: จาก (ต้นทาง) ⇄ ถึง (ปลายทาง) — เลือกได้ พิมพ์ได้ สลับไปมาได้ -->
+              <div class="md:col-span-7 lg:col-span-8">
                 <div class="flex flex-wrap items-center justify-between gap-2 mb-1.5">
                   <span class="text-sm font-semibold text-slate-700">
-                    <i class="fa-solid fa-location-dot text-emerald-600 mr-1"></i>
-                    7-8. จาก (ต้นทาง) &amp; ถึง (ปลายทาง) <span class="text-rose-600">*</span>
+                    <i class="fa-solid fa-route text-emerald-600 mr-1"></i>
+                    6. เส้นทาง (จาก ↔ ถึง) <span class="text-rose-600">*</span>
                   </span>
                   <span id="swap-status-badge" class="hidden items-center gap-1 px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300 text-[11px] font-semibold">
                     <i class="fa-solid fa-right-left text-[10px]"></i>
@@ -601,30 +589,36 @@
                     <input
                       type="text"
                       id="form-origin"
-                      placeholder="จาก (ต้นทาง)..."
+                      list="dl-routes"
+                      autocomplete="off"
+                      placeholder="จาก (เลือกจุดรับ หรือ พิมพ์เอง)..."
                       required
                       class="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 transition"
                     />
+                    <datalist id="dl-routes"></datalist>
                   </div>
 
                   <button
                     type="button"
                     id="btn-swap-route"
-                    title="กดเพื่อสลับต้นทางกับปลายทาง ใช้ตอนบันทึกขากลับ"
+                    title="กดเพื่อสลับต้นทางกับปลายทางไปมา (ขาไป-ขากลับ)"
                     class="min-h-[44px] px-3.5 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 active:bg-amber-200 text-amber-900 border border-amber-300 text-xs font-bold flex items-center justify-center gap-1.5 transition cursor-pointer shrink-0"
                   >
                     <i class="fa-solid fa-arrow-right-arrow-left"></i>
-                    <span>สลับเป็นขากลับ</span>
+                    <span>สลับขาไป-ขากลับ</span>
                   </button>
 
                   <div class="flex-1">
                     <input
                       type="text"
                       id="form-destination"
-                      placeholder="ถึง (ปลายทาง)..."
+                      list="dl-destinations"
+                      autocomplete="off"
+                      placeholder="ถึง (ลิงก์จากโครงการ หรือ พิมพ์เอง)..."
                       required
                       class="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 transition"
                     />
+                    <datalist id="dl-destinations"></datalist>
                   </div>
                 </div>
 
@@ -686,11 +680,11 @@
             <!-- Row 3: เวลาออก + เวลาถึง + จำนวนคนโดยสาร + ราคาต่อเที่ยว + หมายเหตุ -->
             <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-12 gap-4">
 
-              <!-- 9a. เวลาออก -->
+              <!-- 7a. เวลาออก -->
               <div class="lg:col-span-2">
                 <label for="form-dep-time" class="block text-sm font-semibold text-slate-700 mb-1.5">
                   <i class="fa-regular fa-clock text-indigo-600 mr-1"></i>
-                  9. เวลาออก
+                  7. เวลาออก
                 </label>
                 <input
                   type="text"
@@ -718,11 +712,11 @@
                 </div>
               </div>
 
-              <!-- 10. จำนวนคนโดยสาร -->
+              <!-- 8. จำนวนคนโดยสาร -->
               <div class="lg:col-span-2">
                 <label for="form-passengers" class="block text-sm font-semibold text-slate-700 mb-1.5">
                   <i class="fa-solid fa-users text-indigo-600 mr-1"></i>
-                  10. จำนวนคนที่ขึ้นรถ
+                  8. จำนวนคนที่ขึ้นรถ
                 </label>
                 <div class="relative">
                   <input
@@ -738,11 +732,11 @@
                 <p id="form-passengers-hint" class="mt-1.5 text-[11px] text-slate-500">ไม่ทราบเว้นว่างได้ • งานเหมาไม่ต้องกรอก</p>
               </div>
 
-              <!-- 11. ราคาต่อเที่ยว (บาท) -->
+              <!-- 9. ราคาต่อเที่ยว (บาท) -->
               <div class="lg:col-span-3">
                 <label for="form-unit-price" class="block text-sm font-semibold text-slate-700 mb-1.5">
                   <i class="fa-solid fa-baht-sign text-emerald-600 mr-1"></i>
-                  11. ราคาต่อเที่ยว (บาท)
+                  9. ราคาต่อเที่ยว (บาท)
                 </label>
                 <div class="relative">
                   <input
@@ -758,11 +752,11 @@
                 <p id="form-price-hint" class="mt-1.5 text-[11px] text-slate-500">กรอกราคาของเที่ยวนี้ หรือเว้นว่างได้</p>
               </div>
 
-              <!-- 12. หมายเหตุ -->
+              <!-- 10. หมายเหตุ -->
               <div class="sm:col-span-2 lg:col-span-3">
                 <label for="form-remark" class="block text-sm font-semibold text-slate-700 mb-1.5">
                   <i class="fa-regular fa-note-sticky text-amber-600 mr-1"></i>
-                  12. หมายเหตุ
+                  10. หมายเหตุ
                 </label>
                 <input
                   type="text"
@@ -1494,6 +1488,6 @@
   <!-- Vendored ExcelJS + Dual Export Engine + Main Frontend Logic -->
   <script src="/vendor/exceljs.min.js?v=6"></script>
   <script src="/excel-export.js?v=6"></script>
-  <script src="/app.js?v=7"></script>
+  <script src="/app.js?v=8"></script>
 </body>
 </html>
