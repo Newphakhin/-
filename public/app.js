@@ -634,14 +634,18 @@
       '-- ทุกไซต์งาน / โครงการ --'
     );
 
-    // Back-office worker form default_vehicle dropdown
+    // Back-office worker form default_vehicle dropdown (แสดงให้เห็นว่าคันไหนผูกกับใครอยู่)
     populateSelect(
       $('input-worker-default-vehicle'),
-      state.vehicles.map((v) => ({
-        value: v.license_plate,
-        label: v.active ? v.license_plate : `${v.license_plate} (ปิดใช้งาน)`
-      })),
-      '-- ยังไม่ผูกทะเบียนรถ --'
+      state.vehicles.map((v) => {
+        const owner = state.workers.find((w) => w.default_vehicle === v.license_plate);
+        const status = !v.active ? ' (ปิดใช้งาน)' : owner ? ` — ผูกกับ: ${owner.name}` : '';
+        return {
+          value: v.license_plate,
+          label: `${v.license_plate}${status}`
+        };
+      }),
+      '-- เลือกทะเบียนรถที่ผูกประจำ --'
     );
   }
 
@@ -753,12 +757,9 @@
     const worker = state.workers.find((w) => w.name === workerName);
     if (worker && worker.default_vehicle) {
       const vehEl = $('form-vehicle');
-      const curPlate = vehEl.value.trim();
-      if (!curPlate || curPlate === (state.lastAutoVehicle || '')) {
-        vehEl.value = worker.default_vehicle;
-        state.lastAutoVehicle = worker.default_vehicle;
-        pulseElement(vehEl);
-      }
+      vehEl.value = worker.default_vehicle;
+      state.lastAutoVehicle = worker.default_vehicle;
+      pulseElement(vehEl);
     }
     updateWorkerVehicleHints();
   }
@@ -1415,11 +1416,10 @@
     if (newVal === oldVal) return;
 
     const payload = { ...cur, [field]: newVal };
-    // Auto-update vehicle when worker changed inline ONLY if plate was empty or matched old worker's default
+    // เมื่อเปลี่ยนชื่อคนขับในตาราง ให้ผูกเปลี่ยนทะเบียนรถเป็นคันประจำของคนขับคนนั้นทันที (แล้วค่อยแก้ทะเบียนแยกได้ถ้าวันนั้นขับรถแทน)
     if (field === 'worker_name') {
       const wObj = state.workers.find((w) => w.name === raw);
-      const oldWObj = state.workers.find((w) => w.name === cur.worker_name);
-      if (wObj && wObj.default_vehicle && (!cur.license_plate || (oldWObj && cur.license_plate === oldWObj.default_vehicle))) {
+      if (wObj && wObj.default_vehicle) {
         payload.license_plate = wObj.default_vehicle;
       }
     }
@@ -2313,51 +2313,76 @@
       return;
     }
     el.innerHTML = state.vehicles
-      .map(
-        (v) => `
-        <div class="p-3.5 rounded-xl border ${v.active ? 'bg-white border-slate-200' : 'bg-slate-50 border-slate-200 opacity-65'} flex items-center justify-between gap-2">
-          <div class="flex items-center gap-2 min-w-0">
-            <span class="license-plate-badge">${escapeHtml(v.license_plate)}</span>
-            ${v.active ? '' : '<span class="text-[10px] px-1.5 py-0.5 rounded bg-slate-200 text-slate-600 font-semibold">ปิดใช้งาน</span>'}
+      .map((v) => {
+        const owners = state.workers.filter((w) => w.default_vehicle === v.license_plate);
+        const primaryOwner = owners[0] || null;
+        return `
+        <div class="p-3.5 rounded-xl border ${v.active ? 'bg-white border-slate-200' : 'bg-slate-50 border-slate-200 opacity-65'} space-y-2.5">
+          <div class="flex items-center justify-between gap-2">
+            <div class="flex items-center gap-2 min-w-0">
+              <span class="license-plate-badge">${escapeHtml(v.license_plate)}</span>
+              ${v.active ? '' : '<span class="text-[10px] px-1.5 py-0.5 rounded bg-slate-200 text-slate-600 font-semibold">ปิดใช้งาน</span>'}
+            </div>
+            <div class="flex items-center gap-1 shrink-0">
+              <button type="button" data-bo="toggle-vehicle" data-id="${v.id}" title="${v.active ? 'ปิดใช้งาน' : 'เปิดใช้งาน'}"
+                class="w-8 h-8 rounded-lg ${v.active ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-slate-200 text-slate-600 border-slate-300'} border inline-flex items-center justify-center cursor-pointer">
+                <i class="fa-solid ${v.active ? 'fa-toggle-on' : 'fa-toggle-off'}"></i>
+              </button>
+              <button type="button" data-bo="edit-vehicle" data-id="${v.id}" title="แก้ไขทะเบียนรถ"
+                class="w-8 h-8 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 inline-flex items-center justify-center cursor-pointer">
+                <i class="fa-solid fa-pen text-xs"></i>
+              </button>
+              <button type="button" data-bo="delete-vehicle" data-id="${v.id}" title="ลบ"
+                class="w-8 h-8 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 inline-flex items-center justify-center cursor-pointer">
+                <i class="fa-solid fa-trash text-xs"></i>
+              </button>
+            </div>
           </div>
-          <div class="flex items-center gap-1 shrink-0">
-            <button type="button" data-bo="toggle-vehicle" data-id="${v.id}" title="${v.active ? 'ปิดใช้งาน' : 'เปิดใช้งาน'}"
-              class="w-8 h-8 rounded-lg ${v.active ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-slate-200 text-slate-600 border-slate-300'} border inline-flex items-center justify-center cursor-pointer">
-              <i class="fa-solid ${v.active ? 'fa-toggle-on' : 'fa-toggle-off'}"></i>
-            </button>
-            <button type="button" data-bo="edit-vehicle" data-id="${v.id}" title="แก้ไข"
-              class="w-8 h-8 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 inline-flex items-center justify-center cursor-pointer">
-              <i class="fa-solid fa-pen text-xs"></i>
-            </button>
-            <button type="button" data-bo="delete-vehicle" data-id="${v.id}" title="ลบ"
-              class="w-8 h-8 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 inline-flex items-center justify-center cursor-pointer">
-              <i class="fa-solid fa-trash text-xs"></i>
-            </button>
+          <div class="flex items-center gap-1.5 pt-2 border-t border-slate-100">
+            <i class="fa-solid fa-id-badge ${primaryOwner ? 'text-emerald-600' : 'text-slate-400'} text-xs shrink-0"></i>
+            <input
+              type="text"
+              list="dl-workers"
+              data-bind-plate="${escapeHtml(v.license_plate)}"
+              value="${escapeHtml(primaryOwner ? primaryOwner.name : '')}"
+              placeholder="พิมพ์ชื่อคนขับประจำรถนี้ + Enter..."
+              class="inline-edit text-xs ${primaryOwner ? 'font-semibold text-slate-800 !bg-emerald-50/50 !border-emerald-200' : 'text-slate-600 !bg-slate-50 !border-slate-200'}"
+            />
           </div>
         </div>
-      `
-      )
+      `;
+      })
       .join('');
   }
 
   function renderWorkersList() {
     const el = $('list-workers');
     if (state.workers.length === 0) {
-      el.innerHTML = '<div class="py-10 text-center text-xs text-slate-400">ยังไม่มีคนขับ — พิมพ์ชื่อในช่องด้านบน เลือกรถประจำตัว แล้วกด "เพิ่มคนขับ"</div>';
+      el.innerHTML = '<div class="py-10 text-center text-xs text-slate-400">ยังไม่มีคนขับ — พิมพ์ชื่อในช่องด้านบน เลือกทะเบียนรถประจำตัว แล้วกด "เพิ่มคนขับ" (หรือพิมพ์ผูกตรงในการ์ดหน้า 1. ทะเบียนรถ ได้เลย)</div>';
       return;
     }
     el.innerHTML = state.workers
       .map(
         (w, i) => `
         <div class="px-4 py-3 flex flex-wrap items-center justify-between gap-3 ${w.active ? 'bg-white' : 'bg-slate-50 opacity-65'}">
-          <div class="flex flex-wrap items-center gap-2.5">
+          <div class="flex flex-wrap items-center gap-2.5 flex-1 min-w-[220px]">
             <span class="text-xs font-bold text-slate-400 w-6">${i + 1}.</span>
-            <span class="font-semibold text-sm text-slate-900">${escapeHtml(w.name)}</span>
-            ${
-              w.default_vehicle
-                ? `<span class="license-plate-badge !text-[11px] !py-0.5 !px-2"><i class="fa-solid fa-truck-front text-amber-600 text-[10px]"></i>${escapeHtml(w.default_vehicle)}</span>`
-                : '<span class="text-[11px] text-slate-400">ยังไม่ผูกทะเบียนรถประจำตัว</span>'
-            }
+            <span class="font-semibold text-sm text-slate-900 min-w-[110px]">${escapeHtml(w.name)}</span>
+            <div class="flex items-center gap-1.5">
+              <i class="fa-solid fa-truck-front text-amber-600 text-xs"></i>
+              <select data-bind-worker-id="${w.id}" title="เลือกทะเบียนรถที่ผูกประจำกับคนขับนี้"
+                class="min-h-[34px] px-2.5 py-1 rounded-lg border text-xs font-semibold cursor-pointer focus:outline-none focus:ring-2 focus:ring-indigo-500 ${
+                  w.default_vehicle ? 'bg-emerald-50/70 border-emerald-300 text-slate-900' : 'bg-slate-50 border-slate-300 text-slate-500'
+                }">
+                <option value="">-- ยังไม่ผูกทะเบียนรถ --</option>
+                ${state.vehicles
+                  .map(
+                    (v) =>
+                      `<option value="${escapeHtml(v.license_plate)}" ${v.license_plate === w.default_vehicle ? 'selected' : ''}>${escapeHtml(v.license_plate)}</option>`
+                  )
+                  .join('')}
+              </select>
+            </div>
             ${w.active ? '' : '<span class="text-[10px] px-2 py-0.5 rounded-full bg-slate-200 text-slate-600 font-semibold">ปิดใช้งาน</span>'}
           </div>
           <div class="flex items-center gap-1.5">
@@ -2484,14 +2509,98 @@
   async function handleAddVehicle(e) {
     e.preventDefault();
     const plate = $('input-vehicle-plate').value.trim();
+    const driverName = $('input-vehicle-driver') ? $('input-vehicle-driver').value.trim() : '';
     if (!plate) return;
     try {
       await apiFetch('/api/master/vehicles', { method: 'POST', body: JSON.stringify({ license_plate: plate }) });
+      if (driverName) {
+        const existingWorker = state.workers.find((w) => w.name === driverName);
+        if (existingWorker) {
+          await apiFetch(`/api/master/workers/${existingWorker.id}`, {
+            method: 'PUT',
+            body: JSON.stringify({ default_vehicle: plate })
+          });
+        } else {
+          await apiFetch('/api/master/workers', {
+            method: 'POST',
+            body: JSON.stringify({ name: driverName, default_vehicle: plate })
+          });
+        }
+      }
       $('input-vehicle-plate').value = '';
-      showToast(`เพิ่มทะเบียนรถ "${plate}" เรียบร้อยแล้ว`, 'success');
+      if ($('input-vehicle-driver')) $('input-vehicle-driver').value = '';
+      showToast(
+        driverName ? `เพิ่มรถ "${plate}" และผูกกับคนขับ "${driverName}" เรียบร้อยแล้ว` : `เพิ่มทะเบียนรถ "${plate}" เรียบร้อยแล้ว`,
+        'success'
+      );
       await loadMasterData();
     } catch (err) {
       showToast(err.message, 'error');
+    }
+  }
+
+  async function handleQuickBindVehicleDriver(inputEl) {
+    const plate = inputEl.dataset.bindPlate;
+    const newName = inputEl.value.trim();
+    const prevOwners = state.workers.filter((w) => w.default_vehicle === plate);
+    const prevPrimary = prevOwners[0] || null;
+    if ((prevPrimary ? prevPrimary.name : '') === newName) return;
+
+    inputEl.classList.add('inline-saving');
+    try {
+      // ยกเลิกการผูกจากคนขับเดิมของคันนี้ (ถ้ามี)
+      for (const oldW of prevOwners) {
+        if (oldW.name !== newName) {
+          await apiFetch(`/api/master/workers/${oldW.id}`, {
+            method: 'PUT',
+            body: JSON.stringify({ default_vehicle: '' })
+          });
+        }
+      }
+      if (newName) {
+        const target = state.workers.find((w) => w.name === newName);
+        if (target) {
+          await apiFetch(`/api/master/workers/${target.id}`, {
+            method: 'PUT',
+            body: JSON.stringify({ default_vehicle: plate })
+          });
+        } else {
+          await apiFetch('/api/master/workers', {
+            method: 'POST',
+            body: JSON.stringify({ name: newName, default_vehicle: plate })
+          });
+        }
+        showToast(`ผูกคนขับ "${newName}" กับทะเบียน "${plate}" เรียบร้อยแล้ว`, 'success', 2500);
+      } else {
+        showToast(`ยกเลิกการผูกคนขับจากทะเบียน "${plate}" แล้ว`, 'info', 2200);
+      }
+      await loadMasterData();
+    } catch (err) {
+      inputEl.classList.remove('inline-saving');
+      inputEl.value = prevPrimary ? prevPrimary.name : '';
+      showToast(err.message || 'ไม่สามารถผูกคนขับกับทะเบียนรถได้', 'error');
+    }
+  }
+
+  async function handleQuickBindWorkerVehicle(selectEl) {
+    const workerId = Number(selectEl.dataset.bindWorkerId);
+    const newPlate = selectEl.value.trim();
+    const w = state.workers.find((x) => x.id === workerId);
+    if (!w || (w.default_vehicle || '') === newPlate) return;
+    try {
+      await apiFetch(`/api/master/workers/${workerId}`, {
+        method: 'PUT',
+        body: JSON.stringify({ default_vehicle: newPlate })
+      });
+      showToast(
+        newPlate ? `ผูกคนขับ "${w.name}" กับทะเบียน "${newPlate}" เรียบร้อยแล้ว` : `ยกเลิกการผูกทะเบียนรถของ "${w.name}" แล้ว`,
+        'success',
+        2500
+      );
+      await loadMasterData();
+    } catch (err) {
+      selectEl.value = w.default_vehicle || '';
+      showToast(err.message || 'ไม่สามารถผูกทะเบียนรถได้', 'error');
     }
   }
 
@@ -3087,6 +3196,24 @@
     $('form-add-route').addEventListener('submit', handleAddRoute);
     $('form-settings-quota').addEventListener('submit', handleQuotaSubmit);
     $('view-back-office').addEventListener('click', handleBackOfficeActionClick);
+    $('view-back-office').addEventListener('change', (e) => {
+      const plateInput = e.target.closest('input[data-bind-plate]');
+      if (plateInput) {
+        handleQuickBindVehicleDriver(plateInput);
+        return;
+      }
+      const workerSelect = e.target.closest('select[data-bind-worker-id]');
+      if (workerSelect) {
+        handleQuickBindWorkerVehicle(workerSelect);
+      }
+    });
+    $('view-back-office').addEventListener('keydown', (e) => {
+      const plateInput = e.target.closest('input[data-bind-plate]');
+      if (plateInput && e.key === 'Enter') {
+        e.preventDefault();
+        plateInput.blur();
+      }
+    });
   }
 
   async function init() {
