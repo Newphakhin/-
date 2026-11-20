@@ -548,10 +548,11 @@ function buildRouteRecord(input, base = {}) {
   const origin = input.origin !== undefined ? str(input.origin) : base.origin || '';
   const destination =
     input.destination !== undefined ? str(input.destination) : base.destination || '';
-  if (!origin || !destination) throw httpError(400, 'กรุณาระบุต้นทางและปลายทางของเส้นทาง');
+  if (!origin) throw httpError(400, 'กรุณาระบุต้นทาง (จุดรับ) ของเส้นทาง');
+  const defaultSheet = destination ? `${origin} - ${destination}` : origin;
   const sheet =
     (input.route_sheet_name !== undefined ? str(input.route_sheet_name) : base.route_sheet_name) ||
-    `${origin} - ${destination}`;
+    defaultSheet;
   const billing =
     (input.billing_title !== undefined ? str(input.billing_title) : base.billing_title) || sheet;
   return {
@@ -581,7 +582,8 @@ async function createRoute(input) {
   const items = await listRoutes();
   const record = buildRouteRecord(input);
   if (items.some((r) => r.origin === record.origin && r.destination === record.destination)) {
-    throw httpError(409, `เส้นทาง "${record.origin} → ${record.destination}" มีอยู่ในระบบแล้ว`);
+    const label = record.destination ? `${record.origin} → ${record.destination}` : record.origin;
+    throw httpError(409, `เส้นทาง "${label}" มีอยู่ในระบบแล้ว`);
   }
   const created = { id: items.reduce((m, r) => Math.max(m, r.id), 0) + 1, ...record };
   items.push(created);
@@ -599,7 +601,8 @@ async function updateRoute(id, input) {
       (r, i) => i !== idx && r.origin === record.origin && r.destination === record.destination
     )
   ) {
-    throw httpError(409, `เส้นทาง "${record.origin} → ${record.destination}" มีอยู่ในระบบแล้ว`);
+    const label = record.destination ? `${record.origin} → ${record.destination}` : record.origin;
+    throw httpError(409, `เส้นทาง "${label}" มีอยู่ในระบบแล้ว`);
   }
   items[idx] = { id: items[idx].id, ...record };
   await setKV(KV_ROUTES, items);

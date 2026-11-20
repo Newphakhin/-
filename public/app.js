@@ -596,7 +596,7 @@
       $('form-route-select'),
       activeRoutes.map((r) => ({
         value: String(r.id),
-        label: `${r.origin} → ${r.destination}${r.unit_price ? ` (${formatMoney(r.unit_price)} บ.)` : ''}`
+        label: `${r.destination ? `${r.origin} → ${r.destination}` : r.origin}${r.unit_price ? ` (${formatMoney(r.unit_price)} บ.)` : ''}`
       })),
       '-- เลือกเส้นทาง (ระบบเติมข้อมูลให้) --'
     );
@@ -719,13 +719,17 @@
       return;
     }
 
+    const siteVal = $('form-site').value.trim();
+    const destVal = route.destination || siteVal || $('form-destination').value.trim();
+    const defaultSheet = route.route_sheet_name || (destVal ? `${route.origin} - ${destVal}` : route.origin);
+
     $('form-origin').value = route.origin || '';
-    $('form-destination').value = route.destination || '';
+    $('form-destination').value = destVal;
     $('form-dep-time').value = route.default_dep_time || '';
     $('form-arr-time').value = route.default_arr_time || '';
     $('form-unit-price').value = route.unit_price ? String(route.unit_price) : '';
-    $('form-route-sheet-name').value = route.route_sheet_name || `${route.origin} - ${route.destination}`;
-    $('form-billing-title').value = route.billing_title || route.route_sheet_name || `${route.origin} - ${route.destination}`;
+    $('form-route-sheet-name').value = defaultSheet;
+    $('form-billing-title').value = route.billing_title || defaultSheet;
     $('form-display-mode-zone').value = route.display_mode_zone || 'worker_name';
 
     state.isSwapped = false;
@@ -2123,7 +2127,7 @@
   function renderRoutesList() {
     const el = $('list-routes');
     if (state.routes.length === 0) {
-      el.innerHTML = '<div class="py-10 text-center text-xs text-slate-400">ยังไม่มีเส้นทาง — กรอกต้นทาง ปลายทาง เวลา และราคาด้านบน แล้วกด "เพิ่มเส้นทาง"</div>';
+      el.innerHTML = '<div class="py-10 text-center text-xs text-slate-400">ยังไม่มีเส้นทาง — พิมพ์ชื่อต้นทาง (จุดรับ) ด้านบน แล้วกด "เพิ่มเส้นทาง"</div>';
       return;
     }
     el.innerHTML = state.routes
@@ -2134,17 +2138,23 @@
             <div class="flex flex-wrap items-center gap-2">
               <span class="text-xs font-bold text-slate-400">${i + 1}.</span>
               <span class="font-bold text-sm text-slate-900">
-                ${escapeHtml(r.origin)} <i class="fa-solid fa-arrow-right text-amber-500 text-xs mx-1"></i> ${escapeHtml(r.destination)}
+                ${r.destination ? `${escapeHtml(r.origin)} <i class="fa-solid fa-arrow-right text-amber-500 text-xs mx-1"></i> ${escapeHtml(r.destination)}` : escapeHtml(r.origin)}
               </span>
-              <span class="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs font-bold">
-                ${formatMoney(r.unit_price)} บาท/เที่ยว
-              </span>
+              ${
+                r.unit_price > 0
+                  ? `<span class="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs font-bold">${formatMoney(r.unit_price)} บาท/เที่ยว</span>`
+                  : ''
+              }
               ${r.active ? '' : '<span class="text-[10px] px-2 py-0.5 rounded-full bg-slate-200 text-slate-600 font-semibold">ปิดใช้งาน</span>'}
             </div>
             <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-600">
               <span><strong class="text-slate-700">แผ่นงาน Excel:</strong> ${escapeHtml(r.route_sheet_name)}</span>
               <span><strong class="text-slate-700">ชื่อในใบเบิก:</strong> ${escapeHtml(r.billing_title)}</span>
-              <span><strong class="text-slate-700">เวลา:</strong> ${escapeHtml(r.default_dep_time || '-')} – ${escapeHtml(r.default_arr_time || '-')}</span>
+              ${
+                r.default_dep_time || r.default_arr_time
+                  ? `<span><strong class="text-slate-700">เวลา:</strong> ${escapeHtml(r.default_dep_time || '-')} – ${escapeHtml(r.default_arr_time || '-')}</span>`
+                  : ''
+              }
               <span>
                 <strong class="text-slate-700">โซนคอลัมน์ C:</strong>
                 <span class="px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-800 font-semibold text-[11px]">
@@ -2230,14 +2240,13 @@
   async function handleAddRoute(e) {
     e.preventDefault();
     const origin = $('input-route-origin').value.trim();
-    const destination = $('input-route-destination').value.trim();
-    if (!origin || !destination) {
-      showToast('กรุณาระบุต้นทางและปลายทาง', 'error');
+    if (!origin) {
+      showToast('กรุณาระบุต้นทาง (จุดรับ)', 'error');
       return;
     }
     const payload = {
       origin,
-      destination,
+      destination: '',
       route_sheet_name: $('input-route-sheet-name').value.trim(),
       billing_title: $('input-route-billing-title').value.trim(),
       default_dep_time: $('input-route-dep-time').value.trim(),
@@ -2248,7 +2257,7 @@
     try {
       await apiFetch('/api/master/routes', { method: 'POST', body: JSON.stringify(payload) });
       $('form-add-route').reset();
-      showToast(`เพิ่มเส้นทาง "${origin} → ${destination}" เรียบร้อยแล้ว`, 'success');
+      showToast(`เพิ่มเส้นทาง "${origin}" เรียบร้อยแล้ว`, 'success');
       await loadMasterData();
     } catch (err) {
       showToast(err.message, 'error');
@@ -2407,14 +2416,9 @@
         <h3 class="text-base font-bold text-slate-900">แก้ไขเส้นทาง / ที่หมาย</h3>
         <form id="modal-edit-form" class="space-y-3">
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label class="block text-xs font-semibold text-slate-700 mb-1">ต้นทาง *</label>
+            <div class="sm:col-span-2">
+              <label class="block text-xs font-semibold text-slate-700 mb-1">ต้นทาง (จุดรับ) *</label>
               <input type="text" id="m-origin" value="${escapeHtml(r.origin)}" required
-                class="w-full min-h-[40px] px-3 py-2 rounded-xl border border-slate-300 text-sm" />
-            </div>
-            <div>
-              <label class="block text-xs font-semibold text-slate-700 mb-1">ปลายทาง *</label>
-              <input type="text" id="m-dest" value="${escapeHtml(r.destination)}" required
                 class="w-full min-h-[40px] px-3 py-2 rounded-xl border border-slate-300 text-sm" />
             </div>
             <div>
@@ -2466,7 +2470,7 @@
               method: 'PUT',
               body: JSON.stringify({
                 origin: box.querySelector('#m-origin').value.trim(),
-                destination: box.querySelector('#m-dest').value.trim(),
+                destination: '',
                 route_sheet_name: box.querySelector('#m-sheet').value.trim(),
                 billing_title: box.querySelector('#m-billing').value.trim(),
                 default_dep_time: box.querySelector('#m-dep').value.trim(),
@@ -2567,15 +2571,16 @@
       } else if (action === 'delete-route') {
         const r = state.routes.find((x) => x.id === id);
         if (!r) return;
+        const label = r.destination ? `${r.origin} → ${r.destination}` : r.origin;
         const ok = await confirmModal({
           title: 'ยืนยันการลบเส้นทาง',
-          message: `ต้องการลบเส้นทาง "${r.origin} → ${r.destination}" ออกจากรายการข้อมูลหลักใช่หรือไม่?`,
+          message: `ต้องการลบเส้นทาง "${label}" ออกจากรายการข้อมูลหลักใช่หรือไม่?`,
           confirmText: 'ลบเส้นทาง',
           danger: true
         });
         if (!ok) return;
         await apiFetch(`/api/master/routes/${id}`, { method: 'DELETE' });
-        showToast(`ลบเส้นทาง "${r.origin} → ${r.destination}" แล้ว`, 'success');
+        showToast(`ลบเส้นทาง "${label}" แล้ว`, 'success');
         await loadMasterData();
       }
     } catch (err) {
@@ -2717,6 +2722,15 @@
     $('trip-type-charter').addEventListener('click', () => setTripType('charter'));
     $('form-date').addEventListener('change', updateFormDatePreview);
     $('form-worker').addEventListener('change', onWorkerSelectChange);
+    $('form-site').addEventListener('change', () => {
+      const siteVal = $('form-site').value.trim();
+      const destEl = $('form-destination');
+      if (siteVal && !destEl.value.trim()) {
+        destEl.value = siteVal;
+        pulseElement(destEl);
+        updateRouteMetaPreview();
+      }
+    });
     $('form-route-select').addEventListener('change', onRouteSelectChange);
     $('btn-swap-route').addEventListener('click', onSwapRouteClick);
     $('btn-toggle-route-meta').addEventListener('click', () => toggleRouteMetaBox());
