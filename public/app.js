@@ -1183,53 +1183,105 @@
     tbody.innerHTML = logs
       .map((l, idx) => {
         const isCharter = l.trip_type === 'charter';
-        const typeBadge = isCharter
-          ? '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300">งานเหมา</span>'
-          : '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200">รับ-ส่งปกติ</span>';
         const dur = calcDurationText(l.dep_time, l.arr_time);
-        const passText = l.passengers === null || l.passengers === undefined ? '-' : `${l.passengers} คน`;
+        const idAttr = escapeHtml(l.id);
+        const passVal = l.passengers === null || l.passengers === undefined ? '' : String(l.passengers);
+        const priceVal = l.unit_price ? String(l.unit_price) : '';
+        const typeCls = isCharter
+          ? 'bg-amber-100 text-amber-900 border-amber-300'
+          : 'bg-indigo-50 text-indigo-700 border-indigo-200';
 
         return `
-          <tr class="hover:bg-slate-50/90 transition align-top">
-            <td class="py-3 px-3 text-center text-xs font-semibold text-slate-500">${idx + 1}</td>
-            <td class="py-3 px-3 whitespace-nowrap">
-              <div class="font-semibold text-slate-900 text-xs">${escapeHtml(toBE(l.trip_date))}</div>
-              <div class="mt-1">${typeBadge}</div>
+          <tr class="hover:bg-slate-50/90 transition align-top" data-row-id="${idAttr}">
+            <td class="py-2.5 px-2 text-center text-xs font-semibold text-slate-500">${idx + 1}</td>
+            <td class="py-2 px-2 whitespace-nowrap min-w-[138px]">
+              <input type="date" data-inline-id="${idAttr}" data-field="trip_date" value="${escapeHtml(l.trip_date)}"
+                title="คลิกเปลี่ยนวันที่"
+                class="inline-edit text-xs font-semibold text-slate-900" />
+              <div class="text-[10px] text-indigo-600 font-semibold px-1.5" data-be-date="${idAttr}">พ.ศ. ${escapeHtml(toBE(l.trip_date))}</div>
+              <select data-inline-id="${idAttr}" data-field="trip_type" title="เปลี่ยนประเภทงาน"
+                class="mt-1 px-2 py-0.5 rounded-full text-[10px] font-bold border cursor-pointer focus:outline-none focus:ring-2 focus:ring-indigo-500 ${typeCls}">
+                <option value="normal" ${!isCharter ? 'selected' : ''}>รับ-ส่งปกติ</option>
+                <option value="charter" ${isCharter ? 'selected' : ''}>งานเหมา</option>
+              </select>
             </td>
-            <td class="py-3 px-3">
-              <div class="font-semibold text-slate-900 text-xs sm:text-sm">${escapeHtml(l.worker_name)}</div>
+            <td class="py-2 px-2 min-w-[140px]">
+              <input type="text" list="dl-workers" data-inline-id="${idAttr}" data-field="worker_name"
+                value="${escapeHtml(l.worker_name)}" placeholder="ชื่อคนขับ *" title="คลิกแก้ชื่อคนขับ"
+                class="inline-edit font-semibold text-slate-900 text-xs sm:text-sm" />
+              <input type="text" list="dl-vehicles" data-inline-id="${idAttr}" data-field="license_plate"
+                value="${escapeHtml(l.license_plate || '')}" placeholder="ทะเบียนรถ" title="คลิกแก้ทะเบียนรถ"
+                class="inline-edit mt-1 !w-auto max-w-[125px] text-[11px] font-semibold text-slate-800 !bg-white !border-slate-300" />
+            </td>
+            <td class="py-2 px-2 min-w-[155px]">
+              <input type="text" list="dl-sites" data-inline-id="${idAttr}" data-field="site_name"
+                value="${escapeHtml(l.site_name || '')}" placeholder="โครงการ" title="คลิกแก้โครงการ"
+                class="inline-edit font-semibold text-slate-800 text-xs" />
               ${
-                l.license_plate
-                  ? `<div class="mt-1"><span class="license-plate-badge !text-[11px] !py-0.5 !px-2">${escapeHtml(l.license_plate)}</span></div>`
-                  : '<div class="text-[11px] text-slate-400 mt-0.5">ไม่ระบุทะเบียน</div>'
+                isCharter
+                  ? '<div class="text-[11px] text-amber-700 font-medium px-1.5 mt-0.5">ชีต: งานเหมา / เหมา</div>'
+                  : `<div class="flex items-center gap-1 mt-0.5 px-1">
+                      <span class="text-[10px] text-slate-400 shrink-0">ชีต:</span>
+                      <input type="text" data-inline-id="${idAttr}" data-field="route_sheet_name"
+                        value="${escapeHtml(l.route_sheet_name || '')}" placeholder="ชื่อแผ่นงาน" title="คลิกแก้ชื่อแผ่นงาน Excel"
+                        class="inline-edit text-[11px] text-slate-600 !py-0.5" />
+                    </div>`
               }
             </td>
-            <td class="py-3 px-3">
-              <div class="font-semibold text-slate-800 text-xs">${escapeHtml(l.site_name || '-')}</div>
-              <div class="text-[11px] text-slate-500 mt-0.5">ชีต: ${escapeHtml(isCharter ? 'งานเหมา / เหมา' : l.route_sheet_name)}</div>
-            </td>
-            <td class="py-3 px-3">
-              <div class="text-xs font-medium text-slate-900">
-                <span>${escapeHtml(l.origin)}</span>
-                <i class="fa-solid fa-arrow-right text-[10px] text-amber-500 mx-1"></i>
-                <span>${escapeHtml(l.destination)}</span>
+            <td class="py-2 px-2 min-w-[230px]">
+              <div class="flex items-center gap-1">
+                <input type="text" list="dl-routes" data-inline-id="${idAttr}" data-field="origin"
+                  value="${escapeHtml(l.origin)}" placeholder="ต้นทาง *" title="คลิกแก้ต้นทาง"
+                  class="inline-edit text-xs font-medium text-slate-900 min-w-[85px]" />
+                <button type="button" data-action="inline-swap" data-id="${idAttr}" title="สลับต้นทาง ↔ ปลายทาง"
+                  class="w-6 h-6 rounded-md bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 inline-flex items-center justify-center shrink-0 cursor-pointer transition">
+                  <i class="fa-solid fa-right-left text-[10px]"></i>
+                </button>
+                <input type="text" list="dl-destinations" data-inline-id="${idAttr}" data-field="destination"
+                  value="${escapeHtml(l.destination)}" placeholder="ปลายทาง *" title="คลิกแก้ปลายทาง"
+                  class="inline-edit text-xs font-medium text-slate-900 min-w-[85px]" />
               </div>
-              <div class="text-[11px] text-slate-500 mt-0.5">ใบเบิก: ${escapeHtml(l.billing_title || l.route_sheet_name)}</div>
+              <div class="flex items-center gap-1 mt-0.5 px-1">
+                <span class="text-[10px] text-slate-400 shrink-0">ใบเบิก:</span>
+                <input type="text" data-inline-id="${idAttr}" data-field="billing_title"
+                  value="${escapeHtml(l.billing_title || l.route_sheet_name || '')}" placeholder="ชื่อในใบเบิก" title="คลิกแก้ชื่อรายการในใบเบิก"
+                  class="inline-edit text-[11px] text-slate-600 !py-0.5" />
+              </div>
             </td>
-            <td class="py-3 px-3 text-center whitespace-nowrap">
-              <div class="text-xs font-semibold text-slate-800">${escapeHtml(l.dep_time || '-')} – ${escapeHtml(l.arr_time || '-')}</div>
-              ${dur ? `<div class="text-[11px] text-emerald-700 font-medium mt-0.5"><i class="fa-solid fa-stopwatch mr-0.5"></i>${escapeHtml(dur)}</div>` : ''}
+            <td class="py-2 px-2 text-center whitespace-nowrap min-w-[132px]">
+              <div class="flex items-center justify-center gap-0.5">
+                <input type="text" data-inline-id="${idAttr}" data-field="dep_time"
+                  value="${escapeHtml(l.dep_time || '')}" placeholder="ออก" title="เวลาออก เช่น 06:30 หรือ 15.00"
+                  class="inline-edit !w-[56px] text-center text-xs font-semibold text-slate-800" />
+                <span class="text-slate-400 text-xs">–</span>
+                <input type="text" data-inline-id="${idAttr}" data-field="arr_time"
+                  value="${escapeHtml(l.arr_time || '')}" placeholder="ถึง" title="เวลาถึง เช่น 07:15 หรือ 16.30"
+                  class="inline-edit !w-[56px] text-center text-xs font-semibold text-slate-800" />
+              </div>
+              <div class="text-[11px] text-emerald-700 font-medium mt-0.5" data-dur="${idAttr}">${dur ? `<i class="fa-solid fa-stopwatch mr-0.5"></i>${escapeHtml(dur)}` : ''}</div>
             </td>
-            <td class="py-3 px-3 text-center text-xs font-semibold text-slate-700 whitespace-nowrap">${escapeHtml(passText)}</td>
-            <td class="py-3 px-3 text-right text-xs font-bold text-emerald-700 whitespace-nowrap">${formatMoney(l.unit_price)}</td>
-            <td class="py-3 px-3 text-xs text-slate-600 max-w-[160px] break-words">${escapeHtml(l.remark || '-')}</td>
-            <td class="py-3 px-3 text-right whitespace-nowrap">
+            <td class="py-2 px-2 text-center whitespace-nowrap">
+              <input type="number" min="0" step="1" data-inline-id="${idAttr}" data-field="passengers"
+                value="${escapeHtml(passVal)}" placeholder="-" title="คลิกแก้จำนวนคน"
+                class="inline-edit !w-[62px] text-center text-xs font-semibold text-slate-700" />
+            </td>
+            <td class="py-2 px-2 text-right whitespace-nowrap">
+              <input type="number" min="0" step="0.01" data-inline-id="${idAttr}" data-field="unit_price"
+                value="${escapeHtml(priceVal)}" placeholder="0" title="คลิกแก้ราคา/เที่ยว"
+                class="inline-edit !w-[82px] text-right text-xs font-bold text-emerald-700" />
+            </td>
+            <td class="py-2 px-2 min-w-[125px]">
+              <input type="text" data-inline-id="${idAttr}" data-field="remark"
+                value="${escapeHtml(l.remark || '')}" placeholder="-" title="คลิกแก้หมายเหตุ"
+                class="inline-edit text-xs text-slate-600" />
+            </td>
+            <td class="py-2 px-2 text-right whitespace-nowrap">
               <div class="inline-flex items-center gap-1">
-                <button type="button" data-action="edit-log" data-id="${escapeHtml(l.id)}" title="แก้ไข"
+                <button type="button" data-action="edit-log" data-id="${idAttr}" title="เปิดแก้ไขในฟอร์มด้านบน"
                   class="w-8 h-8 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 inline-flex items-center justify-center cursor-pointer transition">
                   <i class="fa-solid fa-pen text-xs"></i>
                 </button>
-                <button type="button" data-action="delete-log" data-id="${escapeHtml(l.id)}" title="ลบ"
+                <button type="button" data-action="delete-log" data-id="${idAttr}" title="ลบ"
                   class="w-8 h-8 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 inline-flex items-center justify-center cursor-pointer transition">
                   <i class="fa-solid fa-trash text-xs"></i>
                 </button>
@@ -1244,45 +1296,76 @@
       .map((l, idx) => {
         const isCharter = l.trip_type === 'charter';
         const dur = calcDurationText(l.dep_time, l.arr_time);
-        const passText = l.passengers === null || l.passengers === undefined ? '-' : `${l.passengers} คน`;
+        const idAttr = escapeHtml(l.id);
+        const passVal = l.passengers === null || l.passengers === undefined ? '' : String(l.passengers);
+        const priceVal = l.unit_price ? String(l.unit_price) : '';
         return `
-          <div class="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
-            <div class="flex items-start justify-between gap-2">
-              <div>
-                <div class="flex items-center gap-1.5">
-                  <span class="text-xs font-bold text-slate-400">#${idx + 1}</span>
-                  <span class="text-xs font-bold text-slate-900">${escapeHtml(toBE(l.trip_date))}</span>
-                  <span class="px-2 py-0.5 rounded-full text-[10px] font-bold ${isCharter ? 'bg-amber-100 text-amber-900' : 'bg-indigo-100 text-indigo-800'}">
-                    ${isCharter ? 'งานเหมา' : 'รับ-ส่งปกติ'}
-                  </span>
+          <div class="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-2.5" data-row-id="${idAttr}">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <div class="flex items-center gap-1.5">
+                <span class="text-xs font-bold text-slate-400">#${idx + 1}</span>
+                <input type="date" data-inline-id="${idAttr}" data-field="trip_date" value="${escapeHtml(l.trip_date)}"
+                  class="inline-edit !w-auto text-xs font-bold text-slate-900 !bg-white !border-slate-200" />
+                <select data-inline-id="${idAttr}" data-field="trip_type"
+                  class="px-2 py-1 rounded-full text-[10px] font-bold border ${isCharter ? 'bg-amber-100 text-amber-900 border-amber-300' : 'bg-indigo-100 text-indigo-800 border-indigo-200'}">
+                  <option value="normal" ${!isCharter ? 'selected' : ''}>รับ-ส่งปกติ</option>
+                  <option value="charter" ${isCharter ? 'selected' : ''}>งานเหมา</option>
+                </select>
+              </div>
+              <button type="button" data-action="delete-log" data-id="${idAttr}"
+                class="w-8 h-8 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 inline-flex items-center justify-center cursor-pointer">
+                <i class="fa-solid fa-trash text-xs"></i>
+              </button>
+            </div>
+
+            <div class="grid grid-cols-2 gap-2">
+              <input type="text" list="dl-workers" data-inline-id="${idAttr}" data-field="worker_name"
+                value="${escapeHtml(l.worker_name)}" placeholder="ชื่อคนขับ *"
+                class="inline-edit text-xs font-bold text-slate-900 !bg-white !border-slate-200" />
+              <input type="text" list="dl-vehicles" data-inline-id="${idAttr}" data-field="license_plate"
+                value="${escapeHtml(l.license_plate || '')}" placeholder="ทะเบียนรถ"
+                class="inline-edit text-xs font-semibold text-slate-800 !bg-white !border-slate-300" />
+            </div>
+
+            <div class="bg-white rounded-lg p-2.5 border border-slate-200/80 space-y-2 text-xs">
+              <div class="flex items-center gap-1">
+                <input type="text" list="dl-routes" data-inline-id="${idAttr}" data-field="origin"
+                  value="${escapeHtml(l.origin)}" placeholder="ต้นทาง *"
+                  class="inline-edit font-semibold text-slate-900 !border-slate-200" />
+                <button type="button" data-action="inline-swap" data-id="${idAttr}" title="สลับ"
+                  class="w-7 h-7 rounded-md bg-amber-50 text-amber-800 border border-amber-200 inline-flex items-center justify-center shrink-0 cursor-pointer">
+                  <i class="fa-solid fa-right-left text-[10px]"></i>
+                </button>
+                <input type="text" list="dl-destinations" data-inline-id="${idAttr}" data-field="destination"
+                  value="${escapeHtml(l.destination)}" placeholder="ปลายทาง *"
+                  class="inline-edit font-semibold text-slate-900 !border-slate-200" />
+              </div>
+              <div class="grid grid-cols-2 gap-1.5">
+                <input type="text" list="dl-sites" data-inline-id="${idAttr}" data-field="site_name"
+                  value="${escapeHtml(l.site_name || '')}" placeholder="โครงการ"
+                  class="inline-edit text-[11px] text-slate-700 !border-slate-200" />
+                <div class="flex items-center gap-1">
+                  <input type="text" data-inline-id="${idAttr}" data-field="dep_time"
+                    value="${escapeHtml(l.dep_time || '')}" placeholder="ออก"
+                    class="inline-edit text-center text-[11px] !border-slate-200" />
+                  <span>–</span>
+                  <input type="text" data-inline-id="${idAttr}" data-field="arr_time"
+                    value="${escapeHtml(l.arr_time || '')}" placeholder="ถึง"
+                    class="inline-edit text-center text-[11px] !border-slate-200" />
                 </div>
-                <div class="font-bold text-sm text-slate-900 mt-1">${escapeHtml(l.worker_name)}</div>
               </div>
-              ${l.license_plate ? `<span class="license-plate-badge !text-[11px] !py-0.5 !px-2">${escapeHtml(l.license_plate)}</span>` : ''}
-            </div>
-
-            <div class="text-xs text-slate-700 bg-white rounded-lg p-2.5 border border-slate-200/80 space-y-1">
-              <div class="font-semibold text-slate-900">
-                ${escapeHtml(l.origin)} <i class="fa-solid fa-arrow-right text-amber-500 text-[10px] mx-1"></i> ${escapeHtml(l.destination)}
+              <div class="grid grid-cols-3 gap-1.5">
+                <input type="number" min="0" step="1" data-inline-id="${idAttr}" data-field="passengers"
+                  value="${escapeHtml(passVal)}" placeholder="คน"
+                  class="inline-edit text-[11px] !border-slate-200" />
+                <input type="number" min="0" step="0.01" data-inline-id="${idAttr}" data-field="unit_price"
+                  value="${escapeHtml(priceVal)}" placeholder="ราคา (บ.)"
+                  class="inline-edit text-[11px] font-bold text-emerald-700 !border-slate-200" />
+                <input type="text" data-inline-id="${idAttr}" data-field="remark"
+                  value="${escapeHtml(l.remark || '')}" placeholder="หมายเหตุ"
+                  class="inline-edit text-[11px] text-slate-600 !border-slate-200" />
               </div>
-              <div class="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-slate-600">
-                <span><i class="fa-solid fa-building text-amber-500 mr-1"></i>${escapeHtml(l.site_name || '-')}</span>
-                <span><i class="fa-regular fa-clock text-indigo-500 mr-1"></i>${escapeHtml(l.dep_time || '-')}–${escapeHtml(l.arr_time || '-')}${dur ? ` (${escapeHtml(dur)})` : ''}</span>
-                <span><i class="fa-solid fa-users text-slate-400 mr-1"></i>${escapeHtml(passText)}</span>
-                <span class="font-bold text-emerald-700">${formatMoney(l.unit_price)} บ.</span>
-              </div>
-              ${l.remark ? `<div class="text-[11px] text-slate-500"><i class="fa-regular fa-note-sticky mr-1"></i>${escapeHtml(l.remark)}</div>` : ''}
-            </div>
-
-            <div class="flex items-center justify-end gap-2">
-              <button type="button" data-action="edit-log" data-id="${escapeHtml(l.id)}"
-                class="min-h-[36px] px-3 py-1 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 text-xs font-semibold cursor-pointer">
-                <i class="fa-solid fa-pen mr-1"></i>แก้ไข
-              </button>
-              <button type="button" data-action="delete-log" data-id="${escapeHtml(l.id)}"
-                class="min-h-[36px] px-3 py-1 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-semibold cursor-pointer">
-                <i class="fa-solid fa-trash mr-1"></i>ลบ
-              </button>
+              ${dur ? `<div class="text-[11px] text-emerald-700 font-medium" data-dur="${idAttr}"><i class="fa-solid fa-stopwatch mr-0.5"></i>${escapeHtml(dur)}</div>` : ''}
             </div>
           </div>
         `;
@@ -1290,13 +1373,137 @@
       .join('');
   }
 
+  function handleInlineKeydown(e) {
+    const el = e.target.closest('[data-inline-id]');
+    if (!el) return;
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      el.blur();
+    }
+  }
+
+  async function handleInlineLogChange(e) {
+    const el = e.target.closest('[data-inline-id]');
+    if (!el) return;
+    const id = el.dataset.inlineId;
+    const field = el.dataset.field;
+    const idx = state.logs.findIndex((l) => l.id === id);
+    if (idx === -1) return;
+    const cur = state.logs[idx];
+
+    const raw = el.value.trim();
+    let newVal = raw;
+    if (field === 'passengers') {
+      newVal = raw === '' ? null : Number(raw);
+    } else if (field === 'unit_price') {
+      newVal = raw === '' ? 0 : Number(raw);
+    }
+
+    // Revert if required field cleared
+    if (['trip_date', 'worker_name', 'origin', 'destination'].includes(field) && !raw) {
+      showToast('ช่องนี้ไม่สามารถเว้นว่างได้', 'warning');
+      el.value = cur[field] || '';
+      return;
+    }
+
+    // Skip if unchanged
+    const oldVal = field === 'passengers'
+      ? (cur.passengers === null || cur.passengers === undefined ? null : Number(cur.passengers))
+      : field === 'unit_price'
+        ? (Number(cur.unit_price) || 0)
+        : String(cur[field] || '');
+    if (newVal === oldVal) return;
+
+    const payload = { ...cur, [field]: newVal };
+    // Auto-update vehicle when worker changed inline ONLY if plate was empty or matched old worker's default
+    if (field === 'worker_name') {
+      const wObj = state.workers.find((w) => w.name === raw);
+      const oldWObj = state.workers.find((w) => w.name === cur.worker_name);
+      if (wObj && wObj.default_vehicle && (!cur.license_plate || (oldWObj && cur.license_plate === oldWObj.default_vehicle))) {
+        payload.license_plate = wObj.default_vehicle;
+      }
+    }
+
+    el.classList.add('inline-saving');
+    try {
+      const updated = await apiFetch(`/api/logs/${encodeURIComponent(id)}`, {
+        method: 'PUT',
+        body: JSON.stringify(payload)
+      });
+      state.logs[idx] = updated;
+      el.classList.remove('inline-saving');
+      el.classList.add('inline-saved');
+      setTimeout(() => el.classList.remove('inline-saved'), 900);
+
+      // Update normalized value in-place (e.g. 15.00 -> 15:00) without stealing focus
+      if (field === 'passengers') {
+        el.value = updated.passengers === null || updated.passengers === undefined ? '' : String(updated.passengers);
+      } else if (field === 'unit_price') {
+        el.value = updated.unit_price ? String(updated.unit_price) : '';
+      } else if (updated[field] !== undefined) {
+        el.value = String(updated[field] || '');
+      }
+
+      // Refresh totals & row secondary indicators
+      const totalAmount = state.logs.reduce((acc, l) => acc + (Number(l.unit_price) || 0), 0);
+      $('stat-filtered-amount').textContent = formatMoney(totalAmount);
+
+      if (field === 'trip_date') {
+        document.querySelectorAll(`[data-be-date="${CSS.escape(id)}"]`).forEach((node) => {
+          node.textContent = `พ.ศ. ${toBE(updated.trip_date)}`;
+        });
+      }
+      if (field === 'dep_time' || field === 'arr_time') {
+        const dur = calcDurationText(updated.dep_time, updated.arr_time);
+        document.querySelectorAll(`[data-dur="${CSS.escape(id)}"]`).forEach((node) => {
+          node.innerHTML = dur ? `<i class="fa-solid fa-stopwatch mr-0.5"></i>${escapeHtml(dur)}` : '';
+        });
+      }
+      // If trip_type changed or worker auto-updated plate, refresh row visuals cleanly
+      if (field === 'trip_type' || (field === 'worker_name' && payload.license_plate !== cur.license_plate)) {
+        renderLogs();
+      }
+
+      showToast('บันทึกการแก้ไขแล้ว', 'success', 2000);
+      await autoSyncBoundFiles();
+    } catch (err) {
+      el.classList.remove('inline-saving');
+      // Revert to last saved value
+      if (field === 'passengers') {
+        el.value = cur.passengers === null || cur.passengers === undefined ? '' : String(cur.passengers);
+      } else if (field === 'unit_price') {
+        el.value = cur.unit_price ? String(cur.unit_price) : '';
+      } else {
+        el.value = String(cur[field] || '');
+      }
+      showToast(err.message || 'ไม่สามารถบันทึกการแก้ไขได้', 'error', 4000);
+    }
+  }
+
   async function handleLogsActionClick(e) {
     const btn = e.target.closest('button[data-action]');
     if (!btn) return;
     const action = btn.dataset.action;
     const id = btn.dataset.id;
-    const log = state.logs.find((l) => l.id === id);
-    if (!log) return;
+    const idx = state.logs.findIndex((l) => l.id === id);
+    if (idx === -1) return;
+    const log = state.logs[idx];
+
+    if (action === 'inline-swap') {
+      try {
+        const updated = await apiFetch(`/api/logs/${encodeURIComponent(id)}`, {
+          method: 'PUT',
+          body: JSON.stringify({ ...log, origin: log.destination, destination: log.origin })
+        });
+        state.logs[idx] = updated;
+        renderLogs();
+        showToast('สลับต้นทาง–ปลายทางเรียบร้อยแล้ว', 'success', 2000);
+        await autoSyncBoundFiles();
+      } catch (err) {
+        showToast(err.message || 'ไม่สามารถสลับเส้นทางได้', 'error');
+      }
+      return;
+    }
 
     if (action === 'edit-log') {
       startEditLog(log);
@@ -2867,7 +3074,11 @@
     });
     $('btn-clear-all-logs').addEventListener('click', handleClearAllLogs);
     $('logs-table-body').addEventListener('click', handleLogsActionClick);
+    $('logs-table-body').addEventListener('change', handleInlineLogChange);
+    $('logs-table-body').addEventListener('keydown', handleInlineKeydown);
     $('logs-mobile-cards').addEventListener('click', handleLogsActionClick);
+    $('logs-mobile-cards').addEventListener('change', handleInlineLogChange);
+    $('logs-mobile-cards').addEventListener('keydown', handleInlineKeydown);
 
     // Back-Office Forms & Action Delegation
     $('form-add-vehicle').addEventListener('submit', handleAddVehicle);
