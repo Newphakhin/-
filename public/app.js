@@ -568,22 +568,7 @@
     const activeSites = state.sites.filter((s) => s.active);
     const activeRoutes = state.routes.filter((r) => r.active);
 
-    populateSelect(
-      $('form-worker'),
-      activeWorkers.map((w) => ({
-        value: w.name,
-        label: w.default_vehicle ? `${w.name} (${w.default_vehicle})` : w.name
-      })),
-      '-- เลือกชื่อคนขับ --'
-    );
-
-    populateSelect(
-      $('form-vehicle'),
-      activeVehicles.map((v) => ({ value: v.license_plate, label: v.license_plate })),
-      '-- เลือกทะเบียนรถ --'
-    );
-
-    // Datalist helper สำหรับช่องที่ทั้งเลือกและพิมพ์เองได้ (5. โครงการ & 6. เส้นทาง)
+    // Datalist helper สำหรับช่องที่ทั้งเลือกและพิมพ์แก้เองได้ (3. คนขับ, 4. ทะเบียนรถ, 5. โครงการ, 6. เส้นทาง)
     const fillDatalist = (dlId, items) => {
       const dl = $(dlId);
       if (!dl) return;
@@ -600,6 +585,25 @@
       }
       dl.innerHTML = opts.join('');
     };
+
+    fillDatalist(
+      'dl-workers',
+      activeWorkers.map((w) => ({
+        value: w.name,
+        label: w.default_vehicle ? `${w.name} (รถประจำ: ${w.default_vehicle})` : w.name
+      }))
+    );
+
+    fillDatalist(
+      'dl-vehicles',
+      activeVehicles.map((v) => {
+        const owner = activeWorkers.find((w) => w.default_vehicle === v.license_plate);
+        return {
+          value: v.license_plate,
+          label: owner ? `${v.license_plate} (ประจำ: ${owner.name})` : v.license_plate
+        };
+      })
+    );
 
     fillDatalist(
       'dl-sites',
@@ -710,24 +714,72 @@
     btn.textContent = state.routeMetaExpanded ? 'ซ่อนการตั้งค่าเพิ่มเติม' : 'ตั้งค่าเพิ่มเติม (ไม่บังคับ)';
   }
 
-  function onWorkerSelectChange() {
-    const workerName = $('form-worker').value;
+  function updateWorkerVehicleHints() {
+    const workerName = $('form-worker').value.trim();
+    const plate = $('form-vehicle').value.trim();
     const worker = state.workers.find((w) => w.name === workerName);
-    const hint = $('form-worker-vehicle-hint');
-    if (worker && worker.default_vehicle) {
-      const vehSelect = $('form-vehicle');
-      if (![...vehSelect.options].some((o) => o.value === worker.default_vehicle)) {
-        const opt = document.createElement('option');
-        opt.value = worker.default_vehicle;
-        opt.textContent = worker.default_vehicle;
-        vehSelect.appendChild(opt);
+    const owner = plate ? state.workers.find((w) => w.default_vehicle === plate) : null;
+    const wHint = $('form-worker-vehicle-hint');
+    const vHint = $('form-vehicle-worker-hint');
+
+    if (wHint) {
+      if (worker && worker.default_vehicle) {
+        if (plate === worker.default_vehicle) {
+          wHint.innerHTML = `<span class="text-emerald-700 font-semibold"><i class="fa-solid fa-wand-magic-sparkles mr-1"></i>รถประจำตัว: ${escapeHtml(worker.default_vehicle)} (เปลี่ยนคันได้อิสระ)</span>`;
+        } else if (plate) {
+          wHint.innerHTML = `<span class="text-amber-700 font-semibold"><i class="fa-solid fa-shuffle mr-1"></i>เปลี่ยนรถเฉพาะเที่ยวนี้ (รถประจำคือ ${escapeHtml(worker.default_vehicle)})</span>`;
+        } else {
+          wHint.textContent = `รถประจำตัว: ${worker.default_vehicle}`;
+        }
+      } else {
+        wHint.textContent = 'เลือกหรือพิมพ์แก้ได้อิสระ — ระบบเติมรถประจำตัวให้';
       }
-      vehSelect.value = worker.default_vehicle;
-      pulseElement(vehSelect);
-      hint.innerHTML = `<span class="text-emerald-700 font-semibold"><i class="fa-solid fa-wand-magic-sparkles mr-1"></i>เติมรถประจำตัวให้แล้ว: ${escapeHtml(worker.default_vehicle)}</span>`;
-    } else {
-      hint.textContent = 'เลือกคนขับแล้วระบบเติมทะเบียนรถประจำตัวให้';
     }
+
+    if (vHint) {
+      if (owner && workerName && owner.name !== workerName) {
+        vHint.innerHTML = `<span class="text-amber-700 font-semibold"><i class="fa-solid fa-user-pen mr-1"></i>ขับแทนเฉพาะเที่ยวนี้ (คนขับประจำคือ ${escapeHtml(owner.name)})</span>`;
+      } else if (owner && owner.name === workerName) {
+        vHint.innerHTML = `<span class="text-emerald-700 font-semibold"><i class="fa-solid fa-check mr-1"></i>ตรงกับคนขับประจำ (${escapeHtml(owner.name)})</span>`;
+      } else {
+        vHint.textContent = 'เลือกหรือพิมพ์แก้ได้อิสระ หากวันไหนใช้รถไม่ตรงคันประจำ';
+      }
+    }
+  }
+
+  function onWorkerInputChange() {
+    const workerName = $('form-worker').value.trim();
+    state.lastAutoWorker = '';
+    const worker = state.workers.find((w) => w.name === workerName);
+    if (worker && worker.default_vehicle) {
+      const vehEl = $('form-vehicle');
+      const curPlate = vehEl.value.trim();
+      if (!curPlate || curPlate === (state.lastAutoVehicle || '')) {
+        vehEl.value = worker.default_vehicle;
+        state.lastAutoVehicle = worker.default_vehicle;
+        pulseElement(vehEl);
+      }
+    }
+    updateWorkerVehicleHints();
+  }
+
+  function onVehicleInputChange() {
+    const plate = $('form-vehicle').value.trim();
+    state.lastAutoVehicle = '';
+    if (plate) {
+      const owner = state.workers.find((w) => w.active && w.default_vehicle === plate)
+        || state.workers.find((w) => w.default_vehicle === plate);
+      if (owner) {
+        const wEl = $('form-worker');
+        const curWorker = wEl.value.trim();
+        if (!curWorker || curWorker === (state.lastAutoWorker || '')) {
+          wEl.value = owner.name;
+          state.lastAutoWorker = owner.name;
+          pulseElement(wEl);
+        }
+      }
+    }
+    updateWorkerVehicleHints();
   }
 
   function onSiteInputChange() {
@@ -827,6 +879,8 @@
 
     state.editingLogId = null;
     state.isSwapped = false;
+    state.lastAutoWorker = '';
+    state.lastAutoVehicle = '';
 
     $('travel-log-form').reset();
     setTripType('normal');
@@ -841,7 +895,7 @@
     $('form-route-sheet-name').value = '';
     $('form-billing-title').value = '';
     $('form-display-mode-zone').value = 'worker_name';
-    $('form-worker-vehicle-hint').textContent = 'เลือกคนขับแล้วระบบเติมทะเบียนรถประจำตัวให้';
+    updateWorkerVehicleHints();
 
     $('swap-status-badge').classList.add('hidden');
     $('swap-status-badge').classList.remove('inline-flex');
@@ -869,23 +923,13 @@
     setTripType(log.trip_type || 'normal');
     $('form-date').value = log.trip_date || todayIso();
 
-    // Ensure select contains historical values if archived/deleted
-    const ensureOpt = (selectId, val) => {
-      const sel = $(selectId);
-      if (!sel || !val) return;
-      if (![...sel.options].some((o) => o.value === val)) {
-        const opt = document.createElement('option');
-        opt.value = val;
-        opt.textContent = val;
-        sel.appendChild(opt);
-      }
-      sel.value = val;
-    };
-
-    ensureOpt('form-worker', log.worker_name);
-    ensureOpt('form-vehicle', log.license_plate);
+    state.lastAutoWorker = '';
+    state.lastAutoVehicle = '';
+    $('form-worker').value = log.worker_name || '';
+    $('form-vehicle').value = log.license_plate || '';
     $('form-site').value = log.site_name || '';
     state.lastLinkedSite = log.site_name || '';
+    updateWorkerVehicleHints();
     $('form-origin').value = log.origin || '';
     $('form-destination').value = log.destination || '';
     $('form-route-sheet-name').value = log.route_sheet_name || '';
@@ -2766,7 +2810,10 @@
     $('trip-type-normal').addEventListener('click', () => setTripType('normal'));
     $('trip-type-charter').addEventListener('click', () => setTripType('charter'));
     $('form-date').addEventListener('change', updateFormDatePreview);
-    $('form-worker').addEventListener('change', onWorkerSelectChange);
+    $('form-worker').addEventListener('input', onWorkerInputChange);
+    $('form-worker').addEventListener('change', onWorkerInputChange);
+    $('form-vehicle').addEventListener('input', onVehicleInputChange);
+    $('form-vehicle').addEventListener('change', onVehicleInputChange);
     $('form-site').addEventListener('input', onSiteInputChange);
     $('form-site').addEventListener('change', onSiteInputChange);
     $('btn-swap-route').addEventListener('click', onSwapRouteClick);

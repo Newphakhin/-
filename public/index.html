@@ -515,37 +515,45 @@
                 <p id="form-date-thai-preview" class="mt-1.5 text-[11px] text-indigo-600 font-semibold"></p>
               </div>
 
-              <!-- 3. ชื่อคนขับ -->
+              <!-- 3. ชื่อคนขับ (เลือกได้ พิมพ์แก้ได้อิสระ เชื่อมกับทะเบียนรถ 2 ทาง) -->
               <div class="md:col-span-6 lg:col-span-3">
                 <label for="form-worker" class="block text-sm font-semibold text-slate-700 mb-1.5">
                   <i class="fa-solid fa-id-badge text-indigo-600 mr-1"></i>
                   3. ชื่อคนขับ <span class="text-rose-600">*</span>
                 </label>
-                <select
+                <input
+                  type="text"
                   id="form-worker"
+                  list="dl-workers"
+                  autocomplete="off"
+                  placeholder="เลือก หรือ พิมพ์ชื่อคนขับ..."
                   required
                   class="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 transition"
-                >
-                  <option value="">-- เลือกชื่อคนขับ --</option>
-                </select>
+                />
+                <datalist id="dl-workers"></datalist>
                 <p id="form-worker-vehicle-hint" class="mt-1.5 text-[11px] text-slate-500">
-                  เลือกคนขับแล้วระบบเติมทะเบียนรถประจำตัวให้
+                  เลือกหรือพิมพ์แก้ได้อิสระ — ระบบเติมรถประจำตัวให้
                 </p>
               </div>
 
-              <!-- 4. ทะเบียนรถ -->
+              <!-- 4. ทะเบียนรถ (เลือกได้ พิมพ์แก้ได้อิสระ เชื่อมกับคนขับ 2 ทาง) -->
               <div class="md:col-span-6 lg:col-span-3">
                 <label for="form-vehicle" class="block text-sm font-semibold text-slate-700 mb-1.5">
                   <i class="fa-solid fa-truck-front text-indigo-600 mr-1"></i>
                   4. ทะเบียนรถ
                 </label>
-                <select
+                <input
+                  type="text"
                   id="form-vehicle"
+                  list="dl-vehicles"
+                  autocomplete="off"
+                  placeholder="เลือก หรือ พิมพ์ทะเบียนรถ..."
                   class="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 transition"
-                >
-                  <option value="">-- เลือกทะเบียนรถ --</option>
-                </select>
-                <p class="mt-1.5 text-[11px] text-slate-500">ถ้าวันนี้ใช้รถคันอื่น เปลี่ยนตรงนี้ได้</p>
+                />
+                <datalist id="dl-vehicles"></datalist>
+                <p id="form-vehicle-worker-hint" class="mt-1.5 text-[11px] text-slate-500">
+                  เลือกหรือพิมพ์แก้ได้อิสระ หากวันไหนใช้รถไม่ตรงคันประจำ
+                </p>
               </div>
 
             </div>
@@ -1488,6 +1496,6 @@
   <!-- Vendored ExcelJS + Dual Export Engine + Main Frontend Logic -->
   <script src="/vendor/exceljs.min.js?v=6"></script>
   <script src="/excel-export.js?v=6"></script>
-  <script src="/app.js?v=8"></script>
+  <script src="/app.js?v=9"></script>
 </body>
 </html>
