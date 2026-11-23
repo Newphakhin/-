@@ -36,6 +36,10 @@
       "dest": "/public/app.js"
     },
     {
+      "src": "/google-apps-script.js",
+      "dest": "/public/google-apps-script.js"
+    },
+    {
       "src": "/(.*)",
       "dest": "/public/index.html"
     }
