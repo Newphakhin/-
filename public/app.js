@@ -592,7 +592,7 @@
         const value = String(it.value || '').trim();
         if (!value || seen.has(value)) continue;
         seen.add(value);
-        out.push({ value, sub: String(it.sub || '').trim() });
+        out.push({ value, sub: String(it.sub || '').trim(), recommended: Boolean(it.recommended) });
       }
       return out;
     };
@@ -606,15 +606,21 @@
       );
     }
     if (id === 'form-vehicle') {
-      return dedup(
-        activeVehicles.map((v) => {
-          const owner = activeWorkers.find((w) => w.default_vehicle === v.license_plate);
-          return {
-            value: v.license_plate,
-            sub: owner ? `ประจำ: ${owner.name}` : ''
-          };
-        })
-      );
+      const curWorkerName = $('form-worker') ? $('form-worker').value.trim() : '';
+      const curWorker = curWorkerName ? state.workers.find((w) => w.name === curWorkerName) : null;
+      const recPlate = curWorker && curWorker.default_vehicle ? curWorker.default_vehicle : '';
+      const list = [];
+      if (recPlate) {
+        list.push({ value: recPlate, sub: `★ แนะนำ (รถประจำของ ${curWorker.name})`, recommended: true });
+      }
+      for (const v of activeVehicles) {
+        const owner = activeWorkers.find((w) => w.default_vehicle === v.license_plate);
+        list.push({
+          value: v.license_plate,
+          sub: owner ? `ประจำ: ${owner.name}` : ''
+        });
+      }
+      return dedup(list);
     }
     if (id === 'form-site') {
       return dedup(
@@ -686,14 +692,18 @@
         menu.innerHTML = list
           .map((o, idx) => {
             const selected = o.value === curVal;
+            const rowCls = selected
+              ? 'bg-indigo-50 text-indigo-900 font-semibold'
+              : o.recommended
+                ? 'bg-amber-50/90 hover:bg-amber-100/80 text-amber-950 font-semibold border-b border-amber-200/80'
+                : 'text-slate-800 hover:bg-slate-100';
+            const subCls = o.recommended ? 'text-[11px] text-amber-700 font-semibold' : 'text-[11px] text-slate-400 font-normal';
             return `
               <button type="button" data-combo-opt="${idx}"
-                class="w-full text-left px-3.5 py-2 text-xs sm:text-sm flex items-center justify-between gap-2 transition cursor-pointer ${
-                  selected ? 'bg-indigo-50 text-indigo-900 font-semibold' : 'text-slate-800 hover:bg-slate-100'
-                }">
+                class="w-full text-left px-3.5 py-2 text-xs sm:text-sm flex items-center justify-between gap-2 transition cursor-pointer ${rowCls}">
                 <span class="truncate">${escapeHtml(o.value)}</span>
                 <span class="flex items-center gap-1.5 shrink-0">
-                  ${o.sub ? `<span class="text-[11px] text-slate-400 font-normal">${escapeHtml(o.sub)}</span>` : ''}
+                  ${o.sub ? `<span class="${subCls}">${escapeHtml(o.sub)}</span>` : ''}
                   ${selected ? '<i class="fa-solid fa-check text-indigo-600 text-[11px]"></i>' : ''}
                 </span>
               </button>
@@ -884,24 +894,39 @@
     const owner = plate ? state.workers.find((w) => w.default_vehicle === plate) : null;
     const wHint = $('form-worker-vehicle-hint');
     const vHint = $('form-vehicle-worker-hint');
+    const vehEl = $('form-vehicle');
+    const recPlate = worker && worker.default_vehicle ? worker.default_vehicle : '';
+
+    if (vehEl) {
+      vehEl.placeholder = recPlate
+        ? `แนะนำ: ${recPlate} (เลือกหรือพิมพ์คันอื่นได้)`
+        : 'เลือก หรือ พิมพ์ทะเบียนรถ...';
+    }
 
     if (wHint) {
-      if (worker && worker.default_vehicle) {
-        if (plate === worker.default_vehicle) {
-          wHint.innerHTML = `<span class="text-emerald-700 font-semibold"><i class="fa-solid fa-wand-magic-sparkles mr-1"></i>เติมรถประจำตัวให้แล้ว: ${escapeHtml(worker.default_vehicle)}</span>`;
-        } else if (plate) {
-          wHint.innerHTML = `<span class="text-amber-700 font-semibold"><i class="fa-solid fa-shuffle mr-1"></i>เปลี่ยนรถเฉพาะเที่ยวนี้ (รถประจำคือ ${escapeHtml(worker.default_vehicle)})</span>`;
-        } else {
-          wHint.textContent = `รถประจำตัว: ${worker.default_vehicle}`;
-        }
+      if (recPlate) {
+        wHint.innerHTML = `<span class="text-slate-600">รถที่ผูกไว้: <strong class="text-amber-700">${escapeHtml(recPlate)}</strong> (ไม่จำเป็นต้องใช้คันนี้ก็ได้)</span>`;
       } else {
-        wHint.textContent = 'เลือกจากดรอปดาวน์หรือพิมพ์เองได้ — ระบบเติมรถประจำตัวให้';
+        wHint.textContent = 'เลือกจากดรอปดาวน์หรือพิมพ์เองได้ — ระบบแนะนำรถที่ผูกไว้ให้';
       }
     }
 
     if (vHint) {
-      if (owner && workerName && owner.name !== workerName) {
-        vHint.innerHTML = `<span class="text-amber-700 font-semibold"><i class="fa-solid fa-user-pen mr-1"></i>ขับแทนเฉพาะเที่ยวนี้ (คนขับประจำคือ ${escapeHtml(owner.name)})</span>`;
+      if (recPlate && plate !== recPlate) {
+        vHint.innerHTML = `
+          <span class="inline-flex flex-wrap items-center gap-1.5">
+            <span class="text-amber-700 font-semibold"><i class="fa-solid fa-star text-[10px] mr-0.5"></i>แนะนำ:</span>
+            <button type="button" data-use-rec-plate="${escapeHtml(recPlate)}"
+              class="px-2 py-0.5 rounded-md bg-amber-100 hover:bg-amber-200 text-amber-950 border border-amber-300 font-bold text-[11px] cursor-pointer transition">
+              ${escapeHtml(recPlate)} (กดใช้)
+            </button>
+            <span class="text-slate-500">${plate ? 'หรือใช้คันที่เลือกนี้ต่อได้เลย' : 'หรือเลือก/พิมพ์คันอื่นได้'}</span>
+          </span>
+        `;
+      } else if (recPlate && plate === recPlate) {
+        vHint.innerHTML = `<span class="text-emerald-700 font-semibold"><i class="fa-solid fa-circle-check mr-1"></i>ตรงกับรถประจำ (${escapeHtml(recPlate)}) — แก้หรือเปลี่ยนคันได้อิสระ</span>`;
+      } else if (owner && workerName && owner.name !== workerName) {
+        vHint.innerHTML = `<span class="text-amber-700 font-semibold"><i class="fa-solid fa-user-pen mr-1"></i>รถคันนี้ผูกกับ ${escapeHtml(owner.name)} (ใช้บันทึกแทนได้ปกติ)</span>`;
       } else {
         vHint.textContent = 'เลือกจากดรอปดาวน์หรือพิมพ์เปลี่ยนคันได้อิสระ';
       }
@@ -909,34 +934,13 @@
   }
 
   function onWorkerSelectChange() {
-    const workerName = $('form-worker').value.trim();
     state.lastAutoWorker = '';
-    const worker = state.workers.find((w) => w.name === workerName);
-    if (worker && worker.default_vehicle) {
-      const vehEl = $('form-vehicle');
-      vehEl.value = worker.default_vehicle;
-      state.lastAutoVehicle = worker.default_vehicle;
-      pulseElement(vehEl);
-    }
     updateWorkerVehicleHints();
+    if (comboRegistry['form-vehicle']) comboRegistry['form-vehicle'].refresh();
   }
 
   function onVehicleSelectChange() {
-    const plate = $('form-vehicle').value.trim();
     state.lastAutoVehicle = '';
-    if (plate) {
-      const owner = state.workers.find((w) => w.active && w.default_vehicle === plate)
-        || state.workers.find((w) => w.default_vehicle === plate);
-      if (owner) {
-        const wEl = $('form-worker');
-        const curWorker = wEl.value.trim();
-        if (!curWorker || curWorker === (state.lastAutoWorker || '')) {
-          wEl.value = owner.name;
-          state.lastAutoWorker = owner.name;
-          pulseElement(wEl);
-        }
-      }
-    }
     updateWorkerVehicleHints();
   }
 
@@ -3356,6 +3360,15 @@
     $('form-worker').addEventListener('change', onWorkerSelectChange);
     $('form-vehicle').addEventListener('input', onVehicleSelectChange);
     $('form-vehicle').addEventListener('change', onVehicleSelectChange);
+    $('form-vehicle-worker-hint').addEventListener('click', (e) => {
+      const btn = e.target.closest('button[data-use-rec-plate]');
+      if (!btn) return;
+      const plate = btn.dataset.useRecPlate || '';
+      const vehEl = $('form-vehicle');
+      vehEl.value = plate;
+      pulseElement(vehEl);
+      updateWorkerVehicleHints();
+    });
     $('form-site').addEventListener('input', onSiteInputChange);
     $('form-site').addEventListener('change', onSiteInputChange);
     $('btn-swap-route').addEventListener('click', onSwapRouteClick);
