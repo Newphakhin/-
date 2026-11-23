@@ -953,6 +953,108 @@
             </div>
           </div>
 
+          <!-- Google Sheets Online Sync Bar (ไหลลง Google Sheets — ใช้ได้ทั้งคอมและมือถือ) -->
+          <div id="gsheet-binding-bar" class="px-5 sm:px-6 py-3.5 bg-gradient-to-r from-emerald-50/70 via-white to-teal-50/70 border-b border-slate-200 space-y-2.5">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <p class="text-xs text-slate-700">
+                <i class="fa-solid fa-table text-emerald-600 mr-1"></i><strong>ไหลข้อมูลลง Google Sheets ออนไลน์ (ใช้ได้ทั้งคอมและมือถือ)</strong>:
+                ตั้งค่าครั้งเดียว แล้วกดไหลข้อมูลลงชีตหรือปล่อยให้อัปเดตอัตโนมัติได้ทันที
+              </p>
+              <button
+                type="button"
+                id="btn-gsheet-guide"
+                class="text-xs font-semibold text-emerald-700 hover:text-emerald-900 underline cursor-pointer shrink-0"
+              >
+                <i class="fa-solid fa-code mr-1"></i>วิธีผูก &amp; คัดลอกโค้ด Apps Script
+              </button>
+            </div>
+
+            <div class="grid grid-cols-1 xl:grid-cols-2 gap-2.5">
+
+              <!-- 1. Google Sheet สำเนาโซน -->
+              <div class="flex flex-wrap items-center gap-2 p-2 rounded-2xl bg-emerald-50/80 border border-emerald-200">
+                <button
+                  type="button"
+                  id="btn-gsheet-bind-zone"
+                  class="flex-1 min-w-[200px] min-h-[40px] px-3.5 py-1.5 rounded-xl bg-white hover:bg-emerald-100/60 border border-emerald-300 text-left text-xs sm:text-sm font-semibold text-emerald-900 flex items-center gap-2 transition cursor-pointer"
+                >
+                  <i class="fa-brands fa-google text-emerald-600 shrink-0"></i>
+                  <span class="shrink-0">ชีตสำเนา:</span>
+                  <span id="gsheet-zone-label" class="truncate text-emerald-700">ยังไม่ได้ผูก (กดเพื่อตั้งค่า)</span>
+                  <span id="gsheet-zone-dot" class="hidden w-2 h-2 rounded-full bg-emerald-500 ml-auto shrink-0"></span>
+                </button>
+
+                <a
+                  id="btn-gsheet-open-zone"
+                  href="#"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title="เปิด Google Sheet สำเนาโซน"
+                  class="hidden w-9 h-9 rounded-xl bg-white hover:bg-emerald-100 text-emerald-700 border border-emerald-300 items-center justify-center transition shrink-0"
+                >
+                  <i class="fa-solid fa-arrow-up-right-from-square text-xs"></i>
+                </a>
+
+                <button
+                  type="button"
+                  id="btn-gsheet-sync-zone"
+                  class="min-h-[40px] px-4 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white text-xs sm:text-sm font-semibold shadow-sm flex items-center gap-1.5 transition cursor-pointer shrink-0"
+                >
+                  <i class="fa-solid fa-cloud-arrow-up"></i>
+                  <span>ไหลลง Google Sheet สำเนา</span>
+                </button>
+              </div>
+
+              <!-- 2. Google Sheet ใบเบิกโครงการ -->
+              <div class="flex flex-wrap items-center gap-2 p-2 rounded-2xl bg-teal-50/80 border border-teal-200">
+                <button
+                  type="button"
+                  id="btn-gsheet-bind-billing"
+                  class="flex-1 min-w-[200px] min-h-[40px] px-3.5 py-1.5 rounded-xl bg-white hover:bg-teal-100/60 border border-teal-300 text-left text-xs sm:text-sm font-semibold text-teal-900 flex items-center gap-2 transition cursor-pointer"
+                >
+                  <i class="fa-brands fa-google text-teal-600 shrink-0"></i>
+                  <span class="shrink-0">ชีตใบเบิก:</span>
+                  <span id="gsheet-billing-label" class="truncate text-teal-700">ยังไม่ได้ผูก (กดเพื่อตั้งค่า)</span>
+                  <span id="gsheet-billing-dot" class="hidden w-2 h-2 rounded-full bg-emerald-500 ml-auto shrink-0"></span>
+                </button>
+
+                <a
+                  id="btn-gsheet-open-billing"
+                  href="#"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title="เปิด Google Sheet ใบเบิกโครงการ"
+                  class="hidden w-9 h-9 rounded-xl bg-white hover:bg-teal-100 text-teal-700 border border-teal-300 items-center justify-center transition shrink-0"
+                >
+                  <i class="fa-solid fa-arrow-up-right-from-square text-xs"></i>
+                </a>
+
+                <button
+                  type="button"
+                  id="btn-gsheet-sync-billing"
+                  class="min-h-[40px] px-4 py-1.5 rounded-xl bg-teal-700 hover:bg-teal-800 active:bg-teal-900 text-white text-xs sm:text-sm font-semibold shadow-sm flex items-center gap-1.5 transition cursor-pointer shrink-0"
+                >
+                  <i class="fa-solid fa-cloud-arrow-up"></i>
+                  <span>ไหลลง Google Sheet ใบเบิก</span>
+                </button>
+              </div>
+
+            </div>
+
+            <div class="flex flex-wrap items-center justify-between gap-2 text-xs">
+              <label class="inline-flex items-center gap-2 text-slate-600 font-medium cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  id="toggle-gsheet-auto-sync"
+                  class="w-4 h-4 rounded border-slate-300 text-emerald-700 focus:ring-emerald-600 cursor-pointer"
+                />
+                <span>ไหลลง Google Sheets อัตโนมัติ ทุกครั้งที่เพิ่ม / แก้ / ลบเที่ยววิ่ง</span>
+              </label>
+
+              <span id="gsheet-last-sync-note" class="text-[11px] text-slate-500"></span>
+            </div>
+          </div>
+
           <!-- Filter Controls -->
           <div class="px-5 sm:px-6 py-4 bg-white border-b border-slate-200 space-y-3">
             <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-12 gap-3">
@@ -1488,6 +1590,6 @@
   <!-- Vendored ExcelJS + Dual Export Engine + Main Frontend Logic -->
   <script src="/vendor/exceljs.min.js?v=6"></script>
   <script src="/excel-export.js?v=6"></script>
-  <script src="/app.js?v=8"></script>
+  <script src="/app.js?v=12"></script>
 </body>
 </html>

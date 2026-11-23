@@ -38,7 +38,19 @@
     boundZoneHandle: null,
     boundBillingHandle: null,
     boundBillingSite: localStorage.getItem(BOUND_BILLING_SITE_KEY) || '',
-    autoSync: localStorage.getItem(AUTO_SYNC_KEY) !== 'false'
+    autoSync: localStorage.getItem(AUTO_SYNC_KEY) !== 'false',
+
+    // Bound Google Sheets config (stored on server / Supabase for PC & mobile)
+    gsheet: {
+      zone_url: '',
+      zone_name: '',
+      zone_sheet_url: '',
+      billing_url: '',
+      billing_name: '',
+      billing_sheet_url: '',
+      billing_site: '',
+      auto_sync: true
+    }
   };
 
   const $ = (id) => document.getElementById(id);
@@ -476,7 +488,7 @@
   }
 
   async function refreshAll() {
-    await loadMasterData();
+    await Promise.all([loadMasterData(), loadGoogleSheetsConfig()]);
     await loadLogs();
   }
 
@@ -1872,27 +1884,405 @@
   }
 
   async function autoSyncBoundFiles() {
-    if (!state.autoSync || !supportsFileBinding()) return;
-    if (!state.boundZoneHandle && !state.boundBillingHandle) return;
+    if (state.autoSync && supportsFileBinding() && (state.boundZoneHandle || state.boundBillingHandle)) {
+      const syncedNames = [];
+      let needsPerm = false;
+
+      if (state.boundZoneHandle) {
+        const r = await syncToBoundFile('zone', { interactive: false });
+        if (r.status === 'ok') syncedNames.push(r.name);
+        else if (r.status === 'need_permission') needsPerm = true;
+      }
+      if (state.boundBillingHandle) {
+        const r = await syncToBoundFile('billing', { interactive: false });
+        if (r.status === 'ok') syncedNames.push(r.name);
+        else if (r.status === 'need_permission') needsPerm = true;
+      }
+
+      if (syncedNames.length > 0) {
+        showToast(`ซิงค์ลงไฟล์ที่ผูกไว้อัตโนมัติแล้ว: ${syncedNames.join(', ')}`, 'info', 3500);
+      } else if (needsPerm) {
+        showToast('กดปุ่ม "เขียนลงไฟล์สำเนา / ใบเบิก" 1 ครั้งเพื่ออนุญาตสิทธิ์เขียนไฟล์อัตโนมัติหลังรีเฟรชหน้า', 'warning', 4500);
+      }
+    }
+
+    await autoSyncGoogleSheets();
+  }
+
+  // ==========================================================================
+  // 9B. Google Sheets Online Sync (ไหลลง Google Sheets — ทั้งสำเนาโซน & ใบเบิก)
+  // ==========================================================================
+  let cachedAppsScriptCode = '';
+
+  async function getAppsScriptCode() {
+    if (cachedAppsScriptCode) return cachedAppsScriptCode;
+    const res = await fetch('/google-apps-script.js?v=1');
+    if (!res.ok) throw new Error('ไม่สามารถโหลดไฟล์โค้ด Google Apps Script ได้');
+    cachedAppsScriptCode = await res.text();
+    return cachedAppsScriptCode;
+  }
+
+  async function copyAppsScriptCodeToClipboard() {
+    try {
+      const code = await getAppsScriptCode();
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(code);
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = code;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        ta.remove();
+      }
+      showToast('คัดลอกโค้ด Google Apps Script เรียบร้อยแล้ว — นำไปวางใน Extensions → Apps Script ได้เลย', 'success', 4500);
+    } catch (err) {
+      showToast(err.message || 'คัดลอกโค้ดไม่สำเร็จ', 'error');
+    }
+  }
+
+  async function loadGoogleSheetsConfig() {
+    try {
+      const cfg = await apiFetch('/api/gsheet/config');
+      if (cfg && typeof cfg === 'object') state.gsheet = { ...state.gsheet, ...cfg };
+    } catch {
+      // ignore if offline
+    }
+    renderGoogleSheetsUI();
+  }
+
+  function renderGoogleSheetsUI() {
+    const cfg = state.gsheet || {};
+    const zLabel = $('gsheet-zone-label');
+    const zDot = $('gsheet-zone-dot');
+    const zOpen = $('btn-gsheet-open-zone');
+    const bLabel = $('gsheet-billing-label');
+    const bDot = $('gsheet-billing-dot');
+    const bOpen = $('btn-gsheet-open-billing');
+    const autoToggle = $('toggle-gsheet-auto-sync');
+
+    if (autoToggle) autoToggle.checked = cfg.auto_sync !== false;
+
+    if (zLabel) {
+      if (cfg.zone_url) {
+        zLabel.textContent = cfg.zone_name || 'เชื่อมต่อ Google Sheet สำเนาโซนแล้ว';
+        zLabel.className = 'truncate text-emerald-900 font-bold';
+        if (zDot) zDot.classList.remove('hidden');
+        if (zOpen) {
+          if (cfg.zone_sheet_url) {
+            zOpen.href = cfg.zone_sheet_url;
+            zOpen.classList.remove('hidden');
+            zOpen.classList.add('inline-flex');
+          } else {
+            zOpen.classList.add('hidden');
+            zOpen.classList.remove('inline-flex');
+          }
+        }
+      } else {
+        zLabel.textContent = 'ยังไม่ได้ผูก (กดเพื่อตั้งค่า)';
+        zLabel.className = 'truncate text-emerald-700';
+        if (zDot) zDot.classList.add('hidden');
+        if (zOpen) {
+          zOpen.classList.add('hidden');
+          zOpen.classList.remove('inline-flex');
+        }
+      }
+    }
+
+    if (bLabel) {
+      if (cfg.billing_url) {
+        const siteTag = cfg.billing_site ? ` [${cfg.billing_site}]` : '';
+        bLabel.textContent = `${cfg.billing_name || 'เชื่อมต่อ Google Sheet ใบเบิกแล้ว'}${siteTag}`;
+        bLabel.className = 'truncate text-teal-950 font-bold';
+        if (bDot) bDot.classList.remove('hidden');
+        if (bOpen) {
+          if (cfg.billing_sheet_url) {
+            bOpen.href = cfg.billing_sheet_url;
+            bOpen.classList.remove('hidden');
+            bOpen.classList.add('inline-flex');
+          } else {
+            bOpen.classList.add('hidden');
+            bOpen.classList.remove('inline-flex');
+          }
+        }
+      } else {
+        bLabel.textContent = 'ยังไม่ได้ผูก (กดเพื่อตั้งค่า)';
+        bLabel.className = 'truncate text-teal-700';
+        if (bDot) bDot.classList.add('hidden');
+        if (bOpen) {
+          bOpen.classList.add('hidden');
+          bOpen.classList.remove('inline-flex');
+        }
+      }
+    }
+  }
+
+  function openGoogleSheetBindModal(kind = 'zone') {
+    const isBilling = kind === 'billing';
+    const title = isBilling ? 'ผูก Google Sheets ใบเบิกโครงการ' : 'ผูก Google Sheets สำเนาโซน';
+    const cfg = state.gsheet || {};
+    const curUrl = isBilling ? (cfg.billing_url || '') : (cfg.zone_url || '');
+    const curName = isBilling ? (cfg.billing_name || '') : (cfg.zone_name || '');
+    const curSite = cfg.billing_site || $('filter-site').value.trim() || '';
+    const siteOptions = [...new Set([...state.sites.map((s) => s.site_name), ...state.logs.map((l) => l.site_name)].filter(Boolean))];
+
+    openModal(
+      `
+      <div class="p-5 sm:p-6 space-y-4">
+        <div class="flex items-center gap-3">
+          <div class="w-10 h-10 rounded-xl ${isBilling ? 'bg-teal-100 text-teal-700' : 'bg-emerald-100 text-emerald-700'} flex items-center justify-center shrink-0">
+            <i class="fa-brands fa-google text-lg"></i>
+          </div>
+          <div>
+            <h3 class="text-base font-bold text-slate-900">${escapeHtml(title)}</h3>
+            <p class="text-xs text-slate-500">ตั้งค่าครั้งเดียว ใช้ร่วมกันได้ทุกเครื่องทั้งคอมพิวเตอร์และมือถือ</p>
+          </div>
+        </div>
+
+        <div class="p-3.5 rounded-xl bg-emerald-50/80 border border-emerald-200 text-xs text-emerald-950 space-y-2">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <span class="font-bold"><i class="fa-solid fa-list-ol mr-1"></i>วิธีเชื่อม Google Sheets (ทำครั้งเดียว 2 นาที)</span>
+            <button type="button" id="m-gs-copy-code"
+              class="min-h-[32px] px-3 py-1 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer">
+              <i class="fa-solid fa-copy"></i><span>คัดลอกโค้ด Apps Script</span>
+            </button>
+          </div>
+          <ol class="list-decimal pl-5 space-y-1 text-[11px] text-emerald-900">
+            <li>เปิดไฟล์ Google Sheets ที่ต้องการ → เมนู <strong>ส่วนขยาย (Extensions)</strong> → <strong>Apps Script</strong></li>
+            <li>ลบโค้ดเดิมออกทั้งหมด แล้วกด <strong>วาง (Ctrl+V)</strong> โค้ดที่คัดลอกไว้ แล้วกดบันทึก (Ctrl+S)</li>
+            <li>กดปุ่ม <strong>ทำให้ใช้งานได้ (Deploy)</strong> → <strong>การทำให้ใช้งานได้รายการใหม่</strong> → เลือกประเภท <strong>เว็บแอป (Web app)</strong></li>
+            <li>ตั้งค่า <em>ดำเนินการในฐานะ: ฉัน</em> และ <em>ผู้ที่มีสิทธิ์เข้าถึง: <strong>ทุกคน (Anyone)</strong></em> → กดทำให้ใช้งานได้ แล้วคัดลอก <strong>Web app URL</strong> มาวางด้านล่าง</li>
+          </ol>
+        </div>
+
+        <form id="m-gs-form" class="space-y-3.5">
+          <div>
+            <label for="m-gs-url" class="block text-xs font-semibold text-slate-700 mb-1">
+              ลิงก์ Web app URL จาก Google Apps Script *
+            </label>
+            <input type="url" id="m-gs-url" value="${escapeHtml(curUrl)}"
+              placeholder="https://script.google.com/macros/s/....../exec"
+              class="w-full min-h-[42px] px-3 py-2 rounded-xl border border-slate-300 text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-emerald-600" />
+            <p id="m-gs-test-result" class="mt-1.5 text-xs ${curName ? 'text-emerald-700 font-semibold' : 'text-slate-500'}">
+              ${curName ? `เชื่อมต่ออยู่กับ: ${escapeHtml(curName)}` : 'วางลิงก์แล้วกด "ทดสอบการเชื่อมต่อ" เพื่อตรวจชื่อชีต'}
+            </p>
+          </div>
+
+          ${
+            isBilling
+              ? `
+            <div>
+              <label for="m-gs-billing-site" class="block text-xs font-semibold text-slate-700 mb-1">
+                ผูกกับโครงการประจำชีต (แนะนำ — ป้องกันไหลทับข้ามโครงการ)
+              </label>
+              <select id="m-gs-billing-site" class="w-full min-h-[40px] px-3 py-2 rounded-xl border border-slate-300 text-sm bg-white">
+                <option value="">-- ตามตัวกรองโครงการหน้าเว็บ --</option>
+                ${siteOptions
+                  .map((s) => `<option value="${escapeHtml(s)}" ${s === curSite ? 'selected' : ''}>${escapeHtml(s)}</option>`)
+                  .join('')}
+              </select>
+            </div>
+          `
+              : ''
+          }
+
+          <div class="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100">
+            <div class="flex items-center gap-2">
+              <button type="button" id="m-gs-test"
+                class="min-h-[40px] px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 text-xs font-semibold cursor-pointer">
+                <i class="fa-solid fa-plug-circle-check mr-1 text-emerald-600"></i>ทดสอบเชื่อมต่อ
+              </button>
+              ${
+                curUrl
+                  ? `<button type="button" id="m-gs-unbind"
+                      class="min-h-[40px] px-3 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-semibold cursor-pointer">
+                      ยกเลิกผูก
+                    </button>`
+                  : ''
+              }
+            </div>
+            <div class="flex items-center gap-2">
+              <button type="button" id="m-gs-cancel"
+                class="min-h-[40px] px-3.5 py-2 rounded-xl border border-slate-300 text-xs sm:text-sm cursor-pointer">ยกเลิก</button>
+              <button type="submit" id="m-gs-save"
+                class="min-h-[40px] px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs sm:text-sm font-semibold cursor-pointer">
+                <i class="fa-solid fa-cloud-arrow-up mr-1"></i>บันทึกและไหลข้อมูลเลย
+              </button>
+            </div>
+          </div>
+        </form>
+      </div>
+      `,
+      (box) => {
+        let testedMeta = { name: curName, sheetUrl: isBilling ? (cfg.billing_sheet_url || '') : (cfg.zone_sheet_url || '') };
+        const urlEl = box.querySelector('#m-gs-url');
+        const resEl = box.querySelector('#m-gs-test-result');
+
+        box.querySelector('#m-gs-copy-code').addEventListener('click', copyAppsScriptCodeToClipboard);
+        box.querySelector('#m-gs-cancel').addEventListener('click', closeModal);
+
+        const runPing = async () => {
+          const url = urlEl.value.trim();
+          if (!url) {
+            resEl.className = 'mt-1.5 text-xs text-rose-600 font-semibold';
+            resEl.textContent = 'กรุณาวาง Web app URL ก่อน';
+            return null;
+          }
+          resEl.className = 'mt-1.5 text-xs text-amber-700 font-semibold';
+          resEl.textContent = 'กำลังทดสอบเชื่อมต่อ Google Sheets...';
+          try {
+            const r = await apiFetch('/api/gsheet/test', {
+              method: 'POST',
+              body: JSON.stringify({ url })
+            });
+            testedMeta = { name: r.spreadsheetName || 'Google Sheets', sheetUrl: r.spreadsheetUrl || '' };
+            resEl.className = 'mt-1.5 text-xs text-emerald-700 font-bold';
+            resEl.textContent = `เชื่อมต่อสำเร็จ! พบไฟล์: "${testedMeta.name}"`;
+            return testedMeta;
+          } catch (err) {
+            resEl.className = 'mt-1.5 text-xs text-rose-600 font-semibold';
+            resEl.textContent = err.message || 'เชื่อมต่อไม่สำเร็จ';
+            return null;
+          }
+        };
+
+        box.querySelector('#m-gs-test').addEventListener('click', runPing);
+
+        const unbindBtn = box.querySelector('#m-gs-unbind');
+        if (unbindBtn) {
+          unbindBtn.addEventListener('click', async () => {
+            try {
+              const patch = isBilling
+                ? { billing_url: '', billing_name: '', billing_sheet_url: '', billing_site: '' }
+                : { zone_url: '', zone_name: '', zone_sheet_url: '' };
+              const saved = await apiFetch('/api/gsheet/config', { method: 'PUT', body: JSON.stringify(patch) });
+              state.gsheet = saved.config;
+              renderGoogleSheetsUI();
+              closeModal();
+              showToast(`ยกเลิกการผูก ${title} เรียบร้อยแล้ว`, 'info');
+            } catch (err) {
+              showToast(err.message, 'error');
+            }
+          });
+        }
+
+        box.querySelector('#m-gs-form').addEventListener('submit', async (e) => {
+          e.preventDefault();
+          const url = urlEl.value.trim();
+          if (!url) {
+            showToast('กรุณาวางลิงก์ Web app URL ของ Google Apps Script', 'error');
+            return;
+          }
+          const saveBtn = box.querySelector('#m-gs-save');
+          saveBtn.disabled = true;
+          try {
+            const ping = await runPing();
+            if (!ping) {
+              saveBtn.disabled = false;
+              return;
+            }
+            const patch = isBilling
+              ? {
+                  billing_url: url,
+                  billing_name: ping.name,
+                  billing_sheet_url: ping.sheetUrl,
+                  billing_site: box.querySelector('#m-gs-billing-site') ? box.querySelector('#m-gs-billing-site').value.trim() : ''
+                }
+              : {
+                  zone_url: url,
+                  zone_name: ping.name,
+                  zone_sheet_url: ping.sheetUrl
+                };
+            const saved = await apiFetch('/api/gsheet/config', { method: 'PUT', body: JSON.stringify(patch) });
+            state.gsheet = saved.config;
+            renderGoogleSheetsUI();
+            closeModal();
+            await syncToGoogleSheet(kind, { interactive: true });
+          } catch (err) {
+            showToast(err.message || 'ไม่สามารถบันทึกการตั้งค่าได้', 'error');
+            saveBtn.disabled = false;
+          }
+        });
+      }
+    );
+  }
+
+  async function syncToGoogleSheet(kind, { interactive = true } = {}) {
+    const isBilling = kind === 'billing';
+    const cfg = state.gsheet || {};
+    const targetUrl = isBilling ? cfg.billing_url : cfg.zone_url;
+    if (!targetUrl) {
+      if (interactive) openGoogleSheetBindModal(kind);
+      return { status: 'unbound' };
+    }
+
+    const btn = $(isBilling ? 'btn-gsheet-sync-billing' : 'btn-gsheet-sync-zone');
+    const origHtml = btn ? btn.innerHTML : '';
+    if (btn && interactive) {
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i><span>กำลังไหลลงชีต...</span>';
+    }
+
+    try {
+      const f = getFilterParams();
+      const res = await apiFetch('/api/gsheet/sync', {
+        method: 'POST',
+        body: JSON.stringify({
+          kind,
+          site_name: isBilling ? (cfg.billing_site || f.site_name) : f.site_name,
+          date_from: f.date_from,
+          date_to: f.date_to,
+          trip_type: isBilling ? '' : f.trip_type,
+          search: isBilling ? '' : f.search,
+          issue_date: todayIso()
+        })
+      });
+      if (res.config) {
+        state.gsheet = res.config;
+        renderGoogleSheetsUI();
+      }
+      const note = $('gsheet-last-sync-note');
+      if (note) {
+        const nowStr = new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        note.innerHTML = `<i class="fa-solid fa-circle-check text-emerald-600 mr-1"></i>ไหลลง Google Sheets ล่าสุดเวลา ${nowStr} น. (${escapeHtml(res.spreadsheetName || (isBilling ? 'ใบเบิก' : 'สำเนาโซน'))})`;
+      }
+      if (interactive) {
+        showToast(
+          `ไหลข้อมูลลง Google Sheet "${res.spreadsheetName || (isBilling ? 'ใบเบิก' : 'สำเนาโซน')}" สำเร็จ (${res.sheetCount} แท็บ, ${res.logCount} เที่ยว)`,
+          'success',
+          4500
+        );
+      }
+      return { status: 'ok', name: res.spreadsheetName || (isBilling ? 'ใบเบิก' : 'สำเนาโซน') };
+    } catch (err) {
+      if (interactive) showToast(`ไหลลง Google Sheets ไม่สำเร็จ: ${err.message}`, 'error', 5500);
+      return { status: 'error', error: err };
+    } finally {
+      if (btn && interactive) {
+        btn.disabled = false;
+        btn.innerHTML = origHtml;
+      }
+    }
+  }
+
+  async function autoSyncGoogleSheets() {
+    const cfg = state.gsheet || {};
+    if (!cfg.auto_sync) return;
+    if (!cfg.zone_url && !cfg.billing_url) return;
 
     const syncedNames = [];
-    let needsPerm = false;
-
-    if (state.boundZoneHandle) {
-      const r = await syncToBoundFile('zone', { interactive: false });
+    if (cfg.zone_url) {
+      const r = await syncToGoogleSheet('zone', { interactive: false });
       if (r.status === 'ok') syncedNames.push(r.name);
-      else if (r.status === 'need_permission') needsPerm = true;
     }
-    if (state.boundBillingHandle) {
-      const r = await syncToBoundFile('billing', { interactive: false });
+    if (cfg.billing_url) {
+      const r = await syncToGoogleSheet('billing', { interactive: false });
       if (r.status === 'ok') syncedNames.push(r.name);
-      else if (r.status === 'need_permission') needsPerm = true;
     }
-
     if (syncedNames.length > 0) {
-      showToast(`ซิงค์ลงไฟล์ที่ผูกไว้อัตโนมัติแล้ว: ${syncedNames.join(', ')}`, 'info', 3500);
-    } else if (needsPerm) {
-      showToast('กดปุ่ม "บันทึกไฟล์สำเนา / ใบเบิก" 1 ครั้งเพื่ออนุญาตสิทธิ์เขียนไฟล์อัตโนมัติหลังรีเฟรชหน้า', 'warning', 4500);
+      showToast(`ไหลลง Google Sheets อัตโนมัติแล้ว: ${syncedNames.join(', ')}`, 'info', 3500);
     }
   }
 
@@ -2817,6 +3207,31 @@
         state.autoSync ? 'เปิดซิงค์ลงไฟล์ที่ผูกไว้อัตโนมัติแล้ว' : 'ปิดซิงค์อัตโนมัติแล้ว (กดปุ่มบันทึกไฟล์เองได้ตลอด)',
         'info'
       );
+    });
+
+    // Google Sheets Online Sync
+    $('btn-gsheet-guide').addEventListener('click', () => openGoogleSheetBindModal('zone'));
+    $('btn-gsheet-bind-zone').addEventListener('click', () => openGoogleSheetBindModal('zone'));
+    $('btn-gsheet-sync-zone').addEventListener('click', () => syncToGoogleSheet('zone', { interactive: true }));
+    $('btn-gsheet-bind-billing').addEventListener('click', () => openGoogleSheetBindModal('billing'));
+    $('btn-gsheet-sync-billing').addEventListener('click', () => syncToGoogleSheet('billing', { interactive: true }));
+    $('toggle-gsheet-auto-sync').addEventListener('change', async (e) => {
+      const val = Boolean(e.target.checked);
+      try {
+        const res = await apiFetch('/api/gsheet/config', {
+          method: 'PUT',
+          body: JSON.stringify({ auto_sync: val })
+        });
+        state.gsheet = res.config;
+        renderGoogleSheetsUI();
+        showToast(
+          val ? 'เปิดไหลข้อมูลลง Google Sheets อัตโนมัติแล้ว' : 'ปิดไหลข้อมูลลง Google Sheets อัตโนมัติแล้ว (กดปุ่มไหลลงชีตเองได้ตลอด)',
+          'info'
+        );
+      } catch (err) {
+        e.target.checked = !val;
+        showToast(err.message || 'ไม่สามารถบันทึกการตั้งค่าได้', 'error');
+      }
     });
     $('btn-clear-all-logs').addEventListener('click', handleClearAllLogs);
     $('logs-table-body').addEventListener('click', handleLogsActionClick);

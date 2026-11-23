@@ -266,6 +266,141 @@ app.delete(
   })
 );
 
+// ----------------------------------------------------------------------------
+// 4. เชื่อมต่อและไหลข้อมูลลง Google Sheets (ผ่าน Apps Script Web App Proxy)
+// ----------------------------------------------------------------------------
+async function postToAppsScript(webAppUrl, payload) {
+  const safeUrl = store.validateAppsScriptUrl(webAppUrl, 'Google Apps Script');
+  if (!safeUrl) {
+    const err = new Error('ยังไม่ได้ตั้งค่าลิงก์ Google Apps Script');
+    err.status = 400;
+    throw err;
+  }
+
+  let response;
+  try {
+    response = await fetch(safeUrl, {
+      method: 'POST',
+      redirect: 'follow',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(28000)
+    });
+  } catch (netErr) {
+    const err = new Error(`ไม่สามารถเชื่อมต่อ Google Sheets ได้ (${netErr.message})`);
+    err.status = 502;
+    throw err;
+  }
+
+  const rawText = await response.text();
+  let parsed = null;
+  try {
+    parsed = JSON.parse(rawText);
+  } catch {
+    if (rawText.includes('<html') || rawText.includes('<!DOCTYPE') || rawText.includes('accounts.google.com')) {
+      const err = new Error(
+        'Google Apps Script ยังไม่ได้เปิดสิทธิ์เข้าถึง กรุณาตั้งค่า Deploy → Who has access เป็น "ทุกคน (Anyone)" แล้วนำ Web app URL ใหม่มาวาง'
+      );
+      err.status = 400;
+      throw err;
+    }
+    const err = new Error(`Google Sheets ตอบกลับรูปแบบไม่ถูกต้อง (HTTP ${response.status})`);
+    err.status = 502;
+    throw err;
+  }
+
+  if (!response.ok || !parsed || parsed.ok === false) {
+    const err = new Error((parsed && parsed.error) || `ส่งข้อมูลไป Google Sheets ไม่สำเร็จ (HTTP ${response.status})`);
+    err.status = 502;
+    throw err;
+  }
+  return parsed;
+}
+
+app.get(
+  '/api/gsheet/config',
+  requireAuth,
+  handle(async (req, res) => res.json(await store.getGoogleSheetsConfig()))
+);
+
+app.put(
+  '/api/gsheet/config',
+  requireAuth,
+  handle(async (req, res) => {
+    const config = await store.saveGoogleSheetsConfig(req.body || {});
+    res.json({ message: 'บันทึกการตั้งค่า Google Sheets เรียบร้อยแล้ว', config });
+  })
+);
+
+app.post(
+  '/api/gsheet/test',
+  requireAuth,
+  handle(async (req, res) => {
+    const url = String((req.body && req.body.url) || '').trim();
+    const result = await postToAppsScript(url, { action: 'ping' });
+    res.json({
+      ok: true,
+      spreadsheetName: result.spreadsheetName || 'Google Sheets',
+      spreadsheetUrl: result.spreadsheetUrl || ''
+    });
+  })
+);
+
+app.post(
+  '/api/gsheet/sync',
+  requireAuth,
+  handle(async (req, res) => {
+    const body = req.body || {};
+    const kind = body.kind === 'billing' ? 'billing' : 'zone';
+    const cfg = await store.getGoogleSheetsConfig();
+    const targetUrl = kind === 'billing' ? cfg.billing_url : cfg.zone_url;
+    if (!targetUrl) {
+      return res.status(400).json({
+        error: kind === 'billing' ? 'ยังไม่ได้ผูก Google Sheet ใบเบิกโครงการ' : 'ยังไม่ได้ผูก Google Sheet สำเนาโซน'
+      });
+    }
+
+    const effectiveSite = kind === 'billing'
+      ? String(cfg.billing_site || body.site_name || '').trim()
+      : String(body.site_name || '').trim();
+
+    const logs = await store.listLogs({
+      date_from: String(body.date_from || '').trim(),
+      date_to: String(body.date_to || '').trim(),
+      site_name: effectiveSite,
+      trip_type: kind === 'billing' ? '' : String(body.trip_type || '').trim(),
+      search: kind === 'billing' ? '' : String(body.search || '').trim()
+    });
+
+    const result = await postToAppsScript(targetUrl, {
+      action: 'sync',
+      kind,
+      siteName: effectiveSite,
+      dateFrom: String(body.date_from || '').trim(),
+      dateTo: String(body.date_to || '').trim(),
+      issueDate: String(body.issue_date || '').trim(),
+      logs
+    });
+
+    // อัปเดตชื่อไฟล์และลิงก์เปิดชีตอัตโนมัติหากมีการเปลี่ยนชื่อบน Google Drive
+    const metaPatch = kind === 'billing'
+      ? { billing_name: result.spreadsheetName || cfg.billing_name, billing_sheet_url: result.spreadsheetUrl || cfg.billing_sheet_url }
+      : { zone_name: result.spreadsheetName || cfg.zone_name, zone_sheet_url: result.spreadsheetUrl || cfg.zone_sheet_url };
+    const updatedConfig = await store.saveGoogleSheetsConfig(metaPatch);
+
+    res.json({
+      ok: true,
+      kind,
+      sheetCount: result.sheetCount || (Array.isArray(result.sheets) ? result.sheets.length : 0),
+      sheets: result.sheets || [],
+      logCount: logs.length,
+      spreadsheetName: result.spreadsheetName || '',
+      spreadsheetUrl: result.spreadsheetUrl || '',
+      config: updatedConfig
+    });
+  })
+);
+
 app.use('/api', (req, res) => res.status(404).json({ error: 'ไม่พบ API ที่เรียกใช้' }));
 
 // SPA fallback

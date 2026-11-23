@@ -18,6 +18,7 @@ const T = {
 };
 const KV_SITES = 'v3_sites';
 const KV_ROUTES = 'v3_routes';
+const KV_GSHEET = 'v3_gsheet_config';
 const LOG_VERSION = 3;
 const DEFAULT_MAX_LIMIT = 10000;
 
@@ -831,6 +832,64 @@ async function clearAllLogs() {
   return { deletedCount: before, storageQuota: await getQuotaStatus() };
 }
 
+// ============================================================================
+// Google Sheets Sync Config — เก็บใน system_settings (ใช้ร่วมกันทุกเครื่อง)
+// ============================================================================
+const GSHEET_DEFAULT = {
+  zone_url: '',
+  zone_name: '',
+  zone_sheet_url: '',
+  billing_url: '',
+  billing_name: '',
+  billing_sheet_url: '',
+  billing_site: '',
+  auto_sync: true
+};
+
+function validateAppsScriptUrl(url, label) {
+  const u = str(url);
+  if (!u) return '';
+  if (!/^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec(\?.*)?$/.test(u)) {
+    throw httpError(
+      400,
+      `ลิงก์ ${label} ไม่ถูกต้อง — ต้องเป็น Web app URL ของ Google Apps Script (ขึ้นต้นด้วย https://script.google.com/macros/s/.../exec)`
+    );
+  }
+  return u;
+}
+
+async function getGoogleSheetsConfig() {
+  const saved = await getKV(KV_GSHEET, {});
+  return {
+    ...GSHEET_DEFAULT,
+    ...(saved && typeof saved === 'object' ? saved : {}),
+    auto_sync: saved && typeof saved.auto_sync === 'boolean' ? saved.auto_sync : true
+  };
+}
+
+async function saveGoogleSheetsConfig(patch = {}) {
+  const cur = await getGoogleSheetsConfig();
+  const next = { ...cur };
+  if (patch.zone_url !== undefined) next.zone_url = validateAppsScriptUrl(patch.zone_url, 'Google Sheet สำเนาโซน');
+  if (patch.zone_name !== undefined) next.zone_name = str(patch.zone_name);
+  if (patch.zone_sheet_url !== undefined) next.zone_sheet_url = str(patch.zone_sheet_url);
+  if (patch.billing_url !== undefined) next.billing_url = validateAppsScriptUrl(patch.billing_url, 'Google Sheet ใบเบิกโครงการ');
+  if (patch.billing_name !== undefined) next.billing_name = str(patch.billing_name);
+  if (patch.billing_sheet_url !== undefined) next.billing_sheet_url = str(patch.billing_sheet_url);
+  if (patch.billing_site !== undefined) next.billing_site = str(patch.billing_site);
+  if (patch.auto_sync !== undefined) next.auto_sync = Boolean(patch.auto_sync);
+  if (!next.zone_url) {
+    next.zone_name = '';
+    next.zone_sheet_url = '';
+  }
+  if (!next.billing_url) {
+    next.billing_name = '';
+    next.billing_sheet_url = '';
+  }
+  await setKV(KV_GSHEET, next);
+  return next;
+}
+
 module.exports = {
   verifyPassword,
   findUserByUsername,
@@ -859,5 +918,8 @@ module.exports = {
   updateLog,
   deleteLog,
   copyPreviousDay,
-  clearAllLogs
+  clearAllLogs,
+  getGoogleSheetsConfig,
+  saveGoogleSheetsConfig,
+  validateAppsScriptUrl
 };
