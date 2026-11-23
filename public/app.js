@@ -840,7 +840,36 @@
       $('form-passengers-hint').textContent = 'ไม่บังคับสำหรับงานเหมา';
       $('form-price-hint').textContent = 'ดึงจากเส้นทาง หรือกรอกราคาเองได้';
     }
+    const autoRet = $('form-auto-return');
+    if (autoRet && !state.editingLogId) {
+      autoRet.checked = !isCharter;
+    }
+    updateAutoReturnUI();
     updateRouteMetaPreview();
+  }
+
+  function updateAutoReturnUI() {
+    const box = $('auto-return-box');
+    const cb = $('form-auto-return');
+    const fields = $('auto-return-fields');
+    const preview = $('auto-return-preview');
+    const submitText = $('btn-submit-text');
+    if (!box || !cb) return;
+
+    const isEditing = Boolean(state.editingLogId);
+    box.classList.toggle('hidden', isEditing);
+    const enabled = !isEditing && cb.checked;
+    if (fields) fields.classList.toggle('hidden', !enabled);
+
+    if (preview) {
+      const orig = $('form-origin') ? $('form-origin').value.trim() : '';
+      const dest = $('form-destination') ? $('form-destination').value.trim() : '';
+      preview.textContent = enabled && orig && dest ? `ขากลับ: ${dest} → ${orig}` : '';
+    }
+
+    if (submitText && !isEditing) {
+      submitText.textContent = enabled ? 'บันทึกขาไป + ขากลับ (2 เที่ยว)' : 'บันทึกเที่ยวนี้';
+    }
   }
 
   function updateFormDatePreview() {
@@ -877,6 +906,7 @@
     } else {
       el.innerHTML = `แผ่นงาน Excel: <strong class="text-indigo-700">${escapeHtml(sheet)}</strong> • ชื่อในใบเบิก: <strong class="text-slate-700">${escapeHtml(billing)}</strong> • สำเนาโซนแสดง: <strong>${escapeHtml(mode)}</strong>`;
     }
+    updateAutoReturnUI();
   }
 
   function toggleRouteMetaBox(forceOpen) {
@@ -1030,8 +1060,13 @@
       badge.classList.remove('inline-flex');
     }
 
+    if (state.isSwapped && $('form-auto-return')) {
+      $('form-auto-return').checked = false;
+    }
+
     pulseElement(origEl);
     pulseElement(destEl);
+    updateAutoReturnUI();
     updateRouteMetaPreview();
   }
 
@@ -1057,6 +1092,10 @@
     $('form-route-sheet-name').value = '';
     $('form-billing-title').value = '';
     $('form-display-mode-zone').value = 'worker_name';
+    if ($('form-ret-dep-time')) $('form-ret-dep-time').value = '';
+    if ($('form-ret-arr-time')) $('form-ret-arr-time').value = '';
+    if ($('form-ret-passengers')) $('form-ret-passengers').value = '';
+    if ($('form-auto-return')) $('form-auto-return').checked = true;
     updateWorkerVehicleHints();
 
     $('swap-status-badge').classList.add('hidden');
@@ -1075,6 +1114,7 @@
 
     updateFormDatePreview();
     updateDurationPreview();
+    updateAutoReturnUI();
     updateRouteMetaPreview();
   }
 
@@ -1114,8 +1154,10 @@
     $('btn-submit-text').textContent = 'อัปเดตรายการเดินทาง';
     $('btn-submit-icon').className = 'fa-solid fa-check text-amber-400';
 
+    updateAutoReturnUI();
     updateFormDatePreview();
     updateDurationPreview();
+    updateAutoReturnUI();
     updateRouteMetaPreview();
 
     $('form-card-container').scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -1187,12 +1229,57 @@
         showToast('อัปเดตรายการเดินทางเรียบร้อยแล้ว', 'success');
         resetForm({ keepDateAndSite: true });
       } else {
-        const res = await apiFetch('/api/logs', {
+        const autoReturn = Boolean($('form-auto-return') && $('form-auto-return').checked);
+        const retDep = $('form-ret-dep-time') ? $('form-ret-dep-time').value.trim() : '';
+        const retArr = $('form-ret-arr-time') ? $('form-ret-arr-time').value.trim() : '';
+        const retPassRaw = $('form-ret-passengers') ? $('form-ret-passengers').value.trim() : '';
+
+        if (autoReturn) {
+          const validTime = (t) => {
+            if (!t) return true;
+            const m = t.match(/^(\d{1,2})[:.](\d{2})$/) || t.match(/^(\d{2})(\d{2})$/);
+            return Boolean(m && Number(m[1]) <= 23 && Number(m[2]) <= 59);
+          };
+          if (!validTime(retDep)) {
+            showToast('รูปแบบเวลาออกขากลับไม่ถูกต้อง (เช่น 17:30 หรือ 17.30)', 'error');
+            $('form-ret-dep-time').focus();
+            submitBtn.disabled = false;
+            return;
+          }
+          if (!validTime(retArr)) {
+            showToast('รูปแบบเวลาถึงขากลับไม่ถูกต้อง (เช่น 18:15 หรือ 18.15)', 'error');
+            $('form-ret-arr-time').focus();
+            submitBtn.disabled = false;
+            return;
+          }
+        }
+
+        const res1 = await apiFetch('/api/logs', {
           method: 'POST',
           body: JSON.stringify(payload)
         });
-        if (res && res.storageQuota) renderQuotaUI(res.storageQuota);
-        showToast(`บันทึกเที่ยววิ่ง ${worker_name} (${origin} → ${destination}) เรียบร้อยแล้ว`, 'success');
+        let latestQuota = res1 && res1.storageQuota;
+
+        if (autoReturn) {
+          const returnPayload = {
+            ...payload,
+            origin: destination,
+            destination: origin,
+            dep_time: retDep,
+            arr_time: retArr,
+            passengers: retPassRaw === '' ? passengers : Number(retPassRaw)
+          };
+          const res2 = await apiFetch('/api/logs', {
+            method: 'POST',
+            body: JSON.stringify(returnPayload)
+          });
+          if (res2 && res2.storageQuota) latestQuota = res2.storageQuota;
+          if (latestQuota) renderQuotaUI(latestQuota);
+          showToast(`บันทึกขาไป + ขากลับสำเร็จ (2 เที่ยว: ${worker_name} • ${origin} ↔ ${destination})`, 'success', 4000);
+        } else {
+          if (latestQuota) renderQuotaUI(latestQuota);
+          showToast(`บันทึกเที่ยววิ่ง ${worker_name} (${origin} → ${destination}) เรียบร้อยแล้ว`, 'success');
+        }
         resetForm({ keepDateAndSite: true });
       }
       await loadLogs();
@@ -3372,6 +3459,7 @@
     $('form-site').addEventListener('input', onSiteInputChange);
     $('form-site').addEventListener('change', onSiteInputChange);
     $('btn-swap-route').addEventListener('click', onSwapRouteClick);
+    $('form-auto-return').addEventListener('change', updateAutoReturnUI);
     $('btn-toggle-route-meta').addEventListener('click', () => toggleRouteMetaBox());
     $('form-origin').addEventListener('input', applyRoutePresetFromInput);
     $('form-origin').addEventListener('change', applyRoutePresetFromInput);
@@ -3464,6 +3552,7 @@
     $('filter-month').value = currentMonthIso();
     updateFormDatePreview();
     updateDurationPreview();
+    updateAutoReturnUI();
     updateRouteMetaPreview();
     await restoreBoundHandles();
 
