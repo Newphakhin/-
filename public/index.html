@@ -690,52 +690,18 @@
                 </div>
 
                 <!-- บันทึกขากลับอัตโนมัติ (ไป + กลับ = 2 เที่ยว) -->
-                <div id="auto-return-box" class="mt-2.5 p-3 rounded-xl bg-emerald-50/70 border border-emerald-200 space-y-2.5">
-                  <div class="flex flex-wrap items-center justify-between gap-2">
-                    <label class="inline-flex items-center gap-2 text-xs font-bold text-emerald-950 cursor-pointer select-none">
-                      <input
-                        type="checkbox"
-                        id="form-auto-return"
-                        checked
-                        class="w-4 h-4 rounded border-emerald-400 text-emerald-700 focus:ring-emerald-600 cursor-pointer"
-                      />
-                      <i class="fa-solid fa-repeat text-emerald-600"></i>
-                      <span>บันทึกขากลับให้อัตโนมัติ (ไป + กลับ = 2 เที่ยว)</span>
-                    </label>
-                    <span id="auto-return-preview" class="text-[11px] font-medium text-emerald-800"></span>
-                  </div>
-
-                  <div id="auto-return-fields" class="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1.5 border-t border-emerald-200/70">
-                    <div>
-                      <label for="form-ret-dep-time" class="block text-[11px] font-semibold text-emerald-900 mb-1">เวลาออกขากลับ (เว้นว่างได้)</label>
-                      <input
-                        type="text"
-                        id="form-ret-dep-time"
-                        placeholder="เช่น 17:30 หรือ 17.30"
-                        class="w-full min-h-[36px] px-2.5 py-1.5 rounded-lg border border-emerald-300 bg-white text-slate-900 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-600"
-                      />
-                    </div>
-                    <div>
-                      <label for="form-ret-arr-time" class="block text-[11px] font-semibold text-emerald-900 mb-1">เวลาถึงขากลับ (เว้นว่างได้)</label>
-                      <input
-                        type="text"
-                        id="form-ret-arr-time"
-                        placeholder="เช่น 18:15"
-                        class="w-full min-h-[36px] px-2.5 py-1.5 rounded-lg border border-emerald-300 bg-white text-slate-900 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-600"
-                      />
-                    </div>
-                    <div>
-                      <label for="form-ret-passengers" class="block text-[11px] font-semibold text-emerald-900 mb-1">ผู้โดยสารขากลับ (เว้นว่าง = เท่าขาไป)</label>
-                      <input
-                        type="number"
-                        id="form-ret-passengers"
-                        min="0"
-                        step="1"
-                        placeholder="เท่าขาไป"
-                        class="w-full min-h-[36px] px-2.5 py-1.5 rounded-lg border border-emerald-300 bg-white text-slate-900 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-600"
-                      />
-                    </div>
-                  </div>
+                <div id="auto-return-box" class="mt-2.5 px-3 py-2 rounded-xl bg-emerald-50/70 border border-emerald-200 flex flex-wrap items-center justify-between gap-2">
+                  <label class="inline-flex items-center gap-2 text-xs font-bold text-emerald-950 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      id="form-auto-return"
+                      checked
+                      class="w-4 h-4 rounded border-emerald-400 text-emerald-700 focus:ring-emerald-600 cursor-pointer"
+                    />
+                    <i class="fa-solid fa-repeat text-emerald-600"></i>
+                    <span>บันทึกขากลับให้อัตโนมัติ (ไป + กลับ = 2 เที่ยว — เวลา/จำนวนคนขากลับปล่อยเว้นว่างไว้ให้แก้เอง)</span>
+                  </label>
+                  <span id="auto-return-preview" class="text-[11px] font-medium text-emerald-800"></span>
                 </div>
 
                 <!-- Route Sheet / Billing Title Summary + Toggle -->
@@ -1705,7 +1671,7 @@
 
   <!-- Vendored ExcelJS + Dual Export Engine + Main Frontend Logic -->
   <script src="/vendor/exceljs.min.js?v=6"></script>
-  <script src="/excel-export.js?v=6"></script>
-  <script src="/app.js?v=15"></script>
+  <script src="/excel-export.js?v=7"></script>
+  <script src="/app.js?v=16"></script>
 </body>
 </html>

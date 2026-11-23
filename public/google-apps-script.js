@@ -125,7 +125,11 @@ function createNamer() {
 function sortLogsChrono(logs) {
   return logs.slice().sort(function (a, b) {
     if (a.trip_date !== b.trip_date) return String(a.trip_date || '').localeCompare(String(b.trip_date || ''));
-    return String(a.dep_time || a.arr_time || '').localeCompare(String(b.dep_time || b.arr_time || ''));
+    var ta = String((a && (a.dep_time || a.arr_time)) || '99:99');
+    var tb = String((b && (b.dep_time || b.arr_time)) || '99:99');
+    var tc = ta.localeCompare(tb);
+    if (tc !== 0) return tc;
+    return String(a.id || '').localeCompare(String(b.id || ''));
   });
 }
 

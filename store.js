@@ -675,9 +675,15 @@ async function loadAllLogs() {
   return (await selectAll(T.logs, 'worker_name')).map(logFromRow).filter(Boolean);
 }
 
+function timeSortKey(row) {
+  return String((row && (row.dep_time || row.arr_time)) || '99:99');
+}
+
 function compareLogsChrono(a, b) {
   if (a.trip_date !== b.trip_date) return String(a.trip_date).localeCompare(String(b.trip_date));
-  return String(a.dep_time || a.arr_time || '').localeCompare(String(b.dep_time || b.arr_time || ''));
+  const tc = timeSortKey(a).localeCompare(timeSortKey(b));
+  if (tc !== 0) return tc;
+  return String(a.id || '').localeCompare(String(b.id || ''));
 }
 
 function normalizeLogInput(input, base = {}) {
@@ -748,10 +754,12 @@ async function listLogs(filters = {}) {
         .includes(q)
     );
   }
-  // ใหม่สุดขึ้นก่อน (วันที่มาก → น้อย) และเวลาออกเรียงจากเช้า → เย็น
+  // ใหม่สุดขึ้นก่อน (วันที่มาก → น้อย) และเวลาออกเรียงจากเช้า → เย็น (รายการที่ยังไม่ใส่เวลาอยู่ด้านล่างของวันนั้น)
   rows.sort((a, b) => {
     if (a.trip_date !== b.trip_date) return String(b.trip_date).localeCompare(String(a.trip_date));
-    return String(a.dep_time || a.arr_time || '').localeCompare(String(b.dep_time || b.arr_time || ''));
+    const tc = timeSortKey(a).localeCompare(timeSortKey(b));
+    if (tc !== 0) return tc;
+    return String(a.id || '').localeCompare(String(b.id || ''));
   });
   return rows;
 }

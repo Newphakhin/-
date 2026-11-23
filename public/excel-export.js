@@ -72,12 +72,14 @@
     return m ? `${m[1]}:${m[2]}` : '';
   }
 
-  const timeKey = (l) => String(l.dep_time || l.arr_time || '');
+  const timeKey = (l) => String((l && (l.dep_time || l.arr_time)) || '99:99');
 
   function sortChrono(logs) {
     return [...(logs || [])].sort((a, b) => {
       if (a.trip_date !== b.trip_date) return String(a.trip_date).localeCompare(String(b.trip_date));
-      return timeKey(a).localeCompare(timeKey(b));
+      const tc = timeKey(a).localeCompare(timeKey(b));
+      if (tc !== 0) return tc;
+      return String(a.id || '').localeCompare(String(b.id || ''));
     });
   }
 
