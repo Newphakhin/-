@@ -422,8 +422,8 @@
         <!-- =============================================================== -->
         <!-- SINGLE ENTRY TRAVEL LOG FORM                                    -->
         <!-- =============================================================== -->
-        <section id="form-card-container" class="scroll-mt-24 bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden transition-all">
-          <div id="form-header-bar" class="px-5 sm:px-6 py-4 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
+        <section id="form-card-container" class="scroll-mt-24 bg-white rounded-2xl border border-slate-200 shadow-sm transition-all">
+          <div id="form-header-bar" class="rounded-t-2xl px-5 sm:px-6 py-4 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
             <div class="flex items-center gap-2.5">
               <div id="form-mode-icon" class="w-9 h-9 rounded-xl bg-zinc-900 text-amber-400 flex items-center justify-center text-sm shrink-0">
                 <i class="fa-solid fa-plus"></i>
@@ -515,63 +515,108 @@
                 <p id="form-date-thai-preview" class="mt-1.5 text-[11px] text-indigo-600 font-semibold"></p>
               </div>
 
-              <!-- 3. ชื่อคนขับ -->
+              <!-- 3. ชื่อคนขับ (พิมพ์ได้ + ดรอปดาวน์ ▾) -->
               <div class="md:col-span-6 lg:col-span-3">
                 <label for="form-worker" class="block text-sm font-semibold text-slate-700 mb-1.5">
                   <i class="fa-solid fa-id-badge text-indigo-600 mr-1"></i>
                   3. ชื่อคนขับ <span class="text-rose-600">*</span>
                 </label>
-                <select
-                  id="form-worker"
-                  required
-                  class="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 transition"
-                >
-                  <option value="">-- เลือกชื่อคนขับ --</option>
-                </select>
+                <div class="relative combo-wrap" data-combo="form-worker">
+                  <input
+                    type="text"
+                    id="form-worker"
+                    autocomplete="off"
+                    placeholder="เลือก หรือ พิมพ์ชื่อคนขับ..."
+                    required
+                    class="w-full min-h-[44px] pl-3.5 pr-10 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 transition"
+                  />
+                  <button
+                    type="button"
+                    data-combo-toggle="form-worker"
+                    tabindex="-1"
+                    title="เปิดรายการคนขับ"
+                    class="absolute inset-y-0 right-0 w-10 flex items-center justify-center text-slate-400 hover:text-indigo-600 cursor-pointer transition"
+                  >
+                    <i class="fa-solid fa-chevron-down text-xs"></i>
+                  </button>
+                  <div
+                    data-combo-menu="form-worker"
+                    class="hidden absolute left-0 right-0 top-full mt-1 z-50 bg-white rounded-xl border border-slate-200 shadow-xl max-h-60 overflow-y-auto py-1"
+                  ></div>
+                </div>
                 <p id="form-worker-vehicle-hint" class="mt-1.5 text-[11px] text-slate-500">
-                  เลือกคนขับแล้วระบบเติมทะเบียนรถประจำตัวให้
+                  เลือกจากดรอปดาวน์หรือพิมพ์เองได้ — ระบบเติมรถประจำตัวให้
                 </p>
               </div>
 
-              <!-- 4. ทะเบียนรถ -->
+              <!-- 4. ทะเบียนรถ (พิมพ์ได้ + ดรอปดาวน์ ▾) -->
               <div class="md:col-span-6 lg:col-span-3">
                 <label for="form-vehicle" class="block text-sm font-semibold text-slate-700 mb-1.5">
                   <i class="fa-solid fa-truck-front text-indigo-600 mr-1"></i>
                   4. ทะเบียนรถ
                 </label>
-                <select
-                  id="form-vehicle"
-                  class="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 transition"
-                >
-                  <option value="">-- เลือกทะเบียนรถ --</option>
-                </select>
-                <p class="mt-1.5 text-[11px] text-slate-500">ถ้าวันนี้ใช้รถคันอื่น เปลี่ยนตรงนี้ได้</p>
+                <div class="relative combo-wrap" data-combo="form-vehicle">
+                  <input
+                    type="text"
+                    id="form-vehicle"
+                    autocomplete="off"
+                    placeholder="เลือก หรือ พิมพ์ทะเบียนรถ..."
+                    class="w-full min-h-[44px] pl-3.5 pr-10 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 transition"
+                  />
+                  <button
+                    type="button"
+                    data-combo-toggle="form-vehicle"
+                    tabindex="-1"
+                    title="เปิดรายการทะเบียนรถ"
+                    class="absolute inset-y-0 right-0 w-10 flex items-center justify-center text-slate-400 hover:text-indigo-600 cursor-pointer transition"
+                  >
+                    <i class="fa-solid fa-chevron-down text-xs"></i>
+                  </button>
+                  <div
+                    data-combo-menu="form-vehicle"
+                    class="hidden absolute left-0 right-0 top-full mt-1 z-50 bg-white rounded-xl border border-slate-200 shadow-xl max-h-60 overflow-y-auto py-1"
+                  ></div>
+                </div>
+                <p id="form-vehicle-worker-hint" class="mt-1.5 text-[11px] text-slate-500">เลือกจากดรอปดาวน์หรือพิมพ์เปลี่ยนคันได้อิสระ</p>
               </div>
 
             </div>
 
-            <!-- Row 2: 5. โครงการ (วางบิล) + 6. เส้นทาง (จาก ↔ ถึง ลิงก์กัน สลับได้ พิมพ์ได้) -->
+            <!-- Row 2: 5. โครงการ (วางบิล) + 6. เส้นทาง (จาก ↔ ถึง ลิงก์กัน สลับได้ พิมพ์ได้ + ดรอปดาวน์ ▾) -->
             <div class="grid grid-cols-1 md:grid-cols-12 gap-4 items-start">
 
-              <!-- 5. โครงการ (ที่จะวางบิล) — เลือกได้ พิมพ์ได้ ลิงก์กับเส้นทางอัตโนมัติ -->
+              <!-- 5. โครงการ (ที่จะวางบิล) — พิมพ์ได้ + ดรอปดาวน์ ▾ ลิงก์กับเส้นทางอัตโนมัติ -->
               <div class="md:col-span-5 lg:col-span-4">
                 <label for="form-site" class="block text-sm font-semibold text-slate-700 mb-1.5">
                   <i class="fa-solid fa-building text-amber-500 mr-1"></i>
                   5. โครงการ (ที่จะวางบิล)
                 </label>
-                <input
-                  type="text"
-                  id="form-site"
-                  list="dl-sites"
-                  autocomplete="off"
-                  placeholder="เลือก หรือ พิมพ์ชื่อโครงการ..."
-                  class="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 transition"
-                />
-                <datalist id="dl-sites"></datalist>
-                <p class="mt-1.5 text-[11px] text-slate-500">เลือกหรือพิมพ์ได้ — ลิงก์เข้าช่องปลายทางในข้อ 6 อัตโนมัติ</p>
+                <div class="relative combo-wrap" data-combo="form-site">
+                  <input
+                    type="text"
+                    id="form-site"
+                    autocomplete="off"
+                    placeholder="เลือก หรือ พิมพ์ชื่อโครงการ..."
+                    class="w-full min-h-[44px] pl-3.5 pr-10 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 transition"
+                  />
+                  <button
+                    type="button"
+                    data-combo-toggle="form-site"
+                    tabindex="-1"
+                    title="เปิดรายการโครงการ"
+                    class="absolute inset-y-0 right-0 w-10 flex items-center justify-center text-slate-400 hover:text-indigo-600 cursor-pointer transition"
+                  >
+                    <i class="fa-solid fa-chevron-down text-xs"></i>
+                  </button>
+                  <div
+                    data-combo-menu="form-site"
+                    class="hidden absolute left-0 right-0 top-full mt-1 z-50 bg-white rounded-xl border border-slate-200 shadow-xl max-h-60 overflow-y-auto py-1"
+                  ></div>
+                </div>
+                <p class="mt-1.5 text-[11px] text-slate-500">เลือกจากดรอปดาวน์หรือพิมพ์เองได้ — ลิงก์เข้าช่องปลายทางข้อ 6 อัตโนมัติ</p>
               </div>
 
-              <!-- 6. เส้นทาง: จาก (ต้นทาง) ⇄ ถึง (ปลายทาง) — เลือกได้ พิมพ์ได้ สลับไปมาได้ -->
+              <!-- 6. เส้นทาง: จาก (ต้นทาง) ⇄ ถึง (ปลายทาง) — พิมพ์ได้ + ดรอปดาวน์ ▾ สลับไปมาได้ -->
               <div class="md:col-span-7 lg:col-span-8">
                 <div class="flex flex-wrap items-center justify-between gap-2 mb-1.5">
                   <span class="text-sm font-semibold text-slate-700">
@@ -585,17 +630,28 @@
                 </div>
 
                 <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-                  <div class="flex-1">
+                  <div class="flex-1 relative combo-wrap" data-combo="form-origin">
                     <input
                       type="text"
                       id="form-origin"
-                      list="dl-routes"
                       autocomplete="off"
                       placeholder="จาก (เลือกจุดรับ หรือ พิมพ์เอง)..."
                       required
-                      class="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 transition"
+                      class="w-full min-h-[44px] pl-3.5 pr-10 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 transition"
                     />
-                    <datalist id="dl-routes"></datalist>
+                    <button
+                      type="button"
+                      data-combo-toggle="form-origin"
+                      tabindex="-1"
+                      title="เปิดรายการเส้นทาง/จุดรับ"
+                      class="absolute inset-y-0 right-0 w-10 flex items-center justify-center text-slate-400 hover:text-indigo-600 cursor-pointer transition"
+                    >
+                      <i class="fa-solid fa-chevron-down text-xs"></i>
+                    </button>
+                    <div
+                      data-combo-menu="form-origin"
+                      class="hidden absolute left-0 right-0 top-full mt-1 z-50 bg-white rounded-xl border border-slate-200 shadow-xl max-h-60 overflow-y-auto py-1"
+                    ></div>
                   </div>
 
                   <button
@@ -608,17 +664,28 @@
                     <span>สลับขาไป-ขากลับ</span>
                   </button>
 
-                  <div class="flex-1">
+                  <div class="flex-1 relative combo-wrap" data-combo="form-destination">
                     <input
                       type="text"
                       id="form-destination"
-                      list="dl-destinations"
                       autocomplete="off"
                       placeholder="ถึง (ลิงก์จากโครงการ หรือ พิมพ์เอง)..."
                       required
-                      class="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 transition"
+                      class="w-full min-h-[44px] pl-3.5 pr-10 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 transition"
                     />
-                    <datalist id="dl-destinations"></datalist>
+                    <button
+                      type="button"
+                      data-combo-toggle="form-destination"
+                      tabindex="-1"
+                      title="เปิดรายการปลายทาง/โครงการ"
+                      class="absolute inset-y-0 right-0 w-10 flex items-center justify-center text-slate-400 hover:text-indigo-600 cursor-pointer transition"
+                    >
+                      <i class="fa-solid fa-chevron-down text-xs"></i>
+                    </button>
+                    <div
+                      data-combo-menu="form-destination"
+                      class="hidden absolute left-0 right-0 top-full mt-1 z-50 bg-white rounded-xl border border-slate-200 shadow-xl max-h-60 overflow-y-auto py-1"
+                    ></div>
                   </div>
                 </div>
 
@@ -1590,6 +1657,6 @@
   <!-- Vendored ExcelJS + Dual Export Engine + Main Frontend Logic -->
   <script src="/vendor/exceljs.min.js?v=6"></script>
   <script src="/excel-export.js?v=6"></script>
-  <script src="/app.js?v=12"></script>
+  <script src="/app.js?v=13"></script>
 </body>
 </html>

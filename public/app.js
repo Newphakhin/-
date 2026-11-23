@@ -574,63 +574,218 @@
     if (preserveValue && prev) selectEl.value = prev;
   }
 
-  function populateFrontDropdowns() {
+  // ==========================================================================
+  // 6B. Searchable Combobox (พิมพ์ค้นหา/พิมพ์เองได้ + ปุ่มดรอปดาวน์ ▾)
+  // ==========================================================================
+  const comboRegistry = {};
+
+  function getComboOptions(id) {
     const activeWorkers = state.workers.filter((w) => w.active);
     const activeVehicles = state.vehicles.filter((v) => v.active);
     const activeSites = state.sites.filter((s) => s.active);
     const activeRoutes = state.routes.filter((r) => r.active);
 
-    populateSelect(
-      $('form-worker'),
-      activeWorkers.map((w) => ({
-        value: w.name,
-        label: w.default_vehicle ? `${w.name} (${w.default_vehicle})` : w.name
-      })),
-      '-- เลือกชื่อคนขับ --'
-    );
-
-    populateSelect(
-      $('form-vehicle'),
-      activeVehicles.map((v) => ({ value: v.license_plate, label: v.license_plate })),
-      '-- เลือกทะเบียนรถ --'
-    );
-
-    // Datalist helper สำหรับช่องที่ทั้งเลือกและพิมพ์เองได้ (5. โครงการ & 6. เส้นทาง)
-    const fillDatalist = (dlId, items) => {
-      const dl = $(dlId);
-      if (!dl) return;
+    const dedup = (items) => {
       const seen = new Set();
-      const opts = [];
+      const out = [];
       for (const it of items) {
-        const val = typeof it === 'string' ? it.trim() : String(it.value || '').trim();
-        const label = typeof it === 'string' ? '' : String(it.label || '').trim();
-        if (!val || seen.has(val)) continue;
-        seen.add(val);
-        opts.push(label && label !== val
-          ? `<option value="${escapeHtml(val)}" label="${escapeHtml(label)}"></option>`
-          : `<option value="${escapeHtml(val)}"></option>`);
+        const value = String(it.value || '').trim();
+        if (!value || seen.has(value)) continue;
+        seen.add(value);
+        out.push({ value, sub: String(it.sub || '').trim() });
       }
-      dl.innerHTML = opts.join('');
+      return out;
     };
 
-    fillDatalist(
-      'dl-sites',
-      activeSites.map((s) => ({
-        value: s.site_name,
-        label: s.zone_name ? `${s.site_name} [โซน: ${s.zone_name}]` : s.site_name
-      }))
-    );
+    if (id === 'form-worker') {
+      return dedup(
+        activeWorkers.map((w) => ({
+          value: w.name,
+          sub: w.default_vehicle ? `รถประจำ: ${w.default_vehicle}` : ''
+        }))
+      );
+    }
+    if (id === 'form-vehicle') {
+      return dedup(
+        activeVehicles.map((v) => {
+          const owner = activeWorkers.find((w) => w.default_vehicle === v.license_plate);
+          return {
+            value: v.license_plate,
+            sub: owner ? `ประจำ: ${owner.name}` : ''
+          };
+        })
+      );
+    }
+    if (id === 'form-site') {
+      return dedup(
+        activeSites.map((s) => ({
+          value: s.site_name,
+          sub: s.zone_name ? `โซน: ${s.zone_name}` : ''
+        }))
+      );
+    }
+    if (id === 'form-origin') {
+      return dedup([
+        ...activeRoutes.map((r) => ({ value: r.origin, sub: r.destination ? `→ ${r.destination}` : 'เส้นทาง' })),
+        ...activeSites.map((s) => ({ value: s.site_name, sub: 'โครงการ' }))
+      ]);
+    }
+    if (id === 'form-destination') {
+      return dedup([
+        ...activeSites.map((s) => ({ value: s.site_name, sub: s.zone_name ? `โครงการ • โซน ${s.zone_name}` : 'โครงการ' })),
+        ...activeRoutes.filter((r) => r.destination).map((r) => ({ value: r.destination, sub: 'เส้นทาง' })),
+        ...activeRoutes.map((r) => ({ value: r.origin, sub: 'จุดรับ' }))
+      ]);
+    }
+    return [];
+  }
 
-    fillDatalist('dl-routes', [
-      ...activeRoutes.map((r) => r.origin),
-      ...activeSites.map((s) => s.site_name)
-    ]);
+  function closeAllComboboxes(exceptId = '') {
+    for (const [id, api] of Object.entries(comboRegistry)) {
+      if (id !== exceptId) api.close();
+    }
+  }
 
-    fillDatalist('dl-destinations', [
-      ...activeSites.map((s) => s.site_name),
-      ...activeRoutes.map((r) => r.destination).filter(Boolean),
-      ...activeRoutes.map((r) => r.origin)
-    ]);
+  function setupCombobox(id) {
+    const input = $(id);
+    const wrap = document.querySelector(`[data-combo="${id}"]`);
+    const toggleBtn = document.querySelector(`[data-combo-toggle="${id}"]`);
+    const menu = document.querySelector(`[data-combo-menu="${id}"]`);
+    if (!input || !wrap || !toggleBtn || !menu) return;
+
+    let isOpen = false;
+    let hiIdx = -1;
+    let visibleItems = [];
+
+    const close = () => {
+      isOpen = false;
+      hiIdx = -1;
+      menu.classList.add('hidden');
+      const icon = toggleBtn.querySelector('i');
+      if (icon) icon.style.transform = '';
+    };
+
+    const renderMenu = (showAll = false) => {
+      const all = getComboOptions(id);
+      const q = showAll ? '' : input.value.trim().toLowerCase();
+      const curVal = input.value.trim();
+      // ถ้าค่าในช่องตรงกับรายการที่มีอยู่แล้ว ให้แสดงทั้งหมดเพื่อให้กดเปลี่ยนเป็นรายการอื่นได้ทันที
+      const exactMatch = all.some((o) => o.value === curVal);
+      const list = !q || exactMatch
+        ? all
+        : all.filter((o) => o.value.toLowerCase().includes(q) || o.sub.toLowerCase().includes(q));
+
+      visibleItems = list;
+      hiIdx = -1;
+
+      if (list.length === 0) {
+        menu.innerHTML = all.length === 0
+          ? '<div class="px-3.5 py-2.5 text-xs text-slate-400 text-center">ยังไม่มีรายการตั้งค่า — พิมพ์ข้อความเองได้เลย</div>'
+          : `<div class="px-3.5 py-2.5 text-xs text-slate-500 text-center">ไม่พบในรายการ — ใช้ข้อความที่พิมพ์เอง <strong>"${escapeHtml(curVal)}"</strong> ได้ทันที</div>`;
+      } else {
+        menu.innerHTML = list
+          .map((o, idx) => {
+            const selected = o.value === curVal;
+            return `
+              <button type="button" data-combo-opt="${idx}"
+                class="w-full text-left px-3.5 py-2 text-xs sm:text-sm flex items-center justify-between gap-2 transition cursor-pointer ${
+                  selected ? 'bg-indigo-50 text-indigo-900 font-semibold' : 'text-slate-800 hover:bg-slate-100'
+                }">
+                <span class="truncate">${escapeHtml(o.value)}</span>
+                <span class="flex items-center gap-1.5 shrink-0">
+                  ${o.sub ? `<span class="text-[11px] text-slate-400 font-normal">${escapeHtml(o.sub)}</span>` : ''}
+                  ${selected ? '<i class="fa-solid fa-check text-indigo-600 text-[11px]"></i>' : ''}
+                </span>
+              </button>
+            `;
+          })
+          .join('');
+      }
+    };
+
+    const open = (showAll = false) => {
+      closeAllComboboxes(id);
+      renderMenu(showAll);
+      isOpen = true;
+      menu.classList.remove('hidden');
+      const icon = toggleBtn.querySelector('i');
+      if (icon) icon.style.transform = 'rotate(180deg)';
+    };
+
+    const selectItem = (val) => {
+      input.value = val;
+      close();
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    };
+
+    const updateHighlight = () => {
+      menu.querySelectorAll('[data-combo-opt]').forEach((btn, i) => {
+        btn.classList.toggle('bg-indigo-100', i === hiIdx);
+        if (i === hiIdx) btn.scrollIntoView({ block: 'nearest' });
+      });
+    };
+
+    toggleBtn.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      if (isOpen) {
+        close();
+      } else {
+        input.focus();
+        open(true);
+      }
+    });
+
+    input.addEventListener('focus', () => open(true));
+    input.addEventListener('click', () => {
+      if (!isOpen) open(true);
+    });
+    input.addEventListener('input', () => open(false));
+
+    input.addEventListener('keydown', (e) => {
+      if (!isOpen && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+        e.preventDefault();
+        open(true);
+        return;
+      }
+      if (!isOpen) return;
+      if (e.key === 'Escape') {
+        close();
+      } else if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        if (visibleItems.length > 0) {
+          hiIdx = (hiIdx + 1) % visibleItems.length;
+          updateHighlight();
+        }
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (visibleItems.length > 0) {
+          hiIdx = (hiIdx - 1 + visibleItems.length) % visibleItems.length;
+          updateHighlight();
+        }
+      } else if (e.key === 'Enter' && hiIdx >= 0 && visibleItems[hiIdx]) {
+        e.preventDefault();
+        selectItem(visibleItems[hiIdx].value);
+      }
+    });
+
+    menu.addEventListener('mousedown', (e) => {
+      const btn = e.target.closest('[data-combo-opt]');
+      if (!btn) return;
+      e.preventDefault();
+      const idx = Number(btn.dataset.comboOpt);
+      if (visibleItems[idx]) selectItem(visibleItems[idx].value);
+    });
+
+    input.addEventListener('blur', () => {
+      setTimeout(close, 150);
+    });
+
+    comboRegistry[id] = { open, close, refresh: () => isOpen && renderMenu(false) };
+  }
+
+  function populateFrontDropdowns() {
+    // Refresh any open searchable comboboxes
+    for (const api of Object.values(comboRegistry)) api.refresh();
 
     // Filter site dropdown (include all sites + any historical site_name)
     populateSelect(
@@ -722,24 +877,67 @@
     btn.textContent = state.routeMetaExpanded ? 'ซ่อนการตั้งค่าเพิ่มเติม' : 'ตั้งค่าเพิ่มเติม (ไม่บังคับ)';
   }
 
-  function onWorkerSelectChange() {
-    const workerName = $('form-worker').value;
+  function updateWorkerVehicleHints() {
+    const workerName = $('form-worker').value.trim();
+    const plate = $('form-vehicle').value.trim();
     const worker = state.workers.find((w) => w.name === workerName);
-    const hint = $('form-worker-vehicle-hint');
-    if (worker && worker.default_vehicle) {
-      const vehSelect = $('form-vehicle');
-      if (![...vehSelect.options].some((o) => o.value === worker.default_vehicle)) {
-        const opt = document.createElement('option');
-        opt.value = worker.default_vehicle;
-        opt.textContent = worker.default_vehicle;
-        vehSelect.appendChild(opt);
+    const owner = plate ? state.workers.find((w) => w.default_vehicle === plate) : null;
+    const wHint = $('form-worker-vehicle-hint');
+    const vHint = $('form-vehicle-worker-hint');
+
+    if (wHint) {
+      if (worker && worker.default_vehicle) {
+        if (plate === worker.default_vehicle) {
+          wHint.innerHTML = `<span class="text-emerald-700 font-semibold"><i class="fa-solid fa-wand-magic-sparkles mr-1"></i>เติมรถประจำตัวให้แล้ว: ${escapeHtml(worker.default_vehicle)}</span>`;
+        } else if (plate) {
+          wHint.innerHTML = `<span class="text-amber-700 font-semibold"><i class="fa-solid fa-shuffle mr-1"></i>เปลี่ยนรถเฉพาะเที่ยวนี้ (รถประจำคือ ${escapeHtml(worker.default_vehicle)})</span>`;
+        } else {
+          wHint.textContent = `รถประจำตัว: ${worker.default_vehicle}`;
+        }
+      } else {
+        wHint.textContent = 'เลือกจากดรอปดาวน์หรือพิมพ์เองได้ — ระบบเติมรถประจำตัวให้';
       }
-      vehSelect.value = worker.default_vehicle;
-      pulseElement(vehSelect);
-      hint.innerHTML = `<span class="text-emerald-700 font-semibold"><i class="fa-solid fa-wand-magic-sparkles mr-1"></i>เติมรถประจำตัวให้แล้ว: ${escapeHtml(worker.default_vehicle)}</span>`;
-    } else {
-      hint.textContent = 'เลือกคนขับแล้วระบบเติมทะเบียนรถประจำตัวให้';
     }
+
+    if (vHint) {
+      if (owner && workerName && owner.name !== workerName) {
+        vHint.innerHTML = `<span class="text-amber-700 font-semibold"><i class="fa-solid fa-user-pen mr-1"></i>ขับแทนเฉพาะเที่ยวนี้ (คนขับประจำคือ ${escapeHtml(owner.name)})</span>`;
+      } else {
+        vHint.textContent = 'เลือกจากดรอปดาวน์หรือพิมพ์เปลี่ยนคันได้อิสระ';
+      }
+    }
+  }
+
+  function onWorkerSelectChange() {
+    const workerName = $('form-worker').value.trim();
+    state.lastAutoWorker = '';
+    const worker = state.workers.find((w) => w.name === workerName);
+    if (worker && worker.default_vehicle) {
+      const vehEl = $('form-vehicle');
+      vehEl.value = worker.default_vehicle;
+      state.lastAutoVehicle = worker.default_vehicle;
+      pulseElement(vehEl);
+    }
+    updateWorkerVehicleHints();
+  }
+
+  function onVehicleSelectChange() {
+    const plate = $('form-vehicle').value.trim();
+    state.lastAutoVehicle = '';
+    if (plate) {
+      const owner = state.workers.find((w) => w.active && w.default_vehicle === plate)
+        || state.workers.find((w) => w.default_vehicle === plate);
+      if (owner) {
+        const wEl = $('form-worker');
+        const curWorker = wEl.value.trim();
+        if (!curWorker || curWorker === (state.lastAutoWorker || '')) {
+          wEl.value = owner.name;
+          state.lastAutoWorker = owner.name;
+          pulseElement(wEl);
+        }
+      }
+    }
+    updateWorkerVehicleHints();
   }
 
   function onSiteInputChange() {
@@ -839,6 +1037,8 @@
 
     state.editingLogId = null;
     state.isSwapped = false;
+    state.lastAutoWorker = '';
+    state.lastAutoVehicle = '';
 
     $('travel-log-form').reset();
     setTripType('normal');
@@ -853,7 +1053,7 @@
     $('form-route-sheet-name').value = '';
     $('form-billing-title').value = '';
     $('form-display-mode-zone').value = 'worker_name';
-    $('form-worker-vehicle-hint').textContent = 'เลือกคนขับแล้วระบบเติมทะเบียนรถประจำตัวให้';
+    updateWorkerVehicleHints();
 
     $('swap-status-badge').classList.add('hidden');
     $('swap-status-badge').classList.remove('inline-flex');
@@ -881,23 +1081,13 @@
     setTripType(log.trip_type || 'normal');
     $('form-date').value = log.trip_date || todayIso();
 
-    // Ensure select contains historical values if archived/deleted
-    const ensureOpt = (selectId, val) => {
-      const sel = $(selectId);
-      if (!sel || !val) return;
-      if (![...sel.options].some((o) => o.value === val)) {
-        const opt = document.createElement('option');
-        opt.value = val;
-        opt.textContent = val;
-        sel.appendChild(opt);
-      }
-      sel.value = val;
-    };
-
-    ensureOpt('form-worker', log.worker_name);
-    ensureOpt('form-vehicle', log.license_plate);
+    state.lastAutoWorker = '';
+    state.lastAutoVehicle = '';
+    $('form-worker').value = log.worker_name || '';
+    $('form-vehicle').value = log.license_plate || '';
     $('form-site').value = log.site_name || '';
     state.lastLinkedSite = log.site_name || '';
+    updateWorkerVehicleHints();
     $('form-origin').value = log.origin || '';
     $('form-destination').value = log.destination || '';
     $('form-route-sheet-name').value = log.route_sheet_name || '';
@@ -3156,7 +3346,16 @@
     $('trip-type-normal').addEventListener('click', () => setTripType('normal'));
     $('trip-type-charter').addEventListener('click', () => setTripType('charter'));
     $('form-date').addEventListener('change', updateFormDatePreview);
+    // Searchable Comboboxes (พิมพ์ได้ + ดรอปดาวน์ ▾)
+    ['form-worker', 'form-vehicle', 'form-site', 'form-origin', 'form-destination'].forEach(setupCombobox);
+    document.addEventListener('mousedown', (e) => {
+      if (!e.target.closest('.combo-wrap')) closeAllComboboxes();
+    });
+
+    $('form-worker').addEventListener('input', onWorkerSelectChange);
     $('form-worker').addEventListener('change', onWorkerSelectChange);
+    $('form-vehicle').addEventListener('input', onVehicleSelectChange);
+    $('form-vehicle').addEventListener('change', onVehicleSelectChange);
     $('form-site').addEventListener('input', onSiteInputChange);
     $('form-site').addEventListener('change', onSiteInputChange);
     $('btn-swap-route').addEventListener('click', onSwapRouteClick);
