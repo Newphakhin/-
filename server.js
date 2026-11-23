@@ -320,15 +320,111 @@ async function postToAppsScript(webAppUrl, payload) {
 app.get(
   '/api/gsheet/config',
   requireAuth,
-  handle(async (req, res) => res.json(await store.getGoogleSheetsConfig()))
+  handle(async (req, res) => {
+    const [config, history] = await Promise.all([
+      store.getGoogleSheetsConfig(),
+      store.listGoogleSheetsHistory()
+    ]);
+    res.json({
+      ...config,
+      history_count: history.length,
+      last_history: history[0] || null
+    });
+  })
 );
 
 app.put(
   '/api/gsheet/config',
   requireAuth,
   handle(async (req, res) => {
-    const config = await store.saveGoogleSheetsConfig(req.body || {});
-    res.json({ message: 'บันทึกการตั้งค่า Google Sheets เรียบร้อยแล้ว', config });
+    const body = req.body || {};
+    const config = await store.saveGoogleSheetsConfig(body);
+    let history = null;
+    if (body.record_history) {
+      const kind = body.history_kind === 'billing' ? 'billing' : body.history_kind === 'zone' ? 'zone' : 'general';
+      const sheetName =
+        kind === 'billing'
+          ? config.billing_name || (config.billing_url ? 'Google Sheet ใบเบิก' : '')
+          : kind === 'zone'
+            ? config.zone_name || (config.zone_url ? 'Google Sheet สำเนาโซน' : '')
+            : '';
+      const sheetUrl = kind === 'billing' ? config.billing_sheet_url : kind === 'zone' ? config.zone_sheet_url : '';
+      const added = await store.addGoogleSheetsHistory({
+        kind,
+        mode: 'config_saved',
+        status: 'info',
+        spreadsheet_name: sheetName,
+        spreadsheet_url: sheetUrl,
+        site_name: kind === 'billing' ? config.billing_site : '',
+        triggered_by: (req.user && (req.user.full_name || req.user.username)) || 'ผู้ใช้ระบบ',
+        note: String(body.history_note || 'บันทึกการตั้งค่า Google Sheets').trim()
+      });
+      history = added.history;
+    }
+    res.json({ message: 'บันทึกการตั้งค่า Google Sheets เรียบร้อยแล้ว', config, ...(history ? { history } : {}) });
+  })
+);
+
+app.get(
+  '/api/gsheet/history',
+  requireAuth,
+  handle(async (req, res) => {
+    const history = await store.listGoogleSheetsHistory();
+    res.json({ history });
+  })
+);
+
+app.post(
+  '/api/gsheet/history',
+  requireAuth,
+  handle(async (req, res) => {
+    const body = req.body || {};
+    const note = String(body.note || '').trim();
+    if (!note) {
+      return res.status(400).json({ error: 'กรุณากรอกรายละเอียดที่ต้องการบันทึก' });
+    }
+    const cfg = await store.getGoogleSheetsConfig();
+    const kind = body.kind === 'billing' ? 'billing' : body.kind === 'zone' ? 'zone' : 'general';
+    const spreadsheetName =
+      String(body.spreadsheet_name || '').trim() ||
+      (kind === 'billing' ? cfg.billing_name : kind === 'zone' ? cfg.zone_name : '');
+    const spreadsheetUrl =
+      String(body.spreadsheet_url || '').trim() ||
+      (kind === 'billing' ? cfg.billing_sheet_url : kind === 'zone' ? cfg.zone_sheet_url : '');
+
+    const { entry, history } = await store.addGoogleSheetsHistory({
+      kind,
+      mode: 'note',
+      status: 'info',
+      spreadsheet_name: spreadsheetName,
+      spreadsheet_url: spreadsheetUrl,
+      site_name: String(body.site_name || '').trim(),
+      date_from: String(body.date_from || '').trim(),
+      date_to: String(body.date_to || '').trim(),
+      log_count: Number(body.log_count) || 0,
+      triggered_by: (req.user && (req.user.full_name || req.user.username)) || 'ผู้ใช้ระบบ',
+      note
+    });
+    res.status(201).json({ message: 'บันทึกประวัติการไหลข้อมูลเรียบร้อยแล้ว', entry, history });
+  })
+);
+
+app.delete(
+  '/api/gsheet/history/:id',
+  requireAuth,
+  handle(async (req, res) => {
+    const { history } = await store.deleteGoogleSheetsHistoryItem(req.params.id);
+    res.json({ message: 'ลบบันทึกประวัติเรียบร้อยแล้ว', history });
+  })
+);
+
+app.delete(
+  '/api/gsheet/history',
+  requireAuth,
+  requireAdmin,
+  handle(async (req, res) => {
+    const r = await store.clearGoogleSheetsHistory();
+    res.json({ message: `ล้างประวัติการไหลข้อมูลทั้งหมด (${r.deletedCount} รายการ) เรียบร้อยแล้ว`, history: [] });
   })
 );
 
@@ -352,6 +448,8 @@ app.post(
   handle(async (req, res) => {
     const body = req.body || {};
     const kind = body.kind === 'billing' ? 'billing' : 'zone';
+    const mode = body.mode === 'auto' ? 'auto' : 'manual';
+    const triggeredBy = (req.user && (req.user.full_name || req.user.username)) || 'ผู้ใช้ระบบ';
     const cfg = await store.getGoogleSheetsConfig();
     const targetUrl = kind === 'billing' ? cfg.billing_url : cfg.zone_url;
     if (!targetUrl) {
@@ -363,40 +461,82 @@ app.post(
     const effectiveSite = kind === 'billing'
       ? String(cfg.billing_site || body.site_name || '').trim()
       : String(body.site_name || '').trim();
+    const dateFrom = String(body.date_from || '').trim();
+    const dateTo = String(body.date_to || '').trim();
 
     const logs = await store.listLogs({
-      date_from: String(body.date_from || '').trim(),
-      date_to: String(body.date_to || '').trim(),
+      date_from: dateFrom,
+      date_to: dateTo,
       site_name: effectiveSite,
       trip_type: kind === 'billing' ? '' : String(body.trip_type || '').trim(),
       search: kind === 'billing' ? '' : String(body.search || '').trim()
     });
 
-    const result = await postToAppsScript(targetUrl, {
-      action: 'sync',
-      kind,
-      siteName: effectiveSite,
-      dateFrom: String(body.date_from || '').trim(),
-      dateTo: String(body.date_to || '').trim(),
-      issueDate: String(body.issue_date || '').trim(),
-      logs
-    });
+    let result;
+    try {
+      result = await postToAppsScript(targetUrl, {
+        action: 'sync',
+        kind,
+        siteName: effectiveSite,
+        dateFrom,
+        dateTo,
+        issueDate: String(body.issue_date || '').trim(),
+        logs
+      });
+    } catch (syncErr) {
+      await store.addGoogleSheetsHistory({
+        kind,
+        mode,
+        status: 'error',
+        spreadsheet_name: kind === 'billing' ? cfg.billing_name : cfg.zone_name,
+        spreadsheet_url: kind === 'billing' ? cfg.billing_sheet_url : cfg.zone_sheet_url,
+        site_name: effectiveSite,
+        date_from: dateFrom,
+        date_to: dateTo,
+        sheet_count: 0,
+        log_count: logs.length,
+        triggered_by: triggeredBy,
+        error_message: syncErr.message || 'ส่งข้อมูลไม่สำเร็จ'
+      });
+      throw syncErr;
+    }
 
     // อัปเดตชื่อไฟล์และลิงก์เปิดชีตอัตโนมัติหากมีการเปลี่ยนชื่อบน Google Drive
+    const spreadsheetName = result.spreadsheetName || (kind === 'billing' ? cfg.billing_name : cfg.zone_name) || '';
+    const spreadsheetUrl = result.spreadsheetUrl || (kind === 'billing' ? cfg.billing_sheet_url : cfg.zone_sheet_url) || '';
+    const sheetCount = result.sheetCount || (Array.isArray(result.sheets) ? result.sheets.length : 0);
+
     const metaPatch = kind === 'billing'
-      ? { billing_name: result.spreadsheetName || cfg.billing_name, billing_sheet_url: result.spreadsheetUrl || cfg.billing_sheet_url }
-      : { zone_name: result.spreadsheetName || cfg.zone_name, zone_sheet_url: result.spreadsheetUrl || cfg.zone_sheet_url };
+      ? { billing_name: spreadsheetName, billing_sheet_url: spreadsheetUrl }
+      : { zone_name: spreadsheetName, zone_sheet_url: spreadsheetUrl };
     const updatedConfig = await store.saveGoogleSheetsConfig(metaPatch);
+
+    const { entry: historyEntry, history } = await store.addGoogleSheetsHistory({
+      kind,
+      mode,
+      status: 'success',
+      spreadsheet_name: spreadsheetName,
+      spreadsheet_url: spreadsheetUrl,
+      site_name: effectiveSite,
+      date_from: dateFrom,
+      date_to: dateTo,
+      sheet_count: sheetCount,
+      log_count: logs.length,
+      triggered_by: triggeredBy,
+      note: String(body.note || '').trim()
+    });
 
     res.json({
       ok: true,
       kind,
-      sheetCount: result.sheetCount || (Array.isArray(result.sheets) ? result.sheets.length : 0),
+      sheetCount,
       sheets: result.sheets || [],
       logCount: logs.length,
-      spreadsheetName: result.spreadsheetName || '',
-      spreadsheetUrl: result.spreadsheetUrl || '',
-      config: updatedConfig
+      spreadsheetName,
+      spreadsheetUrl,
+      config: updatedConfig,
+      historyEntry,
+      historyCount: history.length
     });
   })
 );

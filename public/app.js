@@ -50,7 +50,10 @@
       billing_sheet_url: '',
       billing_site: '',
       auto_sync: true
-    }
+    },
+    gsheetHistory: [],
+    gsheetHistoryCount: 0,
+    gsheetLastHistory: null
   };
 
   const $ = (id) => document.getElementById(id);
@@ -2197,14 +2200,45 @@
     }
   }
 
+  function formatDateTimeBE(isoStr) {
+    if (!isoStr) return '-';
+    const d = new Date(isoStr);
+    if (Number.isNaN(d.getTime())) return String(isoStr);
+    const day = d.getDate();
+    const month = d.getMonth() + 1;
+    const yearBE = d.getFullYear() + 543;
+    const hh = String(d.getHours()).padStart(2, '0');
+    const mm = String(d.getMinutes()).padStart(2, '0');
+    return `${day}/${month}/${yearBE} ${hh}:${mm} น.`;
+  }
+
+  function applyGoogleSheetHistoryMeta(historyArr) {
+    if (!Array.isArray(historyArr)) return;
+    state.gsheetHistory = historyArr;
+    state.gsheetHistoryCount = historyArr.length;
+    state.gsheetLastHistory = historyArr[0] || null;
+  }
+
   async function loadGoogleSheetsConfig() {
     try {
       const cfg = await apiFetch('/api/gsheet/config');
-      if (cfg && typeof cfg === 'object') state.gsheet = { ...state.gsheet, ...cfg };
+      if (cfg && typeof cfg === 'object') {
+        state.gsheet = { ...state.gsheet, ...cfg };
+        if (typeof cfg.history_count === 'number') state.gsheetHistoryCount = cfg.history_count;
+        if (cfg.last_history !== undefined) state.gsheetLastHistory = cfg.last_history || null;
+      }
     } catch {
       // ignore if offline
     }
     renderGoogleSheetsUI();
+  }
+
+  async function loadGoogleSheetsHistory() {
+    const res = await apiFetch('/api/gsheet/history');
+    const rows = Array.isArray(res && res.history) ? res.history : [];
+    applyGoogleSheetHistoryMeta(rows);
+    renderGoogleSheetsUI();
+    return rows;
   }
 
   function renderGoogleSheetsUI() {
@@ -2216,8 +2250,31 @@
     const bDot = $('gsheet-billing-dot');
     const bOpen = $('btn-gsheet-open-billing');
     const autoToggle = $('toggle-gsheet-auto-sync');
+    const histBadge = $('gsheet-history-badge');
+    const lastNote = $('gsheet-last-sync-note');
 
     if (autoToggle) autoToggle.checked = cfg.auto_sync !== false;
+    if (histBadge) histBadge.textContent = formatInt(state.gsheetHistoryCount || 0);
+
+    if (lastNote) {
+      const h = state.gsheetLastHistory;
+      if (h) {
+        const dt = formatDateTimeBE(h.synced_at);
+        const kindLabel = h.kind === 'billing' ? 'ใบเบิก' : h.kind === 'zone' ? 'สำเนาโซน' : 'ตั้งค่า/บันทึก';
+        const targetText = h.spreadsheet_name ? ` (${escapeHtml(h.spreadsheet_name)})` : '';
+        if (h.status === 'error') {
+          lastNote.innerHTML = `<i class="fa-solid fa-circle-exclamation text-rose-600 mr-1"></i>บันทึกล่าสุด ${escapeHtml(dt)} • ${escapeHtml(kindLabel)} ไม่สำเร็จ`;
+        } else if (h.mode === 'config_saved') {
+          lastNote.innerHTML = `<i class="fa-solid fa-floppy-disk text-emerald-600 mr-1"></i>บันทึกการตั้งค่าล่าสุด ${escapeHtml(dt)}${targetText}`;
+        } else if (h.mode === 'note') {
+          lastNote.innerHTML = `<i class="fa-regular fa-note-sticky text-emerald-600 mr-1"></i>บันทึกล่าสุด ${escapeHtml(dt)} • ${escapeHtml(h.note || kindLabel)}`;
+        } else {
+          lastNote.innerHTML = `<i class="fa-solid fa-circle-check text-emerald-600 mr-1"></i>ไหลล่าสุด ${escapeHtml(dt)} • ${escapeHtml(kindLabel)}${targetText} (${formatInt(h.log_count)} เที่ยว)`;
+        }
+      } else {
+        lastNote.textContent = 'ยังไม่มีบันทึกประวัติการไหลข้อมูล';
+      }
+    }
 
     if (zLabel) {
       if (cfg.zone_url) {
@@ -2273,6 +2330,38 @@
     }
   }
 
+  async function saveGoogleSheetsBarSettings() {
+    const btn = $('btn-gsheet-save-settings');
+    const autoToggle = $('toggle-gsheet-auto-sync');
+    const autoVal = autoToggle ? Boolean(autoToggle.checked) : true;
+    const cfg = state.gsheet || {};
+    if (btn) btn.disabled = true;
+    try {
+      const boundSummary = [
+        cfg.zone_url ? `สำเนา: ${cfg.zone_name || 'ผูกแล้ว'}` : 'สำเนา: ยังไม่ผูก',
+        cfg.billing_url ? `ใบเบิก: ${cfg.billing_name || 'ผูกแล้ว'}` : 'ใบเบิก: ยังไม่ผูก',
+        `อัปเดตอัตโนมัติ: ${autoVal ? 'เปิด' : 'ปิด'}`
+      ].join(' • ');
+      const res = await apiFetch('/api/gsheet/config', {
+        method: 'PUT',
+        body: JSON.stringify({
+          auto_sync: autoVal,
+          record_history: true,
+          history_kind: 'general',
+          history_note: `บันทึกการตั้งค่า (${boundSummary})`
+        })
+      });
+      if (res.config) state.gsheet = { ...state.gsheet, ...res.config };
+      if (Array.isArray(res.history)) applyGoogleSheetHistoryMeta(res.history);
+      renderGoogleSheetsUI();
+      showToast('บันทึกการตั้งค่า Google Sheets และลงบันทึกประวัติเรียบร้อยแล้ว', 'success', 3800);
+    } catch (err) {
+      showToast(err.message || 'ไม่สามารถบันทึกการตั้งค่าได้', 'error');
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
   function openGoogleSheetBindModal(kind = 'zone') {
     const isBilling = kind === 'billing';
     const title = isBilling ? 'ผูก Google Sheets ใบเบิกโครงการ' : 'ผูก Google Sheets สำเนาโซน';
@@ -2320,7 +2409,7 @@
               placeholder="https://script.google.com/macros/s/....../exec"
               class="w-full min-h-[42px] px-3 py-2 rounded-xl border border-slate-300 text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-emerald-600" />
             <p id="m-gs-test-result" class="mt-1.5 text-xs ${curName ? 'text-emerald-700 font-semibold' : 'text-slate-500'}">
-              ${curName ? `เชื่อมต่ออยู่กับ: ${escapeHtml(curName)}` : 'วางลิงก์แล้วกด "ทดสอบการเชื่อมต่อ" เพื่อตรวจชื่อชีต'}
+              ${curName ? `เชื่อมต่ออยู่กับ: ${escapeHtml(curName)}` : 'วางลิงก์แล้วกด "ทดสอบเชื่อมต่อ" เพื่อตรวจชื่อชีต หรือกด "บันทึก" ไว้ก่อนได้'}
             </p>
           </div>
 
@@ -2345,7 +2434,7 @@
           <div class="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100">
             <div class="flex items-center gap-2">
               <button type="button" id="m-gs-test"
-                class="min-h-[40px] px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 text-xs font-semibold cursor-pointer">
+                class="min-h-[40px] px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 text-xs font-semibold cursor-pointer">
                 <i class="fa-solid fa-plug-circle-check mr-1 text-emerald-600"></i>ทดสอบเชื่อมต่อ
               </button>
               ${
@@ -2357,12 +2446,17 @@
                   : ''
               }
             </div>
-            <div class="flex items-center gap-2">
+            <div class="flex flex-wrap items-center gap-2">
               <button type="button" id="m-gs-cancel"
-                class="min-h-[40px] px-3.5 py-2 rounded-xl border border-slate-300 text-xs sm:text-sm cursor-pointer">ยกเลิก</button>
+                class="min-h-[40px] px-3 py-2 rounded-xl border border-slate-300 text-xs sm:text-sm cursor-pointer">ยกเลิก</button>
+              <button type="button" id="m-gs-save-only"
+                class="min-h-[40px] px-3.5 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-white text-xs sm:text-sm font-semibold cursor-pointer"
+                title="บันทึกการตั้งค่าไว้ก่อน โดยยังไม่ไหลข้อมูลทันที">
+                <i class="fa-solid fa-floppy-disk mr-1 text-amber-400"></i>บันทึก
+              </button>
               <button type="submit" id="m-gs-save"
-                class="min-h-[40px] px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs sm:text-sm font-semibold cursor-pointer">
-                <i class="fa-solid fa-cloud-arrow-up mr-1"></i>บันทึกและไหลข้อมูลเลย
+                class="min-h-[40px] px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs sm:text-sm font-semibold cursor-pointer">
+                <i class="fa-solid fa-cloud-arrow-up mr-1"></i>บันทึกและไหลเลย
               </button>
             </div>
           </div>
@@ -2373,6 +2467,8 @@
         let testedMeta = { name: curName, sheetUrl: isBilling ? (cfg.billing_sheet_url || '') : (cfg.zone_sheet_url || '') };
         const urlEl = box.querySelector('#m-gs-url');
         const resEl = box.querySelector('#m-gs-test-result');
+        const saveOnlyBtn = box.querySelector('#m-gs-save-only');
+        const saveAndSyncBtn = box.querySelector('#m-gs-save');
 
         box.querySelector('#m-gs-copy-code').addEventListener('click', copyAppsScriptCodeToClipboard);
         box.querySelector('#m-gs-cancel').addEventListener('click', closeModal);
@@ -2402,6 +2498,26 @@
           }
         };
 
+        const buildPatch = (url, meta, historyNote) =>
+          isBilling
+            ? {
+                billing_url: url,
+                billing_name: (meta && meta.name) || '',
+                billing_sheet_url: (meta && meta.sheetUrl) || '',
+                billing_site: box.querySelector('#m-gs-billing-site') ? box.querySelector('#m-gs-billing-site').value.trim() : '',
+                record_history: true,
+                history_kind: 'billing',
+                history_note: historyNote
+              }
+            : {
+                zone_url: url,
+                zone_name: (meta && meta.name) || '',
+                zone_sheet_url: (meta && meta.sheetUrl) || '',
+                record_history: true,
+                history_kind: 'zone',
+                history_note: historyNote
+              };
+
         box.querySelector('#m-gs-test').addEventListener('click', runPing);
 
         const unbindBtn = box.querySelector('#m-gs-unbind');
@@ -2409,10 +2525,26 @@
           unbindBtn.addEventListener('click', async () => {
             try {
               const patch = isBilling
-                ? { billing_url: '', billing_name: '', billing_sheet_url: '', billing_site: '' }
-                : { zone_url: '', zone_name: '', zone_sheet_url: '' };
+                ? {
+                    billing_url: '',
+                    billing_name: '',
+                    billing_sheet_url: '',
+                    billing_site: '',
+                    record_history: true,
+                    history_kind: 'billing',
+                    history_note: 'ยกเลิกการผูก Google Sheet ใบเบิกโครงการ'
+                  }
+                : {
+                    zone_url: '',
+                    zone_name: '',
+                    zone_sheet_url: '',
+                    record_history: true,
+                    history_kind: 'zone',
+                    history_note: 'ยกเลิกการผูก Google Sheet สำเนาโซน'
+                  };
               const saved = await apiFetch('/api/gsheet/config', { method: 'PUT', body: JSON.stringify(patch) });
               state.gsheet = saved.config;
+              if (Array.isArray(saved.history)) applyGoogleSheetHistoryMeta(saved.history);
               renderGoogleSheetsUI();
               closeModal();
               showToast(`ยกเลิกการผูก ${title} เรียบร้อยแล้ว`, 'info');
@@ -2422,6 +2554,41 @@
           });
         }
 
+        // ปุ่ม "บันทึก" อย่างเดียว (เก็บการตั้งค่าไว้ก่อน ยังไม่ไหลข้อมูลทันที)
+        saveOnlyBtn.addEventListener('click', async () => {
+          const url = urlEl.value.trim();
+          if (!url) {
+            showToast('กรุณาวางลิงก์ Web app URL ของ Google Apps Script', 'error');
+            return;
+          }
+          saveOnlyBtn.disabled = true;
+          saveAndSyncBtn.disabled = true;
+          try {
+            // หากเปลี่ยน URL ใหม่ ลองดึงชื่อชีตแบบไม่บังคับ (ถ้าเชื่อมต่อไม่สำเร็จยังสามารถบันทึก URL ที่ถูกต้องไว้ก่อนได้)
+            let meta = url === curUrl ? testedMeta : { name: '', sheetUrl: '' };
+            if (!meta.name) {
+              const ping = await runPing();
+              if (ping) meta = ping;
+            }
+            const patch = buildPatch(url, meta, `บันทึกการตั้งค่า ${title} (ยังไม่ไหลข้อมูล)`);
+            const saved = await apiFetch('/api/gsheet/config', { method: 'PUT', body: JSON.stringify(patch) });
+            state.gsheet = saved.config;
+            if (Array.isArray(saved.history)) applyGoogleSheetHistoryMeta(saved.history);
+            renderGoogleSheetsUI();
+            closeModal();
+            showToast(
+              `บันทึกการตั้งค่า ${title} เรียบร้อยแล้ว (กดปุ่ม "ไหลลง Google Sheet" เมื่อพร้อม)`,
+              'success',
+              4200
+            );
+          } catch (err) {
+            showToast(err.message || 'ไม่สามารถบันทึกการตั้งค่าได้', 'error');
+            saveOnlyBtn.disabled = false;
+            saveAndSyncBtn.disabled = false;
+          }
+        });
+
+        // ปุ่ม "บันทึกและไหลเลย"
         box.querySelector('#m-gs-form').addEventListener('submit', async (e) => {
           e.preventDefault();
           const url = urlEl.value.trim();
@@ -2429,41 +2596,285 @@
             showToast('กรุณาวางลิงก์ Web app URL ของ Google Apps Script', 'error');
             return;
           }
-          const saveBtn = box.querySelector('#m-gs-save');
-          saveBtn.disabled = true;
+          saveOnlyBtn.disabled = true;
+          saveAndSyncBtn.disabled = true;
           try {
             const ping = await runPing();
             if (!ping) {
-              saveBtn.disabled = false;
+              saveOnlyBtn.disabled = false;
+              saveAndSyncBtn.disabled = false;
               return;
             }
-            const patch = isBilling
-              ? {
-                  billing_url: url,
-                  billing_name: ping.name,
-                  billing_sheet_url: ping.sheetUrl,
-                  billing_site: box.querySelector('#m-gs-billing-site') ? box.querySelector('#m-gs-billing-site').value.trim() : ''
-                }
-              : {
-                  zone_url: url,
-                  zone_name: ping.name,
-                  zone_sheet_url: ping.sheetUrl
-                };
+            const patch = buildPatch(url, ping, `บันทึกการตั้งค่าและเชื่อมต่อ ${title}`);
             const saved = await apiFetch('/api/gsheet/config', { method: 'PUT', body: JSON.stringify(patch) });
             state.gsheet = saved.config;
+            if (Array.isArray(saved.history)) applyGoogleSheetHistoryMeta(saved.history);
             renderGoogleSheetsUI();
             closeModal();
-            await syncToGoogleSheet(kind, { interactive: true });
+            await syncToGoogleSheet(kind, { interactive: true, mode: 'manual' });
           } catch (err) {
             showToast(err.message || 'ไม่สามารถบันทึกการตั้งค่าได้', 'error');
-            saveBtn.disabled = false;
+            saveOnlyBtn.disabled = false;
+            saveAndSyncBtn.disabled = false;
           }
         });
       }
     );
   }
 
-  async function syncToGoogleSheet(kind, { interactive = true } = {}) {
+  async function openGoogleSheetsHistoryModal() {
+    let rows = [];
+    try {
+      rows = await loadGoogleSheetsHistory();
+    } catch (err) {
+      showToast(err.message || 'ไม่สามารถโหลดประวัติการไหลข้อมูลได้', 'error');
+      return;
+    }
+
+    const isAdmin = Boolean(state.user && state.user.role === 'admin');
+    const f = getFilterParams();
+
+    const renderListHtml = (list) => {
+      if (!list || list.length === 0) {
+        return `
+          <div class="py-10 text-center text-slate-400">
+            <i class="fa-regular fa-clipboard text-2xl mb-2"></i>
+            <p class="text-sm font-semibold text-slate-600">ยังไม่มีบันทึกประวัติการไหลข้อมูล</p>
+            <p class="text-xs mt-1">เมื่อกดไหลลง Google Sheets หรือบันทึกการตั้งค่า/บันทึกหมายเหตุด้านบน ระบบจะเก็บประวัติไว้ที่นี่อัตโนมัติ</p>
+          </div>
+        `;
+      }
+      return list
+        .map((item) => {
+          const kindBadge =
+            item.kind === 'billing'
+              ? '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-teal-100 text-teal-800 border border-teal-200">ใบเบิก</span>'
+              : item.kind === 'zone'
+                ? '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">สำเนาโซน</span>'
+                : '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">ทั่วไป</span>';
+
+          const modeMap = {
+            manual: { label: 'กดไหลเอง', cls: 'bg-indigo-50 text-indigo-700 border-indigo-200' },
+            auto: { label: 'ไหลอัตโนมัติ', cls: 'bg-sky-50 text-sky-700 border-sky-200' },
+            config_saved: { label: 'บันทึกตั้งค่า', cls: 'bg-amber-50 text-amber-800 border-amber-200' },
+            note: { label: 'บันทึกเอง', cls: 'bg-purple-50 text-purple-700 border-purple-200' }
+          };
+          const m = modeMap[item.mode] || modeMap.manual;
+          const modeBadge = `<span class="px-2 py-0.5 rounded-full text-[10px] font-semibold border ${m.cls}">${m.label}</span>`;
+
+          const statusBadge =
+            item.status === 'error'
+              ? '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-700 border border-rose-200"><i class="fa-solid fa-xmark mr-0.5"></i>ไม่สำเร็จ</span>'
+              : item.status === 'info'
+                ? '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200"><i class="fa-solid fa-floppy-disk mr-0.5"></i>บันทึกแล้ว</span>'
+                : '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-700 border border-emerald-200"><i class="fa-solid fa-check mr-0.5"></i>สำเร็จ</span>';
+
+          const metaParts = [];
+          if (item.site_name) metaParts.push(`โครงการ: ${escapeHtml(item.site_name)}`);
+          if (item.date_from || item.date_to) {
+            metaParts.push(`ช่วงวันที่: ${escapeHtml(item.date_from ? toBE(item.date_from) : '...')} - ${escapeHtml(item.date_to ? toBE(item.date_to) : '...')}`);
+          }
+          if (item.mode === 'manual' || item.mode === 'auto') {
+            metaParts.push(`${formatInt(item.log_count)} เที่ยว` + (item.sheet_count ? ` • ${formatInt(item.sheet_count)} แท็บ` : ''));
+          }
+          if (item.triggered_by) metaParts.push(`โดย: ${escapeHtml(item.triggered_by)}`);
+
+          const sheetLink = item.spreadsheet_name
+            ? item.spreadsheet_url
+              ? `<a href="${escapeHtml(item.spreadsheet_url)}" target="_blank" rel="noopener noreferrer" class="text-xs font-bold text-emerald-800 hover:underline inline-flex items-center gap-1">${escapeHtml(item.spreadsheet_name)} <i class="fa-solid fa-arrow-up-right-from-square text-[10px]"></i></a>`
+              : `<span class="text-xs font-bold text-slate-800">${escapeHtml(item.spreadsheet_name)}</span>`
+            : '';
+
+          return `
+            <div class="p-3 flex items-start justify-between gap-2.5 hover:bg-slate-50/80 transition">
+              <div class="min-w-0 flex-1 space-y-1">
+                <div class="flex flex-wrap items-center gap-1.5">
+                  <span class="text-[11px] font-bold text-slate-700"><i class="fa-regular fa-clock mr-1 text-slate-400"></i>${escapeHtml(formatDateTimeBE(item.synced_at))}</span>
+                  ${kindBadge}
+                  ${modeBadge}
+                  ${statusBadge}
+                </div>
+                ${sheetLink ? `<div>${sheetLink}</div>` : ''}
+                ${item.note ? `<p class="text-xs text-slate-700 break-words">${escapeHtml(item.note)}</p>` : ''}
+                ${item.error_message ? `<p class="text-xs text-rose-600 font-medium break-words"><i class="fa-solid fa-triangle-exclamation mr-1"></i>${escapeHtml(item.error_message)}</p>` : ''}
+                ${metaParts.length ? `<p class="text-[11px] text-slate-500">${metaParts.join(' • ')}</p>` : ''}
+              </div>
+              <button
+                type="button"
+                data-del-gsh-id="${escapeHtml(item.id)}"
+                title="ลบบันทึกนี้"
+                class="w-7 h-7 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 flex items-center justify-center transition cursor-pointer shrink-0"
+              >
+                <i class="fa-solid fa-trash-can text-[11px]"></i>
+              </button>
+            </div>
+          `;
+        })
+        .join('');
+    };
+
+    const countStats = (list) => ({
+      total: list.length,
+      ok: list.filter((x) => x.status === 'success').length,
+      err: list.filter((x) => x.status === 'error').length
+    });
+    const st0 = countStats(rows);
+
+    openModal(
+      `
+      <div class="p-5 sm:p-6 space-y-4">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <div class="flex items-center gap-3">
+            <div class="w-10 h-10 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0">
+              <i class="fa-solid fa-clock-rotate-left text-lg"></i>
+            </div>
+            <div>
+              <h3 class="text-base font-bold text-slate-900">บันทึกประวัติการไหลลง Google Sheets</h3>
+              <p class="text-xs text-slate-500">เก็บประวัติอัตโนมัติสูงสุด 100 รายการล่าสุด (ใช้ร่วมกันทุกเครื่อง)</p>
+            </div>
+          </div>
+          <div class="flex items-center gap-1.5 text-[11px] font-bold">
+            <span id="m-gsh-stat-total" class="px-2 py-0.5 rounded-full bg-slate-100 text-slate-700">ทั้งหมด ${formatInt(st0.total)}</span>
+            <span id="m-gsh-stat-ok" class="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">ไหลสำเร็จ ${formatInt(st0.ok)}</span>
+            <span id="m-gsh-stat-err" class="px-2 py-0.5 rounded-full bg-rose-100 text-rose-700">ผิดพลาด ${formatInt(st0.err)}</span>
+          </div>
+        </div>
+
+        <!-- เพิ่มบันทึกเอง -->
+        <form id="m-gsh-form" class="p-3 rounded-xl bg-emerald-50/70 border border-emerald-200 space-y-2">
+          <div class="text-xs font-bold text-emerald-950">
+            <i class="fa-solid fa-pen-to-square text-emerald-600 mr-1"></i>เพิ่มบันทึกประวัติ / หมายเหตุด้วยตนเอง
+          </div>
+          <div class="flex flex-col sm:flex-row gap-2">
+            <select id="m-gsh-kind" class="sm:w-36 min-h-[38px] px-2.5 py-1.5 rounded-lg border border-emerald-300 bg-white text-xs font-semibold text-slate-800">
+              <option value="zone">ชีตสำเนาโซน</option>
+              <option value="billing">ชีตใบเบิก</option>
+              <option value="general">ทั่วไป</option>
+            </select>
+            <input
+              type="text"
+              id="m-gsh-note"
+              placeholder="เช่น ตรวจยอดงวด 1-15 บนชีตเรียบร้อยแล้ว / ส่งลิงก์ให้บัญชีแล้ว..."
+              class="flex-1 min-h-[38px] px-3 py-1.5 rounded-lg border border-emerald-300 bg-white text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-600"
+            />
+            <button
+              type="submit"
+              id="m-gsh-submit"
+              class="min-h-[38px] px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer shrink-0"
+            >
+              <i class="fa-solid fa-floppy-disk"></i><span>บันทึก</span>
+            </button>
+          </div>
+        </form>
+
+        <!-- รายการประวัติ -->
+        <div id="m-gsh-list" class="max-h-[46vh] overflow-y-auto divide-y divide-slate-100 border border-slate-200 rounded-xl bg-white">
+          ${renderListHtml(rows)}
+        </div>
+
+        <div class="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100">
+          <div>
+            ${
+              isAdmin
+                ? `<button type="button" id="m-gsh-clear" class="min-h-[36px] px-3 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-semibold cursor-pointer">
+                    <i class="fa-solid fa-trash-can mr-1"></i>ล้างประวัติทั้งหมด
+                  </button>`
+                : ''
+            }
+          </div>
+          <button type="button" id="m-gsh-close" class="min-h-[38px] px-4 py-1.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-white text-xs font-semibold cursor-pointer">
+            ปิดหน้าต่าง
+          </button>
+        </div>
+      </div>
+      `,
+      (box) => {
+        const listEl = box.querySelector('#m-gsh-list');
+        const refreshModalList = (nextList) => {
+          applyGoogleSheetHistoryMeta(nextList);
+          renderGoogleSheetsUI();
+          const st = countStats(nextList);
+          const elT = box.querySelector('#m-gsh-stat-total');
+          const elOk = box.querySelector('#m-gsh-stat-ok');
+          const elErr = box.querySelector('#m-gsh-stat-err');
+          if (elT) elT.textContent = `ทั้งหมด ${formatInt(st.total)}`;
+          if (elOk) elOk.textContent = `ไหลสำเร็จ ${formatInt(st.ok)}`;
+          if (elErr) elErr.textContent = `ผิดพลาด ${formatInt(st.err)}`;
+          if (listEl) listEl.innerHTML = renderListHtml(nextList);
+        };
+
+        box.querySelector('#m-gsh-close').addEventListener('click', closeModal);
+
+        box.querySelector('#m-gsh-form').addEventListener('submit', async (e) => {
+          e.preventDefault();
+          const noteEl = box.querySelector('#m-gsh-note');
+          const kindEl = box.querySelector('#m-gsh-kind');
+          const submitBtn = box.querySelector('#m-gsh-submit');
+          const note = noteEl.value.trim();
+          if (!note) {
+            showToast('กรุณากรอกรายละเอียดที่ต้องการบันทึก', 'warning');
+            noteEl.focus();
+            return;
+          }
+          submitBtn.disabled = true;
+          try {
+            const res = await apiFetch('/api/gsheet/history', {
+              method: 'POST',
+              body: JSON.stringify({
+                kind: kindEl.value,
+                note,
+                site_name: f.site_name,
+                date_from: f.date_from,
+                date_to: f.date_to,
+                log_count: (state.logs || []).length
+              })
+            });
+            noteEl.value = '';
+            refreshModalList(res.history || []);
+            showToast('เพิ่มบันทึกประวัติเรียบร้อยแล้ว', 'success');
+          } catch (err) {
+            showToast(err.message || 'ไม่สามารถบันทึกประวัติได้', 'error');
+          } finally {
+            submitBtn.disabled = false;
+          }
+        });
+
+        listEl.addEventListener('click', async (e) => {
+          const delBtn = e.target.closest('button[data-del-gsh-id]');
+          if (!delBtn) return;
+          const id = delBtn.dataset.delGshId;
+          delBtn.disabled = true;
+          try {
+            const res = await apiFetch(`/api/gsheet/history/${encodeURIComponent(id)}`, { method: 'DELETE' });
+            refreshModalList(res.history || []);
+            showToast('ลบบันทึกประวัติแล้ว', 'info');
+          } catch (err) {
+            showToast(err.message || 'ลบไม่สำเร็จ', 'error');
+            delBtn.disabled = false;
+          }
+        });
+
+        const clearBtn = box.querySelector('#m-gsh-clear');
+        if (clearBtn) {
+          clearBtn.addEventListener('click', async () => {
+            if (!window.confirm('ต้องการล้างประวัติการไหลข้อมูล Google Sheets ทั้งหมดใช่หรือไม่?')) return;
+            clearBtn.disabled = true;
+            try {
+              await apiFetch('/api/gsheet/history', { method: 'DELETE' });
+              refreshModalList([]);
+              showToast('ล้างประวัติการไหลข้อมูลทั้งหมดแล้ว', 'info');
+            } catch (err) {
+              showToast(err.message || 'ล้างประวัติไม่สำเร็จ', 'error');
+            } finally {
+              clearBtn.disabled = false;
+            }
+          });
+        }
+      }
+    );
+  }
+
+  async function syncToGoogleSheet(kind, { interactive = true, mode = '' } = {}) {
     const isBilling = kind === 'billing';
     const cfg = state.gsheet || {};
     const targetUrl = isBilling ? cfg.billing_url : cfg.zone_url;
@@ -2485,6 +2896,7 @@
         method: 'POST',
         body: JSON.stringify({
           kind,
+          mode: mode || (interactive ? 'manual' : 'auto'),
           site_name: isBilling ? (cfg.billing_site || f.site_name) : f.site_name,
           date_from: f.date_from,
           date_to: f.date_to,
@@ -2493,15 +2905,11 @@
           issue_date: todayIso()
         })
       });
-      if (res.config) {
-        state.gsheet = res.config;
-        renderGoogleSheetsUI();
-      }
-      const note = $('gsheet-last-sync-note');
-      if (note) {
-        const nowStr = new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-        note.innerHTML = `<i class="fa-solid fa-circle-check text-emerald-600 mr-1"></i>ไหลลง Google Sheets ล่าสุดเวลา ${nowStr} น. (${escapeHtml(res.spreadsheetName || (isBilling ? 'ใบเบิก' : 'สำเนาโซน'))})`;
-      }
+      if (res.config) state.gsheet = { ...state.gsheet, ...res.config };
+      if (res.historyEntry) state.gsheetLastHistory = res.historyEntry;
+      if (typeof res.historyCount === 'number') state.gsheetHistoryCount = res.historyCount;
+      renderGoogleSheetsUI();
+
       if (interactive) {
         showToast(
           `ไหลข้อมูลลง Google Sheet "${res.spreadsheetName || (isBilling ? 'ใบเบิก' : 'สำเนาโซน')}" สำเร็จ (${res.sheetCount} แท็บ, ${res.logCount} เที่ยว)`,
@@ -2511,6 +2919,7 @@
       }
       return { status: 'ok', name: res.spreadsheetName || (isBilling ? 'ใบเบิก' : 'สำเนาโซน') };
     } catch (err) {
+      loadGoogleSheetsConfig();
       if (interactive) showToast(`ไหลลง Google Sheets ไม่สำเร็จ: ${err.message}`, 'error', 5500);
       return { status: 'error', error: err };
     } finally {
@@ -2528,11 +2937,11 @@
 
     const syncedNames = [];
     if (cfg.zone_url) {
-      const r = await syncToGoogleSheet('zone', { interactive: false });
+      const r = await syncToGoogleSheet('zone', { interactive: false, mode: 'auto' });
       if (r.status === 'ok') syncedNames.push(r.name);
     }
     if (cfg.billing_url) {
-      const r = await syncToGoogleSheet('billing', { interactive: false });
+      const r = await syncToGoogleSheet('billing', { interactive: false, mode: 'auto' });
       if (r.status === 'ok') syncedNames.push(r.name);
     }
     if (syncedNames.length > 0) {
@@ -3484,10 +3893,13 @@
 
     // Google Sheets Online Sync
     $('btn-gsheet-guide').addEventListener('click', () => openGoogleSheetBindModal('zone'));
+    $('btn-gsheet-history').addEventListener('click', openGoogleSheetsHistoryModal);
+    $('gsheet-last-sync-note').addEventListener('click', openGoogleSheetsHistoryModal);
+    $('btn-gsheet-save-settings').addEventListener('click', saveGoogleSheetsBarSettings);
     $('btn-gsheet-bind-zone').addEventListener('click', () => openGoogleSheetBindModal('zone'));
-    $('btn-gsheet-sync-zone').addEventListener('click', () => syncToGoogleSheet('zone', { interactive: true }));
+    $('btn-gsheet-sync-zone').addEventListener('click', () => syncToGoogleSheet('zone', { interactive: true, mode: 'manual' }));
     $('btn-gsheet-bind-billing').addEventListener('click', () => openGoogleSheetBindModal('billing'));
-    $('btn-gsheet-sync-billing').addEventListener('click', () => syncToGoogleSheet('billing', { interactive: true }));
+    $('btn-gsheet-sync-billing').addEventListener('click', () => syncToGoogleSheet('billing', { interactive: true, mode: 'manual' }));
     $('toggle-gsheet-auto-sync').addEventListener('change', async (e) => {
       const val = Boolean(e.target.checked);
       try {

@@ -1042,13 +1042,24 @@
                 <i class="fa-solid fa-table text-emerald-600 mr-1"></i><strong>ไหลข้อมูลลง Google Sheets ออนไลน์ (ใช้ได้ทั้งคอมและมือถือ)</strong>:
                 ตั้งค่าครั้งเดียว แล้วกดไหลข้อมูลลงชีตหรือปล่อยให้อัปเดตอัตโนมัติได้ทันที
               </p>
-              <button
-                type="button"
-                id="btn-gsheet-guide"
-                class="text-xs font-semibold text-emerald-700 hover:text-emerald-900 underline cursor-pointer shrink-0"
-              >
-                <i class="fa-solid fa-code mr-1"></i>วิธีผูก &amp; คัดลอกโค้ด Apps Script
-              </button>
+              <div class="flex flex-wrap items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  id="btn-gsheet-history"
+                  class="min-h-[32px] px-3 py-1 rounded-lg bg-white hover:bg-emerald-50 text-emerald-800 border border-emerald-300 text-xs font-semibold flex items-center gap-1.5 shadow-xs transition cursor-pointer"
+                >
+                  <i class="fa-solid fa-clock-rotate-left text-emerald-600"></i>
+                  <span>บันทึกประวัติการไหล</span>
+                  <span id="gsheet-history-badge" class="px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold">0</span>
+                </button>
+                <button
+                  type="button"
+                  id="btn-gsheet-guide"
+                  class="text-xs font-semibold text-emerald-700 hover:text-emerald-900 underline cursor-pointer shrink-0"
+                >
+                  <i class="fa-solid fa-code mr-1"></i>วิธีผูก &amp; คัดลอกโค้ด Apps Script
+                </button>
+              </div>
             </div>
 
             <div class="grid grid-cols-1 xl:grid-cols-2 gap-2.5">
@@ -1124,16 +1135,32 @@
             </div>
 
             <div class="flex flex-wrap items-center justify-between gap-2 text-xs">
-              <label class="inline-flex items-center gap-2 text-slate-600 font-medium cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  id="toggle-gsheet-auto-sync"
-                  class="w-4 h-4 rounded border-slate-300 text-emerald-700 focus:ring-emerald-600 cursor-pointer"
-                />
-                <span>ไหลลง Google Sheets อัตโนมัติ ทุกครั้งที่เพิ่ม / แก้ / ลบเที่ยววิ่ง</span>
-              </label>
+              <div class="flex flex-wrap items-center gap-2.5">
+                <label class="inline-flex items-center gap-2 text-slate-600 font-medium cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    id="toggle-gsheet-auto-sync"
+                    class="w-4 h-4 rounded border-slate-300 text-emerald-700 focus:ring-emerald-600 cursor-pointer"
+                  />
+                  <span>ไหลลง Google Sheets อัตโนมัติ ทุกครั้งที่เพิ่ม / แก้ / ลบเที่ยววิ่ง</span>
+                </label>
+                <button
+                  type="button"
+                  id="btn-gsheet-save-settings"
+                  class="min-h-[30px] px-3 py-1 rounded-lg bg-emerald-700 hover:bg-emerald-800 active:bg-emerald-900 text-white text-xs font-semibold flex items-center gap-1.5 shadow-xs transition cursor-pointer"
+                  title="บันทึกการตั้งค่า Google Sheets ตอนนี้ (โดยยังไม่ไหลข้อมูล)"
+                >
+                  <i class="fa-solid fa-floppy-disk"></i>
+                  <span>บันทึกการตั้งค่า</span>
+                </button>
+              </div>
 
-              <span id="gsheet-last-sync-note" class="text-[11px] text-slate-500"></span>
+              <button
+                type="button"
+                id="gsheet-last-sync-note"
+                class="text-[11px] text-slate-500 hover:text-emerald-700 text-left cursor-pointer transition"
+                title="คลิกเพื่อดูบันทึกประวัติการไหลทั้งหมด"
+              ></button>
             </div>
           </div>
 
@@ -1672,6 +1699,6 @@
   <!-- Vendored ExcelJS + Dual Export Engine + Main Frontend Logic -->
   <script src="/vendor/exceljs.min.js?v=6"></script>
   <script src="/excel-export.js?v=7"></script>
-  <script src="/app.js?v=16"></script>
+  <script src="/app.js?v=17"></script>
 </body>
 </html>

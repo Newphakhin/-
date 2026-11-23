@@ -19,6 +19,8 @@ const T = {
 const KV_SITES = 'v3_sites';
 const KV_ROUTES = 'v3_routes';
 const KV_GSHEET = 'v3_gsheet_config';
+const KV_GSHEET_HISTORY = 'v3_gsheet_history';
+const MAX_GSHEET_HISTORY = 100;
 const LOG_VERSION = 3;
 const DEFAULT_MAX_LIMIT = 10000;
 
@@ -898,6 +900,62 @@ async function saveGoogleSheetsConfig(patch = {}) {
   return next;
 }
 
+// ============================================================================
+// Google Sheets Sync History — บันทึกประวัติการไหลข้อมูลลง Google Sheets
+// ============================================================================
+async function listGoogleSheetsHistory() {
+  const rows = await getKV(KV_GSHEET_HISTORY, []);
+  return Array.isArray(rows) ? rows : [];
+}
+
+async function addGoogleSheetsHistory(input = {}) {
+  const allowedKinds = ['zone', 'billing', 'general'];
+  const allowedModes = ['manual', 'auto', 'config_saved', 'note'];
+  const allowedStatuses = ['success', 'error', 'info'];
+
+  const kind = allowedKinds.includes(input.kind) ? input.kind : 'general';
+  const mode = allowedModes.includes(input.mode) ? input.mode : 'manual';
+  const status = allowedStatuses.includes(input.status) ? input.status : 'success';
+
+  const entry = {
+    id: makeId('GH'),
+    synced_at: str(input.synced_at) || new Date().toISOString(),
+    kind,
+    mode,
+    status,
+    spreadsheet_name: str(input.spreadsheet_name),
+    spreadsheet_url: str(input.spreadsheet_url),
+    site_name: str(input.site_name),
+    date_from: str(input.date_from),
+    date_to: str(input.date_to),
+    sheet_count: Number.isFinite(Number(input.sheet_count)) ? Math.max(0, Number(input.sheet_count)) : 0,
+    log_count: Number.isFinite(Number(input.log_count)) ? Math.max(0, Number(input.log_count)) : 0,
+    triggered_by: str(input.triggered_by) || 'ผู้ใช้ระบบ',
+    note: str(input.note).slice(0, 500),
+    error_message: str(input.error_message).slice(0, 500)
+  };
+
+  const cur = await listGoogleSheetsHistory();
+  const next = [entry, ...cur].slice(0, MAX_GSHEET_HISTORY);
+  await setKV(KV_GSHEET_HISTORY, next);
+  return { entry, history: next };
+}
+
+async function deleteGoogleSheetsHistoryItem(id) {
+  const key = str(id);
+  const cur = await listGoogleSheetsHistory();
+  const next = cur.filter((item) => item && item.id !== key);
+  if (next.length === cur.length) throw httpError(404, 'ไม่พบบันทึกประวัติที่ต้องการลบ');
+  await setKV(KV_GSHEET_HISTORY, next);
+  return { history: next };
+}
+
+async function clearGoogleSheetsHistory() {
+  const cur = await listGoogleSheetsHistory();
+  await setKV(KV_GSHEET_HISTORY, []);
+  return { deletedCount: cur.length };
+}
+
 module.exports = {
   verifyPassword,
   findUserByUsername,
@@ -929,5 +987,9 @@ module.exports = {
   clearAllLogs,
   getGoogleSheetsConfig,
   saveGoogleSheetsConfig,
-  validateAppsScriptUrl
+  validateAppsScriptUrl,
+  listGoogleSheetsHistory,
+  addGoogleSheetsHistory,
+  deleteGoogleSheetsHistoryItem,
+  clearGoogleSheetsHistory
 };
