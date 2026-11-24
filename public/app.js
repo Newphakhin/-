@@ -2173,7 +2173,7 @@
 
   async function getAppsScriptCode() {
     if (cachedAppsScriptCode) return cachedAppsScriptCode;
-    const res = await fetch('/google-apps-script.js?v=1');
+    const res = await fetch('/google-apps-script.js?v=2');
     if (!res.ok) throw new Error('ไม่สามารถโหลดไฟล์โค้ด Google Apps Script ได้');
     cachedAppsScriptCode = await res.text();
     return cachedAppsScriptCode;

@@ -472,6 +472,13 @@ app.post(
       search: kind === 'billing' ? '' : String(body.search || '').trim()
     });
 
+    const hostHeader = String(req.headers['x-forwarded-host'] || req.headers.host || '').trim();
+    const protoHeader = String(req.headers['x-forwarded-proto'] || 'https').split(',')[0].trim();
+    const logoUrl =
+      hostHeader && !/^(localhost|127\.0\.0\.1)(:\d+)?$/i.test(hostHeader)
+        ? `${protoHeader}://${hostHeader}/logo.jpg`
+        : 'https://worker-dispatch-xi.vercel.app/logo.jpg';
+
     let result;
     try {
       result = await postToAppsScript(targetUrl, {
@@ -481,6 +488,7 @@ app.post(
         dateFrom,
         dateTo,
         issueDate: String(body.issue_date || '').trim(),
+        logoUrl,
         logs
       });
     } catch (syncErr) {
