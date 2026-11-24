@@ -436,6 +436,7 @@ app.post(
     const result = await postToAppsScript(url, { action: 'ping' });
     res.json({
       ok: true,
+      scriptVersion: result.scriptVersion || '1.0',
       spreadsheetName: result.spreadsheetName || 'Google Sheets',
       spreadsheetUrl: result.spreadsheetUrl || ''
     });
@@ -536,6 +537,7 @@ app.post(
 
     res.json({
       ok: true,
+      scriptVersion: result.scriptVersion || '1.0',
       kind,
       sheetCount,
       sheets: result.sheets || [],

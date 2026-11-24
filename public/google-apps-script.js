@@ -17,6 +17,7 @@
  * ============================================================================
  */
 
+var SCRIPT_VERSION = '2.1-logo';
 var COMPANY_ZONE = 'บริษัท จักรพงษ์ ขนส่ง (2003) จำกัด';
 var COMPANY_BILLING = 'บริษัท จักรพงษ์ ขนส่ง ( 2003 ) จำกัด';
 var DEFAULT_LOGO_URL = 'https://worker-dispatch-xi.vercel.app/logo.jpg';
@@ -29,10 +30,11 @@ var CHARTER_FILLS = ['#92D050', '#CCC0DA', '#B8CCE4', '#E6B8B7', '#FFFF00'];
 function placeCkpLogo(ws, rangeA1, logoUrl) {
   var cell = ws.getRange(rangeA1);
   cell.merge().setHorizontalAlignment('center').setVerticalAlignment('middle');
+  var topLeft = typeof cell.getCell === 'function' ? cell.getCell(1, 1) : cell;
 
   var url = (logoUrl && /^https?:\/\//i.test(String(logoUrl))) ? String(logoUrl) : DEFAULT_LOGO_URL;
 
-  // 1) รูปฝังในเซลล์จากลิงก์โลโก้บริษัท (พิมพ์/ส่งออก PDF ติดภาพชัดเจน ไม่ลอยทับข้อความ)
+  // 1) รูปฝังในเซลล์มุมซ้ายบนของช่องที่ผสาน (ต้องเขียนลง topLeft cell.getCell(1,1) เสมอ)
   if (typeof SpreadsheetApp.newCellImage === 'function') {
     try {
       var img = SpreadsheetApp.newCellImage()
@@ -40,7 +42,7 @@ function placeCkpLogo(ws, rangeA1, logoUrl) {
         .setAltTextTitle('CKP TRANSPORT')
         .setAltTextDescription('โลโก้บริษัท จักรพงษ์ ขนส่ง (2003) จำกัด')
         .build();
-      cell.setValue(img);
+      topLeft.setValue(img);
       return true;
     } catch (_) {}
 
@@ -50,14 +52,14 @@ function placeCkpLogo(ws, rangeA1, logoUrl) {
         .setSourceUrl('data:image/jpeg;base64,' + CKP_LOGO_JPG_BASE64)
         .setAltTextTitle('CKP TRANSPORT')
         .build();
-      cell.setValue(imgData);
+      topLeft.setValue(imgData);
       return true;
     } catch (_) {}
   }
 
-  // 3) สำรอง: สูตร =IMAGE(...) ของ Google Sheets (ปรับขนาดพอดีช่องอัตโนมัติ)
+  // 3) สำรอง: สูตร =IMAGE(...) ของ Google Sheets (mode 1 = ปรับขนาดพอดีช่องโดยคงสัดส่วน)
   try {
-    cell.setFormula('=IMAGE("' + url.replace(/"/g, '') + '", 1)');
+    topLeft.setFormula('=IMAGE("' + url.replace(/"/g, '') + '", 1)');
     return true;
   } catch (_) {}
 
@@ -85,6 +87,7 @@ function doGet() {
   return jsonOut({
     ok: true,
     status: 'ready',
+    scriptVersion: SCRIPT_VERSION,
     spreadsheetName: ss.getName(),
     spreadsheetUrl: ss.getUrl()
   });
@@ -101,6 +104,7 @@ function doPost(e) {
     if (body.action === 'ping') {
       return jsonOut({
         ok: true,
+        scriptVersion: SCRIPT_VERSION,
         spreadsheetName: ss.getName(),
         spreadsheetUrl: ss.getUrl()
       });
@@ -115,6 +119,7 @@ function doPost(e) {
     SpreadsheetApp.flush();
     return jsonOut({
       ok: true,
+      scriptVersion: SCRIPT_VERSION,
       kind: kind,
       sheets: sheets,
       sheetCount: sheets.length,

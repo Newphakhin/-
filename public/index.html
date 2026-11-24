@@ -771,9 +771,13 @@
                 <input
                   type="text"
                   id="form-dep-time"
-                  placeholder="เช่น 06:30"
+                  inputmode="numeric"
+                  maxlength="5"
+                  autocomplete="off"
+                  placeholder="เช่น 0630 → 06:30"
                   class="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 transition"
                 />
+                <p class="mt-1.5 text-[11px] text-slate-500">พิมพ์เลขได้เลย ใส่ : ให้อัตโนมัติ</p>
               </div>
 
               <!-- 9b. เวลาถึง -->
@@ -785,7 +789,10 @@
                 <input
                   type="text"
                   id="form-arr-time"
-                  placeholder="เช่น 07:15"
+                  inputmode="numeric"
+                  maxlength="5"
+                  autocomplete="off"
+                  placeholder="เช่น 0715 → 07:15"
                   class="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 transition"
                 />
                 <div id="form-duration-preview" class="mt-1.5 text-[11px] text-slate-500 flex items-center gap-1">
@@ -1592,7 +1599,10 @@
                       <input
                         type="text"
                         id="input-route-dep-time"
-                        placeholder="เช่น 06:30 (เว้นว่างได้)"
+                        inputmode="numeric"
+                        maxlength="5"
+                        autocomplete="off"
+                        placeholder="เช่น 0630 → 06:30 (เว้นว่างได้)"
                         class="w-full min-h-[42px] px-3 py-2 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 transition"
                       />
                     </div>
@@ -1601,7 +1611,10 @@
                       <input
                         type="text"
                         id="input-route-arr-time"
-                        placeholder="เช่น 07:15 (เว้นว่างได้)"
+                        inputmode="numeric"
+                        maxlength="5"
+                        autocomplete="off"
+                        placeholder="เช่น 0715 → 07:15 (เว้นว่างได้)"
                         class="w-full min-h-[42px] px-3 py-2 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 transition"
                       />
                     </div>
@@ -1699,6 +1712,6 @@
   <!-- Vendored ExcelJS + Dual Export Engine + Main Frontend Logic -->
   <script src="/vendor/exceljs.min.js?v=6"></script>
   <script src="/excel-export.js?v=7"></script>
-  <script src="/app.js?v=18"></script>
+  <script src="/app.js?v=19"></script>
 </body>
 </html>

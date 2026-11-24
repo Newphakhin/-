@@ -117,6 +117,103 @@
     return `${hrs} ชม. ${mins} นาที`;
   }
 
+  function normalizeThaiDigits(str) {
+    return String(str || '').replace(/[๐-๙]/g, (ch) => String('๐๑๒๓๔๕๖๗๘๙'.indexOf(ch)));
+  }
+
+  function formatAutoColonTimeInput(raw, isDeleting) {
+    const cleaned = normalizeThaiDigits(raw)
+      .replace(/[.,;：]/g, ':')
+      .replace(/[^0-9:]/g, '');
+
+    if (!cleaned) return '';
+    if (isDeleting) return cleaned.slice(0, 5);
+
+    if (cleaned.includes(':')) {
+      const idx = cleaned.indexOf(':');
+      const h = cleaned.slice(0, idx).replace(/\D/g, '').slice(0, 2);
+      const m = cleaned.slice(idx + 1).replace(/\D/g, '').slice(0, 2);
+      if (!h && !m) return '';
+      return `${h}:${m}`;
+    }
+
+    const digits = cleaned.slice(0, 4);
+    if (digits.length === 1) return digits;
+    if (digits.length === 2) {
+      // ถ้าสองหลักเกิน 23 เช่น 63 (จาก 6:30) ให้จัดเป็น 06:3 ทันที, ถ้า 00-23 ให้เติม : ต่อท้ายทันที
+      if (Number(digits) > 23) return `0${digits[0]}:${digits[1]}`;
+      return `${digits}:`;
+    }
+    if (digits.length === 3) {
+      if (Number(digits.slice(0, 2)) > 23) return `0${digits[0]}:${digits.slice(1, 3)}`;
+      return `${digits.slice(0, 2)}:${digits[2]}`;
+    }
+    return `${digits.slice(0, 2)}:${digits.slice(2, 4)}`;
+  }
+
+  function finalizeAutoColonTime(raw) {
+    const cleaned = normalizeThaiDigits(raw)
+      .trim()
+      .replace(/[.,;：]/g, ':')
+      .replace(/[^0-9:]/g, '');
+    if (!cleaned) return '';
+
+    let h = '';
+    let m = '';
+    if (cleaned.includes(':')) {
+      const idx = cleaned.indexOf(':');
+      h = cleaned.slice(0, idx).replace(/\D/g, '').slice(0, 2);
+      m = cleaned.slice(idx + 1).replace(/\D/g, '').slice(0, 2);
+      if (!h) return '';
+      if (!m) m = '00';
+      else if (m.length === 1) return `${h.padStart(2, '0')}:${m}`;
+    } else {
+      const digits = cleaned.slice(0, 4);
+      if (digits.length === 1 || digits.length === 2) {
+        if (digits.length === 2 && Number(digits) > 23) {
+          return `0${digits[0]}:${digits[1]}`;
+        }
+        h = digits;
+        m = '00';
+      } else if (digits.length === 3) {
+        h = digits[0];
+        m = digits.slice(1, 3);
+      } else {
+        h = digits.slice(0, 2);
+        m = digits.slice(2, 4);
+      }
+    }
+
+    const hn = Number(h);
+    const mn = Number(m);
+    if (hn <= 23 && mn <= 59) {
+      return `${String(hn).padStart(2, '0')}:${String(mn).padStart(2, '0')}`;
+    }
+    return cleaned.slice(0, 5);
+  }
+
+  function attachAutoColonTimeInput(el, onUpdate) {
+    if (!el || el.dataset.autoColonBound === '1') return;
+    el.dataset.autoColonBound = '1';
+
+    el.addEventListener('input', (e) => {
+      const isDeleting = Boolean(e && e.inputType && e.inputType.startsWith('delete'));
+      const formatted = formatAutoColonTimeInput(el.value, isDeleting);
+      if (el.value !== formatted) {
+        el.value = formatted;
+      }
+      if (typeof onUpdate === 'function') onUpdate();
+    });
+
+    el.addEventListener('blur', () => {
+      const finalized = finalizeAutoColonTime(el.value);
+      if (el.value !== finalized) {
+        el.value = finalized;
+      }
+      if (typeof onUpdate === 'function') onUpdate();
+    });
+  }
+
   function pulseElement(el) {
     if (!el) return;
     el.classList.remove('input-highlight-pulse');
@@ -2169,14 +2266,12 @@
   // ==========================================================================
   // 9B. Google Sheets Online Sync (ไหลลง Google Sheets — ทั้งสำเนาโซน & ใบเบิก)
   // ==========================================================================
-  let cachedAppsScriptCode = '';
+  const LATEST_APPS_SCRIPT_VERSION = '2.1-logo';
 
   async function getAppsScriptCode() {
-    if (cachedAppsScriptCode) return cachedAppsScriptCode;
-    const res = await fetch('/google-apps-script.js?v=2');
+    const res = await fetch('/google-apps-script.js?v=3', { cache: 'no-store' });
     if (!res.ok) throw new Error('ไม่สามารถโหลดไฟล์โค้ด Google Apps Script ได้');
-    cachedAppsScriptCode = await res.text();
-    return cachedAppsScriptCode;
+    return res.text();
   }
 
   async function copyAppsScriptCodeToClipboard() {
@@ -2487,9 +2582,18 @@
               method: 'POST',
               body: JSON.stringify({ url })
             });
-            testedMeta = { name: r.spreadsheetName || 'Google Sheets', sheetUrl: r.spreadsheetUrl || '' };
-            resEl.className = 'mt-1.5 text-xs text-emerald-700 font-bold';
-            resEl.textContent = `เชื่อมต่อสำเร็จ! พบไฟล์: "${testedMeta.name}"`;
+            testedMeta = {
+              name: r.spreadsheetName || 'Google Sheets',
+              sheetUrl: r.spreadsheetUrl || '',
+              scriptVersion: r.scriptVersion || '1.0'
+            };
+            if (isBilling && testedMeta.scriptVersion !== LATEST_APPS_SCRIPT_VERSION) {
+              resEl.className = 'mt-1.5 text-xs text-amber-700 font-bold';
+              resEl.textContent = `เชื่อมต่อพบไฟล์ "${testedMeta.name}" แต่โค้ด Apps Script ยังเป็นเวอร์ชันเก่า (ยังไม่มีโลโก้) — กดคัดลอกโค้ดใหม่ไปวางแล้วเลือก "จัดการการทำให้ใช้งานได้ → แก้ไข → เวอร์ชันใหม่"`;
+            } else {
+              resEl.className = 'mt-1.5 text-xs text-emerald-700 font-bold';
+              resEl.textContent = `เชื่อมต่อสำเร็จ! พบไฟล์: "${testedMeta.name}"${testedMeta.scriptVersion === LATEST_APPS_SCRIPT_VERSION ? ' (โค้ดเวอร์ชันล่าสุด พร้อมโลโก้ CKP)' : ''}`;
+            }
             return testedMeta;
           } catch (err) {
             resEl.className = 'mt-1.5 text-xs text-rose-600 font-semibold';
@@ -2911,11 +3015,19 @@
       renderGoogleSheetsUI();
 
       if (interactive) {
-        showToast(
-          `ไหลข้อมูลลง Google Sheet "${res.spreadsheetName || (isBilling ? 'ใบเบิก' : 'สำเนาโซน')}" สำเร็จ (${res.sheetCount} แท็บ, ${res.logCount} เที่ยว)`,
-          'success',
-          4500
-        );
+        if (isBilling && res.scriptVersion !== LATEST_APPS_SCRIPT_VERSION) {
+          showToast(
+            `ไหลลงชีต "${res.spreadsheetName || 'ใบเบิก'}" สำเร็จ (${res.logCount} เที่ยว) แต่โค้ด Apps Script ในชีตยังเป็นเวอร์ชันเก่าเลยยังไม่มีโลโก้ — กดคัดลอกโค้ดใหม่ไปวางแล้วเลือก "จัดการการทำให้ใช้งานได้ → แก้ไข ✏️ → เวอร์ชันใหม่"`,
+            'warning',
+            8000
+          );
+        } else {
+          showToast(
+            `ไหลข้อมูลลง Google Sheet "${res.spreadsheetName || (isBilling ? 'ใบเบิก' : 'สำเนาโซน')}" สำเร็จ (${res.sheetCount} แท็บ, ${res.logCount} เที่ยว)`,
+            'success',
+            4500
+          );
+        }
       }
       return { status: 'ok', name: res.spreadsheetName || (isBilling ? 'ใบเบิก' : 'สำเนาโซน') };
     } catch (err) {
@@ -3560,6 +3672,8 @@
       </div>
       `,
       (box) => {
+        attachAutoColonTimeInput(box.querySelector('#m-dep'));
+        attachAutoColonTimeInput(box.querySelector('#m-arr'));
         box.querySelector('#m-cancel').addEventListener('click', closeModal);
         box.querySelector('#modal-edit-form').addEventListener('submit', async (e) => {
           e.preventDefault();
@@ -3850,8 +3964,10 @@
     $('form-route-sheet-name').addEventListener('input', updateRouteMetaPreview);
     $('form-billing-title').addEventListener('input', updateRouteMetaPreview);
     $('form-display-mode-zone').addEventListener('change', updateRouteMetaPreview);
-    $('form-dep-time').addEventListener('input', updateDurationPreview);
-    $('form-arr-time').addEventListener('input', updateDurationPreview);
+    attachAutoColonTimeInput($('form-dep-time'), updateDurationPreview);
+    attachAutoColonTimeInput($('form-arr-time'), updateDurationPreview);
+    attachAutoColonTimeInput($('input-route-dep-time'));
+    attachAutoColonTimeInput($('input-route-arr-time'));
 
     $('travel-log-form').addEventListener('submit', handleLogFormSubmit);
     $('btn-clear-form').addEventListener('click', () => resetForm({ keepDateAndSite: false }));
