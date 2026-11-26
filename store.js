@@ -18,6 +18,7 @@ const T = {
 };
 const KV_SITES = 'v3_sites';
 const KV_ROUTES = 'v3_routes';
+const KV_WORKER_BINDINGS = 'v3_worker_bindings';
 const KV_GSHEET = 'v3_gsheet_config';
 const KV_GSHEET_HISTORY = 'v3_gsheet_history';
 const MAX_GSHEET_HISTORY = 100;
@@ -317,18 +318,47 @@ async function getQuotaStatus() {
 }
 
 // ============================================================================
-// Master: Workers  (id, name, default_vehicle, active)
+// Master: Workers  (id, name, default_vehicle, default_site, default_origin, default_destination, active)
 // ============================================================================
 
-const workerFromRow = (r) => ({
-  id: Number(r.id),
-  name: r.name,
-  default_vehicle: r.default_route || '',
-  active: Boolean(r.active)
-});
+async function getWorkerBindingsMap() {
+  const raw = await getKV(KV_WORKER_BINDINGS, {});
+  return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+}
+
+async function saveWorkerBinding(workerId, binding) {
+  const map = await getWorkerBindingsMap();
+  const key = String(workerId);
+  const clean = {
+    default_site: str(binding && binding.default_site),
+    default_origin: str(binding && binding.default_origin),
+    default_destination: str(binding && binding.default_destination)
+  };
+  if (clean.default_site || clean.default_origin || clean.default_destination) {
+    map[key] = clean;
+  } else {
+    delete map[key];
+  }
+  await setKV(KV_WORKER_BINDINGS, map);
+  return clean;
+}
+
+const workerFromRow = (r, bindingsMap = {}) => {
+  const b = (bindingsMap && bindingsMap[String(r.id)]) || {};
+  return {
+    id: Number(r.id),
+    name: r.name,
+    default_vehicle: r.default_route || '',
+    default_site: str(b.default_site),
+    default_origin: str(b.default_origin),
+    default_destination: str(b.default_destination),
+    active: Boolean(r.active)
+  };
+};
 
 async function listWorkers(activeOnly = false) {
-  const rows = (await selectAll(T.workers, 'id')).map(workerFromRow);
+  const [rawRows, bindingsMap] = await Promise.all([selectAll(T.workers, 'id'), getWorkerBindingsMap()]);
+  const rows = rawRows.map((r) => workerFromRow(r, bindingsMap));
   return activeOnly ? rows.filter((r) => r.active) : rows;
 }
 
@@ -340,7 +370,7 @@ async function assertVehicleExistsIfSet(plate) {
   }
 }
 
-async function createWorker({ name, default_vehicle, active }) {
+async function createWorker({ name, default_vehicle, default_site, default_origin, default_destination, active }) {
   const cleanName = str(name);
   if (!cleanName) throw httpError(400, 'กรุณาระบุชื่อคนขับ');
   const plate = str(default_vehicle);
@@ -354,10 +384,15 @@ async function createWorker({ name, default_vehicle, active }) {
     { name: cleanName, default_route: plate, active: active === undefined ? true : Boolean(active) },
     'id'
   );
-  return workerFromRow(row);
+  const binding = await saveWorkerBinding(row.id, {
+    default_site,
+    default_origin,
+    default_destination
+  });
+  return workerFromRow(row, { [String(row.id)]: binding });
 }
 
-async function updateWorker(id, { name, default_vehicle, active }) {
+async function updateWorker(id, { name, default_vehicle, default_site, default_origin, default_destination, active }) {
   const all = await listWorkers();
   const existing = all.find((w) => w.id === Number(id));
   if (!existing) throw httpError(404, 'ไม่พบคนขับที่ต้องการแก้ไข');
@@ -376,17 +411,28 @@ async function updateWorker(id, { name, default_vehicle, active }) {
     active: active !== undefined ? Boolean(active) : existing.active
   });
 
+  const binding = await saveWorkerBinding(existing.id, {
+    default_site: default_site !== undefined ? default_site : existing.default_site,
+    default_origin: default_origin !== undefined ? default_origin : existing.default_origin,
+    default_destination: default_destination !== undefined ? default_destination : existing.default_destination
+  });
+
   let cascadedLogsCount = 0;
   if (newName !== existing.name) {
     cascadedLogsCount = await cascadeLogField('worker_name', existing.name, newName);
   }
-  return { ...workerFromRow(row), cascadedLogsCount };
+  return { ...workerFromRow(row, { [String(existing.id)]: binding }), cascadedLogsCount };
 }
 
 async function deleteWorker(id) {
   const existing = (await listWorkers()).find((w) => w.id === Number(id));
   if (!existing) throw httpError(404, 'ไม่พบคนขับที่ต้องการลบ');
   await deleteRow(T.workers, 'id', existing.id);
+  const map = await getWorkerBindingsMap();
+  if (map[String(existing.id)]) {
+    delete map[String(existing.id)];
+    await setKV(KV_WORKER_BINDINGS, map);
+  }
   return existing;
 }
 
@@ -459,13 +505,14 @@ async function deleteVehicle(id) {
 }
 
 // ============================================================================
-// Master: Sites  (id, site_name, zone_name, active)  — เก็บใน system_settings
+// Master: Sites  (id, site_name, zone_name, default_origin, active)  — เก็บใน system_settings
 // ============================================================================
 
 const siteFromItem = (s) => ({
   id: Number(s.id),
   site_name: String(s.site_name || ''),
   zone_name: String(s.zone_name || ''),
+  default_origin: String(s.default_origin || ''),
   active: s.active === undefined ? true : Boolean(s.active)
 });
 
@@ -474,7 +521,7 @@ async function listSites(activeOnly = false) {
   return activeOnly ? items.filter((s) => s.active) : items;
 }
 
-async function createSite({ site_name, zone_name, active }) {
+async function createSite({ site_name, zone_name, default_origin, active }) {
   const name = str(site_name);
   if (!name) throw httpError(400, 'กรุณาระบุชื่อไซต์งาน / โครงการ');
   const items = await listSites();
@@ -485,6 +532,7 @@ async function createSite({ site_name, zone_name, active }) {
     id: items.reduce((m, s) => Math.max(m, s.id), 0) + 1,
     site_name: name,
     zone_name: str(zone_name),
+    default_origin: str(default_origin),
     active: active === undefined ? true : Boolean(active)
   };
   items.push(created);
@@ -492,7 +540,7 @@ async function createSite({ site_name, zone_name, active }) {
   return created;
 }
 
-async function updateSite(id, { site_name, zone_name, active }) {
+async function updateSite(id, { site_name, zone_name, default_origin, active }) {
   const items = await listSites();
   const idx = items.findIndex((s) => s.id === Number(id));
   if (idx === -1) throw httpError(404, 'ไม่พบไซต์งาน/โครงการที่ต้องการแก้ไข');
@@ -506,12 +554,41 @@ async function updateSite(id, { site_name, zone_name, active }) {
     id: existing.id,
     site_name: newName,
     zone_name: zone_name !== undefined ? str(zone_name) : existing.zone_name,
+    default_origin: default_origin !== undefined ? str(default_origin) : existing.default_origin,
     active: active !== undefined ? Boolean(active) : existing.active
   };
   await setKV(KV_SITES, items);
   let cascadedLogsCount = 0;
   if (newName !== existing.site_name) {
     cascadedLogsCount = await cascadeLogField('site_name', existing.site_name, newName);
+    // อัปเดตโครงการที่ผูกไว้ในคนขับและเส้นทางด้วย
+    const bMap = await getWorkerBindingsMap();
+    let bChanged = false;
+    for (const k of Object.keys(bMap)) {
+      if (bMap[k] && bMap[k].default_site === existing.site_name) {
+        bMap[k].default_site = newName;
+        bChanged = true;
+      }
+      if (bMap[k] && bMap[k].default_destination === existing.site_name) {
+        bMap[k].default_destination = newName;
+        bChanged = true;
+      }
+    }
+    if (bChanged) await setKV(KV_WORKER_BINDINGS, bMap);
+
+    const routes = await listRoutes();
+    let rChanged = false;
+    for (const r of routes) {
+      if (r.default_site === existing.site_name) {
+        r.default_site = newName;
+        rChanged = true;
+      }
+      if (r.destination === existing.site_name) {
+        r.destination = newName;
+        rChanged = true;
+      }
+    }
+    if (rChanged) await setKV(KV_ROUTES, routes);
   }
   return { ...items[idx], cascadedLogsCount };
 }
@@ -533,6 +610,7 @@ const routeFromItem = (r) => ({
   id: Number(r.id),
   origin: String(r.origin || ''),
   destination: String(r.destination || ''),
+  default_site: String(r.default_site || ''),
   route_sheet_name: String(r.route_sheet_name || ''),
   billing_title: String(r.billing_title || ''),
   default_dep_time: String(r.default_dep_time || ''),
@@ -551,6 +629,8 @@ function buildRouteRecord(input, base = {}) {
   const origin = input.origin !== undefined ? str(input.origin) : base.origin || '';
   const destination =
     input.destination !== undefined ? str(input.destination) : base.destination || '';
+  const default_site =
+    input.default_site !== undefined ? str(input.default_site) : base.default_site || '';
   if (!origin) throw httpError(400, 'กรุณาระบุต้นทาง (จุดรับ) ของเส้นทาง');
   const defaultSheet = destination ? `${origin} - ${destination}` : origin;
   const sheet =
@@ -561,6 +641,7 @@ function buildRouteRecord(input, base = {}) {
   return {
     origin,
     destination,
+    default_site,
     route_sheet_name: sheet,
     billing_title: billing,
     default_dep_time:

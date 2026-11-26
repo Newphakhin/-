@@ -613,7 +613,7 @@
                     class="hidden absolute left-0 right-0 top-full mt-1 z-50 bg-white rounded-xl border border-slate-200 shadow-xl max-h-60 overflow-y-auto py-1"
                   ></div>
                 </div>
-                <p class="mt-1.5 text-[11px] text-slate-500">เลือกจากดรอปดาวน์หรือพิมพ์เองได้ — ลิงก์เข้าช่องปลายทางข้อ 6 อัตโนมัติ</p>
+                <p id="form-site-rec-hint" class="mt-1.5 text-[11px] text-slate-500">เลือกจากดรอปดาวน์หรือพิมพ์เองได้ — ระบบขึ้นแนะนำโครงการที่ผูกไว้ให้</p>
               </div>
 
               <!-- 6. เส้นทาง: จาก (ต้นทาง) ⇄ ถึง (ปลายทาง) — พิมพ์ได้ + ดรอปดาวน์ ▾ สลับไปมาได้ -->
@@ -669,7 +669,7 @@
                       type="text"
                       id="form-destination"
                       autocomplete="off"
-                      placeholder="ถึง (ลิงก์จากโครงการ หรือ พิมพ์เอง)..."
+                      placeholder="ถึง (เลือกปลายทาง หรือ พิมพ์เอง)..."
                       required
                       class="w-full min-h-[44px] pl-3.5 pr-10 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 transition"
                     />
@@ -688,6 +688,7 @@
                     ></div>
                   </div>
                 </div>
+                <p id="form-route-rec-hint" class="mt-1.5 text-[11px] text-slate-500">เลือกจากดรอปดาวน์หรือพิมพ์เองได้อิสระ — ระบบขึ้นแนะนำเส้นทางที่ผูกไว้ให้</p>
 
                 <!-- บันทึกขากลับอัตโนมัติ (ไป + กลับ = 2 เที่ยว) -->
                 <div id="auto-return-box" class="mt-2.5 px-3 py-2 rounded-xl bg-emerald-50/70 border border-emerald-200 flex flex-wrap items-center justify-between gap-2">
@@ -1411,6 +1412,11 @@
           </div>
         </section>
 
+        <!-- Shared Datalists for Back-Office Bindings -->
+        <datalist id="dl-bo-sites"></datalist>
+        <datalist id="dl-bo-origins"></datalist>
+        <datalist id="dl-bo-destinations"></datalist>
+
         <!-- PANEL 2: รายชื่อคนขับ (/api/master/workers) -->
         <section id="bo-panel-workers" class="hidden bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
           <div class="px-5 sm:px-6 py-4 bg-slate-50 border-b border-slate-200">
@@ -1419,39 +1425,77 @@
               <span>2. รายชื่อคนขับ</span>
             </h2>
             <p class="text-xs text-slate-500 mt-0.5">
-              เพิ่มชื่อคนขับ และเลือกรถที่ขับประจำ — ตอนบันทึกเที่ยววิ่ง ระบบจะเติมทะเบียนรถให้เอง
+              เพิ่มชื่อคนขับ และผูกทะเบียนรถ โครงการ เส้นทาง (จาก → ถึง) ที่วิ่งประจำ — หน้าบันทึกจะขึ้นแนะนำให้อัตโนมัติ (พิมพ์หรือเปลี่ยนเองได้ตลอด)
             </p>
           </div>
 
           <div class="p-5 sm:p-6 space-y-5">
-            <form id="form-add-worker" class="grid grid-cols-1 sm:grid-cols-12 gap-3">
-              <div class="sm:col-span-5">
-                <label for="input-worker-name" class="block text-xs font-semibold text-slate-600 mb-1">ชื่อคนขับ *</label>
-                <input
-                  type="text"
-                  id="input-worker-name"
-                  placeholder="กรอกชื่อคนขับ..."
-                  required
-                  class="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 transition"
-                />
+            <form id="form-add-worker" class="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-3">
+              <div class="grid grid-cols-1 sm:grid-cols-12 gap-3">
+                <div class="sm:col-span-6">
+                  <label for="input-worker-name" class="block text-xs font-semibold text-slate-700 mb-1">ชื่อคนขับ *</label>
+                  <input
+                    type="text"
+                    id="input-worker-name"
+                    placeholder="กรอกชื่อคนขับ..."
+                    required
+                    class="w-full min-h-[42px] px-3.5 py-2 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 transition"
+                  />
+                </div>
+                <div class="sm:col-span-6">
+                  <label for="input-worker-default-vehicle" class="block text-xs font-semibold text-slate-700 mb-1">ทะเบียนรถประจำตัว (ไม่บังคับ)</label>
+                  <select
+                    id="input-worker-default-vehicle"
+                    class="w-full min-h-[42px] px-3.5 py-2 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 transition"
+                  >
+                    <option value="">-- ยังไม่ผูกทะเบียนรถ --</option>
+                  </select>
+                </div>
               </div>
-              <div class="sm:col-span-4">
-                <label for="input-worker-default-vehicle" class="block text-xs font-semibold text-slate-600 mb-1">ทะเบียนรถประจำตัว (ไม่บังคับ)</label>
-                <select
-                  id="input-worker-default-vehicle"
-                  class="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 transition"
-                >
-                  <option value="">-- ยังไม่ผูกทะเบียนรถ --</option>
-                </select>
-              </div>
-              <div class="sm:col-span-3 flex items-end">
-                <button
-                  type="submit"
-                  class="w-full min-h-[44px] px-5 py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-white text-sm font-semibold flex items-center justify-center gap-2 transition cursor-pointer"
-                >
-                  <i class="fa-solid fa-plus text-amber-400"></i>
-                  <span>เพิ่มคนขับ</span>
-                </button>
+
+              <div class="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
+                <div class="sm:col-span-4">
+                  <label for="input-worker-default-site" class="block text-xs font-semibold text-slate-700 mb-1">โครงการที่ผูก (ไม่บังคับ)</label>
+                  <input
+                    type="text"
+                    id="input-worker-default-site"
+                    list="dl-bo-sites"
+                    autocomplete="off"
+                    placeholder="เลือกหรือพิมพ์ชื่อโครงการ..."
+                    class="w-full min-h-[42px] px-3 py-2 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 transition"
+                  />
+                </div>
+                <div class="sm:col-span-3">
+                  <label for="input-worker-default-origin" class="block text-xs font-semibold text-slate-700 mb-1">ต้นทาง / จาก ที่ผูก (ไม่บังคับ)</label>
+                  <input
+                    type="text"
+                    id="input-worker-default-origin"
+                    list="dl-bo-origins"
+                    autocomplete="off"
+                    placeholder="เลือกหรือพิมพ์จุดรับ..."
+                    class="w-full min-h-[42px] px-3 py-2 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 transition"
+                  />
+                </div>
+                <div class="sm:col-span-3">
+                  <label for="input-worker-default-destination" class="block text-xs font-semibold text-slate-700 mb-1">ปลายทาง / ถึง ที่ผูก (ไม่บังคับ)</label>
+                  <input
+                    type="text"
+                    id="input-worker-default-destination"
+                    list="dl-bo-destinations"
+                    autocomplete="off"
+                    placeholder="เว้นว่าง = ใช้โครงการที่ผูก"
+                    class="w-full min-h-[42px] px-3 py-2 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 transition"
+                  />
+                </div>
+                <div class="sm:col-span-2">
+                  <button
+                    type="submit"
+                    class="w-full min-h-[42px] px-4 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-white text-sm font-semibold flex items-center justify-center gap-1.5 transition cursor-pointer"
+                  >
+                    <i class="fa-solid fa-plus text-amber-400"></i>
+                    <span>เพิ่มคนขับ</span>
+                  </button>
+                </div>
               </div>
             </form>
 
@@ -1472,35 +1516,46 @@
               <span>3. โครงการ</span>
             </h2>
             <p class="text-xs text-slate-500 mt-0.5">
-              เพิ่มโครงการที่จะวางบิล — ชื่อโครงการจะแสดงบนหัวใบเบิก ชื่อโซนใช้ตั้งชื่อไฟล์สำเนา
+              เพิ่มโครงการที่จะวางบิล และผูกจุดรับต้นทางประจำโครงการได้ — หน้าบันทึกจะขึ้นแนะนำให้อัตโนมัติ (แก้ไขหรือพิมพ์เองได้)
             </p>
           </div>
 
           <div class="p-5 sm:p-6 space-y-5">
-            <form id="form-add-site" class="grid grid-cols-1 sm:grid-cols-12 gap-3">
-              <div class="sm:col-span-5">
+            <form id="form-add-site" class="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
+              <div class="sm:col-span-4">
                 <label for="input-site-name" class="block text-xs font-semibold text-slate-600 mb-1">ชื่อโครงการ (แสดงบนใบเบิก) *</label>
                 <input
                   type="text"
                   id="input-site-name"
                   placeholder="กรอกชื่อโครงการสำหรับวางบิล..."
                   required
-                  class="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 transition"
+                  class="w-full min-h-[42px] px-3.5 py-2 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 transition"
                 />
               </div>
-              <div class="sm:col-span-4">
-                <label for="input-site-zone" class="block text-xs font-semibold text-slate-600 mb-1">ชื่อโซน (ใช้ตั้งชื่อไฟล์สำเนา — ไม่บังคับ)</label>
+              <div class="sm:col-span-3">
+                <label for="input-site-zone" class="block text-xs font-semibold text-slate-600 mb-1">ชื่อโซน (ไม่บังคับ)</label>
                 <input
                   type="text"
                   id="input-site-zone"
-                  placeholder="กรอกชื่อโซน (ถ้ามี)..."
-                  class="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 transition"
+                  placeholder="เช่น โซนวิภา (ถ้ามี)..."
+                  class="w-full min-h-[42px] px-3.5 py-2 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 transition"
                 />
               </div>
-              <div class="sm:col-span-3 flex items-end">
+              <div class="sm:col-span-3">
+                <label for="input-site-default-origin" class="block text-xs font-semibold text-slate-600 mb-1">จุดรับต้นทางที่ผูก (ไม่บังคับ)</label>
+                <input
+                  type="text"
+                  id="input-site-default-origin"
+                  list="dl-bo-origins"
+                  autocomplete="off"
+                  placeholder="เลือกหรือพิมพ์จุดรับประจำ..."
+                  class="w-full min-h-[42px] px-3.5 py-2 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 transition"
+                />
+              </div>
+              <div class="sm:col-span-2">
                 <button
                   type="submit"
-                  class="w-full min-h-[44px] px-5 py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-white text-sm font-semibold flex items-center justify-center gap-2 transition cursor-pointer"
+                  class="w-full min-h-[42px] px-4 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-white text-sm font-semibold flex items-center justify-center gap-1.5 transition cursor-pointer"
                 >
                   <i class="fa-solid fa-plus text-amber-400"></i>
                   <span>เพิ่มโครงการ</span>
@@ -1525,15 +1580,15 @@
               <span>4. เส้นทาง</span>
             </h2>
             <p class="text-xs text-slate-500 mt-0.5">
-              เพิ่มรายชื่อจุดรับ / ต้นทางที่วิ่งประจำ — ส่วนปลายทางจะใช้ชื่อโครงการที่เลือกตอนบันทึกเที่ยววิ่ง (หรือพิมพ์ปรับเองได้)
+              เพิ่มจุดรับต้นทาง และสามารถผูกปลายทางหรือโครงการที่วิ่งประจำได้ — หน้าบันทึกจะขึ้นแนะนำให้อัตโนมัติ (พิมพ์หรือเปลี่ยนเองได้อิสระ)
             </p>
           </div>
 
           <div class="p-5 sm:p-6 space-y-5">
             <form id="form-add-route" class="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-3.5">
               <div class="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
-                <div class="sm:col-span-9 lg:col-span-10">
-                  <label for="input-route-origin" class="block text-xs font-semibold text-slate-700 mb-1">ต้นทาง (จุดรับ) *</label>
+                <div class="sm:col-span-4">
+                  <label for="input-route-origin" class="block text-xs font-semibold text-slate-700 mb-1">ต้นทาง / จุดรับ *</label>
                   <input
                     type="text"
                     id="input-route-origin"
@@ -1542,7 +1597,29 @@
                     class="w-full min-h-[42px] px-3 py-2 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 transition"
                   />
                 </div>
-                <div class="sm:col-span-3 lg:col-span-2">
+                <div class="sm:col-span-3">
+                  <label for="input-route-destination" class="block text-xs font-semibold text-slate-700 mb-1">ปลายทางที่ผูก (ไม่บังคับ)</label>
+                  <input
+                    type="text"
+                    id="input-route-destination"
+                    list="dl-bo-destinations"
+                    autocomplete="off"
+                    placeholder="เว้นว่าง หรือเลือก/พิมพ์..."
+                    class="w-full min-h-[42px] px-3 py-2 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 transition"
+                  />
+                </div>
+                <div class="sm:col-span-3">
+                  <label for="input-route-default-site" class="block text-xs font-semibold text-slate-700 mb-1">โครงการที่ผูก (ไม่บังคับ)</label>
+                  <input
+                    type="text"
+                    id="input-route-default-site"
+                    list="dl-bo-sites"
+                    autocomplete="off"
+                    placeholder="เว้นว่าง หรือเลือกโครงการ..."
+                    class="w-full min-h-[42px] px-3 py-2 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 transition"
+                  />
+                </div>
+                <div class="sm:col-span-2">
                   <button
                     type="submit"
                     class="w-full min-h-[42px] px-4 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-white text-sm font-semibold flex items-center justify-center gap-1.5 transition cursor-pointer"
@@ -1552,7 +1629,7 @@
                   </button>
                 </div>
               </div>
-              <p class="text-[11px] text-slate-500">ใส่แค่ชื่อจุดรับ (ต้นทาง) — ส่วนปลายทาง เวลา และราคา กำหนดตามจริงในหน้าบันทึกเที่ยววิ่งได้อิสระ</p>
+              <p class="text-[11px] text-slate-500">บังคับใส่เฉพาะ <strong>ต้นทาง (จุดรับ)</strong> — ส่วนปลายทางและโครงการผูกไว้เพื่อขึ้นแนะนำตอนบันทึกเที่ยววิ่งได้ (ไม่บังคับ)</p>
 
               <details id="route-advanced-details" class="rounded-xl bg-white border border-slate-200">
                 <summary class="cursor-pointer select-none px-3.5 py-2.5 text-xs font-semibold text-indigo-700">
@@ -1712,6 +1789,6 @@
   <!-- Vendored ExcelJS + Dual Export Engine + Main Frontend Logic -->
   <script src="/vendor/exceljs.min.js?v=6"></script>
   <script src="/excel-export.js?v=7"></script>
-  <script src="/app.js?v=19"></script>
+  <script src="/app.js?v=20"></script>
 </body>
 </html>

@@ -679,11 +679,102 @@
   // ==========================================================================
   const comboRegistry = {};
 
+  function getFieldRecommendations() {
+    const workerName = $('form-worker') ? $('form-worker').value.trim() : '';
+    const plate = $('form-vehicle') ? $('form-vehicle').value.trim() : '';
+    const siteName = $('form-site') ? $('form-site').value.trim() : '';
+    const originVal = $('form-origin') ? $('form-origin').value.trim() : '';
+    const destVal = $('form-destination') ? $('form-destination').value.trim() : '';
+
+    const worker = workerName ? state.workers.find((w) => w.name === workerName) : null;
+    const owner = plate ? state.workers.find((w) => w.default_vehicle === plate) : null;
+    const siteObj = siteName ? state.sites.find((s) => s.site_name === siteName) : null;
+    const matchedRoute =
+      (originVal && state.routes.find((r) => r.active && r.origin === originVal)) ||
+      (destVal && state.routes.find((r) => r.active && r.origin === destVal)) ||
+      null;
+    const routeBySite = siteName
+      ? state.routes.find((r) => r.active && (r.default_site === siteName || r.destination === siteName))
+      : null;
+
+    // 1. ทะเบียนรถแนะนำ (จากคนขับ)
+    const recPlate = worker && worker.default_vehicle ? worker.default_vehicle : '';
+    const recPlateReason = recPlate ? `รถประจำของ ${worker.name}` : '';
+
+    // 2. โครงการแนะนำ (จากคนขับ -> จากเส้นทางที่เลือก)
+    let recSite = '';
+    let recSiteReason = '';
+    if (worker && worker.default_site) {
+      recSite = worker.default_site;
+      recSiteReason = `ผูกกับ ${worker.name}`;
+    } else if (matchedRoute && matchedRoute.default_site) {
+      recSite = matchedRoute.default_site;
+      recSiteReason = `ผูกกับเส้นทาง ${matchedRoute.origin}`;
+    } else if (matchedRoute && matchedRoute.destination && state.sites.some((s) => s.site_name === matchedRoute.destination)) {
+      recSite = matchedRoute.destination;
+      recSiteReason = `ผูกกับเส้นทาง ${matchedRoute.origin}`;
+    }
+
+    // 3. ต้นทาง (จาก) และปลายทาง (ถึง) แนะนำ (จากคนขับ -> จากโครงการ -> จากเส้นทาง)
+    let rawOrig = '';
+    let rawOrigReason = '';
+    if (worker && worker.default_origin) {
+      rawOrig = worker.default_origin;
+      rawOrigReason = `ผูกกับ ${worker.name}`;
+    } else if (siteObj && siteObj.default_origin) {
+      rawOrig = siteObj.default_origin;
+      rawOrigReason = `ผูกกับโครงการ ${siteObj.site_name}`;
+    } else if (routeBySite && routeBySite.origin) {
+      rawOrig = routeBySite.origin;
+      rawOrigReason = `ผูกกับโครงการ ${siteName}`;
+    }
+
+    let rawDest = '';
+    let rawDestReason = '';
+    if (worker && worker.default_destination) {
+      rawDest = worker.default_destination;
+      rawDestReason = `ผูกกับ ${worker.name}`;
+    } else if (siteName) {
+      rawDest = siteName;
+      rawDestReason = `โครงการที่เลือก`;
+    } else if (matchedRoute && matchedRoute.destination) {
+      rawDest = matchedRoute.destination;
+      rawDestReason = `ผูกกับจุดรับ ${matchedRoute.origin}`;
+    } else if (worker && worker.default_site) {
+      rawDest = worker.default_site;
+      rawDestReason = `โครงการของ ${worker.name}`;
+    }
+
+    const recOrigin = state.isSwapped ? rawDest : rawOrig;
+    const recOriginReason = state.isSwapped ? rawDestReason : rawOrigReason;
+    const recDest = state.isSwapped ? rawOrig : rawDest;
+    const recDestReason = state.isSwapped ? rawOrigReason : rawDestReason;
+
+    return {
+      worker,
+      owner,
+      workerName,
+      plate,
+      siteName,
+      originVal,
+      destVal,
+      recPlate,
+      recPlateReason,
+      recSite,
+      recSiteReason,
+      recOrigin,
+      recOriginReason,
+      recDest,
+      recDestReason
+    };
+  }
+
   function getComboOptions(id) {
     const activeWorkers = state.workers.filter((w) => w.active);
     const activeVehicles = state.vehicles.filter((v) => v.active);
     const activeSites = state.sites.filter((s) => s.active);
     const activeRoutes = state.routes.filter((r) => r.active);
+    const rec = getFieldRecommendations();
 
     const dedup = (items) => {
       const seen = new Set();
@@ -699,19 +790,22 @@
 
     if (id === 'form-worker') {
       return dedup(
-        activeWorkers.map((w) => ({
-          value: w.name,
-          sub: w.default_vehicle ? `รถประจำ: ${w.default_vehicle}` : ''
-        }))
+        activeWorkers.map((w) => {
+          const parts = [];
+          if (w.default_vehicle) parts.push(`รถ ${w.default_vehicle}`);
+          if (w.default_site) parts.push(w.default_site);
+          else if (w.default_origin) parts.push(w.default_origin);
+          return {
+            value: w.name,
+            sub: parts.join(' • ')
+          };
+        })
       );
     }
     if (id === 'form-vehicle') {
-      const curWorkerName = $('form-worker') ? $('form-worker').value.trim() : '';
-      const curWorker = curWorkerName ? state.workers.find((w) => w.name === curWorkerName) : null;
-      const recPlate = curWorker && curWorker.default_vehicle ? curWorker.default_vehicle : '';
       const list = [];
-      if (recPlate) {
-        list.push({ value: recPlate, sub: `★ แนะนำ (รถประจำของ ${curWorker.name})`, recommended: true });
+      if (rec.recPlate) {
+        list.push({ value: rec.recPlate, sub: `★ แนะนำ (${rec.recPlateReason})`, recommended: true });
       }
       for (const v of activeVehicles) {
         const owner = activeWorkers.find((w) => w.default_vehicle === v.license_plate);
@@ -723,25 +817,49 @@
       return dedup(list);
     }
     if (id === 'form-site') {
-      return dedup(
-        activeSites.map((s) => ({
-          value: s.site_name,
-          sub: s.zone_name ? `โซน: ${s.zone_name}` : ''
-        }))
-      );
+      const list = [];
+      if (rec.recSite) {
+        list.push({ value: rec.recSite, sub: `★ แนะนำ (${rec.recSiteReason})`, recommended: true });
+      }
+      for (const s of activeSites) {
+        const parts = [];
+        if (s.zone_name) parts.push(`โซน: ${s.zone_name}`);
+        if (s.default_origin) parts.push(`จุดรับ: ${s.default_origin}`);
+        list.push({ value: s.site_name, sub: parts.join(' • ') });
+      }
+      return dedup(list);
     }
     if (id === 'form-origin') {
-      return dedup([
-        ...activeRoutes.map((r) => ({ value: r.origin, sub: r.destination ? `→ ${r.destination}` : 'เส้นทาง' })),
-        ...activeSites.map((s) => ({ value: s.site_name, sub: 'โครงการ' }))
-      ]);
+      const list = [];
+      if (rec.recOrigin) {
+        list.push({ value: rec.recOrigin, sub: `★ แนะนำ (${rec.recOriginReason})`, recommended: true });
+      }
+      for (const r of activeRoutes) {
+        list.push({
+          value: r.origin,
+          sub: r.destination ? `→ ${r.destination}` : r.default_site ? `โครงการ: ${r.default_site}` : 'จุดรับ'
+        });
+      }
+      for (const s of activeSites) {
+        list.push({ value: s.site_name, sub: 'โครงการ' });
+      }
+      return dedup(list);
     }
     if (id === 'form-destination') {
-      return dedup([
-        ...activeSites.map((s) => ({ value: s.site_name, sub: s.zone_name ? `โครงการ • โซน ${s.zone_name}` : 'โครงการ' })),
-        ...activeRoutes.filter((r) => r.destination).map((r) => ({ value: r.destination, sub: 'เส้นทาง' })),
-        ...activeRoutes.map((r) => ({ value: r.origin, sub: 'จุดรับ' }))
-      ]);
+      const list = [];
+      if (rec.recDest) {
+        list.push({ value: rec.recDest, sub: `★ แนะนำ (${rec.recDestReason})`, recommended: true });
+      }
+      for (const s of activeSites) {
+        list.push({ value: s.site_name, sub: s.zone_name ? `โครงการ • โซน ${s.zone_name}` : 'โครงการ' });
+      }
+      for (const r of activeRoutes) {
+        if (r.destination) list.push({ value: r.destination, sub: `จาก ${r.origin}` });
+      }
+      for (const r of activeRoutes) {
+        list.push({ value: r.origin, sub: 'จุดรับ' });
+      }
+      return dedup(list);
     }
     return [];
   }
@@ -916,6 +1034,25 @@
       })),
       '-- ยังไม่ผูกทะเบียนรถ --'
     );
+
+    // Back-office shared datalists (โครงการ, ต้นทาง, ปลายทาง)
+    const fillDatalist = (dlId, values) => {
+      const dl = $(dlId);
+      if (!dl) return;
+      const uniq = [...new Set(values.map((x) => String(x || '').trim()).filter(Boolean))];
+      dl.innerHTML = uniq.map((v) => `<option value="${escapeHtml(v)}"></option>`).join('');
+    };
+    fillDatalist('dl-bo-sites', state.sites.map((s) => s.site_name));
+    fillDatalist('dl-bo-origins', [
+      ...state.routes.map((r) => r.origin),
+      ...state.sites.map((s) => s.default_origin),
+      ...state.sites.map((s) => s.site_name)
+    ]);
+    fillDatalist('dl-bo-destinations', [
+      ...state.sites.map((s) => s.site_name),
+      ...state.routes.map((r) => r.destination),
+      ...state.routes.map((r) => r.origin)
+    ]);
   }
 
   // ==========================================================================
@@ -1015,30 +1152,94 @@
     btn.textContent = state.routeMetaExpanded ? 'ซ่อนการตั้งค่าเพิ่มเติม' : 'ตั้งค่าเพิ่มเติม (ไม่บังคับ)';
   }
 
+  function refreshAllComboMenus() {
+    for (const api of Object.values(comboRegistry)) api.refresh();
+  }
+
   function updateWorkerVehicleHints() {
-    const workerName = $('form-worker').value.trim();
-    const plate = $('form-vehicle').value.trim();
-    const worker = state.workers.find((w) => w.name === workerName);
-    const owner = plate ? state.workers.find((w) => w.default_vehicle === plate) : null;
+    const rec = getFieldRecommendations();
+    const {
+      worker,
+      owner,
+      workerName,
+      plate,
+      siteName,
+      originVal,
+      destVal,
+      recPlate,
+      recSite,
+      recOrigin,
+      recDest
+    } = rec;
+
     const wHint = $('form-worker-vehicle-hint');
     const vHint = $('form-vehicle-worker-hint');
+    const sHint = $('form-site-rec-hint');
+    const rHint = $('form-route-rec-hint');
+
     const vehEl = $('form-vehicle');
-    const recPlate = worker && worker.default_vehicle ? worker.default_vehicle : '';
+    const siteEl = $('form-site');
+    const origEl = $('form-origin');
+    const destEl = $('form-destination');
 
     if (vehEl) {
       vehEl.placeholder = recPlate
         ? `แนะนำ: ${recPlate} (เลือกหรือพิมพ์คันอื่นได้)`
         : 'เลือก หรือ พิมพ์ทะเบียนรถ...';
     }
+    if (siteEl) {
+      siteEl.placeholder = recSite
+        ? `แนะนำ: ${recSite} (เลือกหรือพิมพ์โครงการอื่นได้)`
+        : 'เลือก หรือ พิมพ์ชื่อโครงการ...';
+    }
+    if (origEl) {
+      origEl.placeholder = recOrigin
+        ? `แนะนำต้นทาง: ${recOrigin} (หรือพิมพ์เอง)...`
+        : 'จาก (เลือกจุดรับ หรือ พิมพ์เอง)...';
+    }
+    if (destEl) {
+      destEl.placeholder = recDest
+        ? `แนะนำปลายทาง: ${recDest} (หรือพิมพ์เอง)...`
+        : 'ถึง (เลือกปลายทาง หรือ พิมพ์เอง)...';
+    }
 
+    // 3. ชื่อคนขับ — สรุปค่าที่ผูกไว้ทั้งหมด + ปุ่มลัด "ใช้ที่ผูกทั้งหมด"
     if (wHint) {
-      if (recPlate) {
-        wHint.innerHTML = `<span class="text-slate-600">รถที่ผูกไว้: <strong class="text-amber-700">${escapeHtml(recPlate)}</strong> (ไม่จำเป็นต้องใช้คันนี้ก็ได้)</span>`;
+      if (worker && (worker.default_vehicle || worker.default_site || worker.default_origin || worker.default_destination)) {
+        const boundParts = [];
+        if (worker.default_vehicle) boundParts.push(`รถ ${escapeHtml(worker.default_vehicle)}`);
+        if (worker.default_site) boundParts.push(`โครงการ ${escapeHtml(worker.default_site)}`);
+        if (worker.default_origin || worker.default_destination) {
+          const rTxt =
+            worker.default_origin && (worker.default_destination || worker.default_site)
+              ? `${worker.default_origin} → ${worker.default_destination || worker.default_site}`
+              : worker.default_origin || worker.default_destination;
+          boundParts.push(`เส้นทาง ${escapeHtml(rTxt)}`);
+        }
+        const needsApplyAll =
+          (recPlate && plate !== recPlate) ||
+          (recSite && siteName !== recSite) ||
+          (recOrigin && originVal !== recOrigin) ||
+          (recDest && destVal !== recDest);
+        wHint.innerHTML = `
+          <span class="inline-flex flex-wrap items-center gap-1.5">
+            <span class="text-slate-600">ผูกไว้: <strong class="text-amber-800">${boundParts.join(' • ')}</strong></span>
+            ${
+              needsApplyAll
+                ? `<button type="button" data-apply-all-worker="1"
+                    class="px-2 py-0.5 rounded-md bg-amber-100 hover:bg-amber-200 text-amber-950 border border-amber-300 font-bold text-[11px] cursor-pointer transition">
+                    <i class="fa-solid fa-wand-magic-sparkles text-[10px] mr-0.5"></i>ใช้ที่ผูกทั้งหมด
+                  </button>`
+                : ''
+            }
+          </span>
+        `;
       } else {
-        wHint.textContent = 'เลือกจากดรอปดาวน์หรือพิมพ์เองได้ — ระบบแนะนำรถที่ผูกไว้ให้';
+        wHint.textContent = 'เลือกจากดรอปดาวน์หรือพิมพ์เองได้ — ระบบแนะนำรถ โครงการ และเส้นทางที่ผูกไว้ให้';
       }
     }
 
+    // 4. ทะเบียนรถ — ป้ายแนะนำคลิกได้แบบไม่บังคับ
     if (vHint) {
       if (recPlate && plate !== recPlate) {
         vHint.innerHTML = `
@@ -1059,12 +1260,79 @@
         vHint.textContent = 'เลือกจากดรอปดาวน์หรือพิมพ์เปลี่ยนคันได้อิสระ';
       }
     }
+
+    // 5. โครงการ — ป้ายแนะนำคลิกได้แบบเดียวกับทะเบียนรถ
+    if (sHint) {
+      if (recSite && siteName !== recSite) {
+        sHint.innerHTML = `
+          <span class="inline-flex flex-wrap items-center gap-1.5">
+            <span class="text-amber-700 font-semibold"><i class="fa-solid fa-star text-[10px] mr-0.5"></i>แนะนำ:</span>
+            <button type="button" data-use-rec-site="${escapeHtml(recSite)}"
+              class="px-2 py-0.5 rounded-md bg-amber-100 hover:bg-amber-200 text-amber-950 border border-amber-300 font-bold text-[11px] cursor-pointer transition">
+              ${escapeHtml(recSite)} (กดใช้)
+            </button>
+            <span class="text-slate-500">${siteName ? 'หรือใช้โครงการที่พิมพ์นี้ต่อได้เลย' : 'หรือเลือก/พิมพ์โครงการอื่นได้'}</span>
+          </span>
+        `;
+      } else if (recSite && siteName === recSite) {
+        sHint.innerHTML = `<span class="text-emerald-700 font-semibold"><i class="fa-solid fa-circle-check mr-1"></i>ตรงกับโครงการที่ผูกไว้ (${escapeHtml(recSite)}) — พิมพ์หรือเปลี่ยนได้อิสระ</span>`;
+      } else {
+        sHint.textContent = 'เลือกจากดรอปดาวน์หรือพิมพ์เองได้ — ระบบขึ้นแนะนำโครงการที่ผูกไว้ให้';
+      }
+    }
+
+    // 6. เส้นทาง (จาก ↔ ถึง) — ป้ายแนะนำคลิกได้แบบเดียวกับทะเบียนรถ
+    if (rHint) {
+      const needOrig = Boolean(recOrigin && originVal !== recOrigin);
+      const needDest = Boolean(recDest && destVal !== recDest);
+      const hasAnyRec = Boolean(recOrigin || recDest);
+
+      if (needOrig || needDest) {
+        const btns = [];
+        if (recOrigin && recDest && (needOrig || needDest)) {
+          btns.push(`
+            <button type="button" data-use-rec-route="1"
+              data-rec-orig="${escapeHtml(recOrigin)}" data-rec-dest="${escapeHtml(recDest)}"
+              class="px-2 py-0.5 rounded-md bg-amber-100 hover:bg-amber-200 text-amber-950 border border-amber-300 font-bold text-[11px] cursor-pointer transition">
+              ${escapeHtml(recOrigin)} → ${escapeHtml(recDest)} (กดใช้ทั้งคู่)
+            </button>
+          `);
+        }
+        if (needOrig) {
+          btns.push(`
+            <button type="button" data-use-rec-origin="${escapeHtml(recOrigin)}"
+              class="px-2 py-0.5 rounded-md bg-white hover:bg-amber-50 text-amber-900 border border-amber-300 font-semibold text-[11px] cursor-pointer transition">
+              จาก: ${escapeHtml(recOrigin)}
+            </button>
+          `);
+        }
+        if (needDest) {
+          btns.push(`
+            <button type="button" data-use-rec-dest="${escapeHtml(recDest)}"
+              class="px-2 py-0.5 rounded-md bg-white hover:bg-amber-50 text-amber-900 border border-amber-300 font-semibold text-[11px] cursor-pointer transition">
+              ถึง: ${escapeHtml(recDest)}
+            </button>
+          `);
+        }
+        rHint.innerHTML = `
+          <span class="inline-flex flex-wrap items-center gap-1.5">
+            <span class="text-amber-700 font-semibold"><i class="fa-solid fa-star text-[10px] mr-0.5"></i>แนะนำเส้นทาง:</span>
+            ${btns.join('')}
+            <span class="text-slate-500">หรือพิมพ์/เลือกเองได้อิสระ</span>
+          </span>
+        `;
+      } else if (hasAnyRec) {
+        rHint.innerHTML = `<span class="text-emerald-700 font-semibold"><i class="fa-solid fa-circle-check mr-1"></i>ตรงกับเส้นทางที่แนะนำ — พิมพ์หรือเปลี่ยนต้นทาง-ปลายทางได้อิสระ</span>`;
+      } else {
+        rHint.textContent = 'เลือกจากดรอปดาวน์หรือพิมพ์เองได้อิสระ — ระบบขึ้นแนะนำเส้นทางที่ผูกไว้ให้';
+      }
+    }
   }
 
   function onWorkerSelectChange() {
     state.lastAutoWorker = '';
     updateWorkerVehicleHints();
-    if (comboRegistry['form-vehicle']) comboRegistry['form-vehicle'].refresh();
+    refreshAllComboMenus();
   }
 
   function onVehicleSelectChange() {
@@ -1073,14 +1341,8 @@
   }
 
   function onSiteInputChange() {
-    const siteVal = $('form-site').value.trim();
-    const targetEl = state.isSwapped ? $('form-origin') : $('form-destination');
-    const curTarget = targetEl.value.trim();
-    if (!curTarget || curTarget === (state.lastLinkedSite || '')) {
-      targetEl.value = siteVal;
-      if (siteVal) pulseElement(targetEl);
-    }
-    state.lastLinkedSite = siteVal;
+    updateWorkerVehicleHints();
+    refreshAllComboMenus();
     updateRouteMetaPreview();
   }
 
@@ -1088,39 +1350,36 @@
     const origVal = $('form-origin').value.trim();
     const destVal = $('form-destination').value.trim();
     const route =
+      state.routes.find((r) => r.active && r.origin === origVal && (!r.destination || r.destination === destVal)) ||
       state.routes.find((r) => r.active && r.origin === origVal) ||
       state.routes.find((r) => r.active && r.origin === destVal);
-    if (!route) {
-      updateRouteMetaPreview();
-      return;
+
+    if (route) {
+      // เติมเฉพาะเวลา/ราคา/ชื่อแผ่นงานที่ยังว่างอยู่ (ไม่บังคับเขียนทับต้นทาง-ปลายทางหรือโครงการ — ให้ขึ้นแนะนำแทน)
+      if (route.default_dep_time && !$('form-dep-time').value.trim()) {
+        $('form-dep-time').value = route.default_dep_time;
+      }
+      if (route.default_arr_time && !$('form-arr-time').value.trim()) {
+        $('form-arr-time').value = route.default_arr_time;
+      }
+      if (route.unit_price && !$('form-unit-price').value.trim()) {
+        $('form-unit-price').value = String(route.unit_price);
+        pulseElement($('form-unit-price'));
+      }
+      if (route.display_mode_zone) {
+        $('form-display-mode-zone').value = route.display_mode_zone;
+      }
+      if (route.route_sheet_name && route.route_sheet_name !== route.origin) {
+        $('form-route-sheet-name').value = route.route_sheet_name;
+      }
+      if (route.billing_title && route.billing_title !== route.origin) {
+        $('form-billing-title').value = route.billing_title;
+      }
+      updateDurationPreview();
     }
 
-    // ถ้ามีตั้งค่าปลายทาง/เวลา/ราคาไว้ในเส้นทาง เติมให้เฉพาะช่องที่ยังว่างอยู่ (ไม่ทับสิ่งที่พิมพ์เอง)
-    if (route.destination && !$('form-destination').value.trim() && !state.isSwapped) {
-      $('form-destination').value = route.destination;
-      pulseElement($('form-destination'));
-    }
-    if (route.default_dep_time && !$('form-dep-time').value.trim()) {
-      $('form-dep-time').value = route.default_dep_time;
-    }
-    if (route.default_arr_time && !$('form-arr-time').value.trim()) {
-      $('form-arr-time').value = route.default_arr_time;
-    }
-    if (route.unit_price && !$('form-unit-price').value.trim()) {
-      $('form-unit-price').value = String(route.unit_price);
-      pulseElement($('form-unit-price'));
-    }
-    if (route.display_mode_zone) {
-      $('form-display-mode-zone').value = route.display_mode_zone;
-    }
-    if (route.route_sheet_name && route.route_sheet_name !== route.origin) {
-      $('form-route-sheet-name').value = route.route_sheet_name;
-    }
-    if (route.billing_title && route.billing_title !== route.origin) {
-      $('form-billing-title').value = route.billing_title;
-    }
-
-    updateDurationPreview();
+    updateWorkerVehicleHints();
+    refreshAllComboMenus();
     updateRouteMetaPreview();
   }
 
@@ -1164,6 +1423,8 @@
 
     pulseElement(origEl);
     pulseElement(destEl);
+    updateWorkerVehicleHints();
+    refreshAllComboMenus();
     updateAutoReturnUI();
     updateRouteMetaPreview();
   }
@@ -1182,7 +1443,6 @@
     $('form-date').value = keepDateAndSite ? prevDate : todayIso();
     if (keepDateAndSite && prevSite) {
       $('form-site').value = prevSite;
-      $('form-destination').value = prevSite;
       state.lastLinkedSite = prevSite;
     } else {
       state.lastLinkedSite = '';
@@ -1192,6 +1452,7 @@
     $('form-display-mode-zone').value = 'worker_name';
     if ($('form-auto-return')) $('form-auto-return').checked = true;
     updateWorkerVehicleHints();
+    refreshAllComboMenus();
 
     $('swap-status-badge').classList.add('hidden');
     $('swap-status-badge').classList.remove('inline-flex');
@@ -3257,21 +3518,31 @@
   function renderWorkersList() {
     const el = $('list-workers');
     if (state.workers.length === 0) {
-      el.innerHTML = '<div class="py-10 text-center text-xs text-slate-400">ยังไม่มีคนขับ — พิมพ์ชื่อในช่องด้านบน เลือกรถประจำตัว แล้วกด "เพิ่มคนขับ"</div>';
+      el.innerHTML = '<div class="py-10 text-center text-xs text-slate-400">ยังไม่มีคนขับ — พิมพ์ชื่อในช่องด้านบน เลือกผูกทะเบียนรถ/โครงการ/เส้นทาง แล้วกด "เพิ่มคนขับ"</div>';
       return;
     }
     el.innerHTML = state.workers
-      .map(
-        (w, i) => `
+      .map((w, i) => {
+        const routeBadge =
+          w.default_origin || w.default_destination
+            ? `<span class="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 text-[11px] font-semibold"><i class="fa-solid fa-route text-[10px] mr-1"></i>${escapeHtml(w.default_origin || '-')} → ${escapeHtml(w.default_destination || w.default_site || '-')}</span>`
+            : '';
+        return `
         <div class="px-4 py-3 flex flex-wrap items-center justify-between gap-3 ${w.active ? 'bg-white' : 'bg-slate-50 opacity-65'}">
-          <div class="flex flex-wrap items-center gap-2.5">
+          <div class="flex flex-wrap items-center gap-2">
             <span class="text-xs font-bold text-slate-400 w-6">${i + 1}.</span>
             <span class="font-semibold text-sm text-slate-900">${escapeHtml(w.name)}</span>
             ${
               w.default_vehicle
                 ? `<span class="license-plate-badge !text-[11px] !py-0.5 !px-2"><i class="fa-solid fa-truck-front text-amber-600 text-[10px]"></i>${escapeHtml(w.default_vehicle)}</span>`
-                : '<span class="text-[11px] text-slate-400">ยังไม่ผูกทะเบียนรถประจำตัว</span>'
+                : '<span class="text-[11px] text-slate-400">ยังไม่ผูกรถ</span>'
             }
+            ${
+              w.default_site
+                ? `<span class="px-2 py-0.5 rounded-full bg-amber-50 text-amber-900 border border-amber-200 text-[11px] font-semibold"><i class="fa-solid fa-building text-[10px] mr-1"></i>${escapeHtml(w.default_site)}</span>`
+                : ''
+            }
+            ${routeBadge}
             ${w.active ? '' : '<span class="text-[10px] px-2 py-0.5 rounded-full bg-slate-200 text-slate-600 font-semibold">ปิดใช้งาน</span>'}
           </div>
           <div class="flex items-center gap-1.5">
@@ -3289,8 +3560,8 @@
             </button>
           </div>
         </div>
-      `
-      )
+      `;
+      })
       .join('');
   }
 
@@ -3304,13 +3575,18 @@
       .map(
         (s, i) => `
         <div class="px-4 py-3 flex flex-wrap items-center justify-between gap-3 ${s.active ? 'bg-white' : 'bg-slate-50 opacity-65'}">
-          <div class="flex flex-wrap items-center gap-2.5">
+          <div class="flex flex-wrap items-center gap-2">
             <span class="text-xs font-bold text-slate-400 w-6">${i + 1}.</span>
             <span class="font-semibold text-sm text-slate-900">${escapeHtml(s.site_name)}</span>
             ${
               s.zone_name
                 ? `<span class="px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-200 text-[11px] font-semibold">โซน: ${escapeHtml(s.zone_name)}</span>`
                 : '<span class="text-[11px] text-slate-400">ไม่ระบุชื่อโซน</span>'
+            }
+            ${
+              s.default_origin
+                ? `<span class="px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 text-[11px] font-semibold"><i class="fa-solid fa-location-dot text-[10px] mr-1"></i>จุดรับประจำ: ${escapeHtml(s.default_origin)}</span>`
+                : ''
             }
             ${s.active ? '' : '<span class="text-[10px] px-2 py-0.5 rounded-full bg-slate-200 text-slate-600 font-semibold">ปิดใช้งาน</span>'}
           </div>
@@ -3350,6 +3626,11 @@
               <span class="font-bold text-sm text-slate-900">
                 ${r.destination ? `${escapeHtml(r.origin)} <i class="fa-solid fa-arrow-right text-amber-500 text-xs mx-1"></i> ${escapeHtml(r.destination)}` : escapeHtml(r.origin)}
               </span>
+              ${
+                r.default_site
+                  ? `<span class="px-2 py-0.5 rounded-full bg-amber-50 text-amber-900 border border-amber-200 text-[11px] font-semibold"><i class="fa-solid fa-building text-[10px] mr-1"></i>โครงการ: ${escapeHtml(r.default_site)}</span>`
+                  : ''
+              }
               ${
                 r.unit_price > 0
                   ? `<span class="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs font-bold">${formatMoney(r.unit_price)} บาท/เที่ยว</span>`
@@ -3413,14 +3694,20 @@
     e.preventDefault();
     const name = $('input-worker-name').value.trim();
     const default_vehicle = $('input-worker-default-vehicle').value.trim();
+    const default_site = $('input-worker-default-site') ? $('input-worker-default-site').value.trim() : '';
+    const default_origin = $('input-worker-default-origin') ? $('input-worker-default-origin').value.trim() : '';
+    const default_destination = $('input-worker-default-destination') ? $('input-worker-default-destination').value.trim() : '';
     if (!name) return;
     try {
       await apiFetch('/api/master/workers', {
         method: 'POST',
-        body: JSON.stringify({ name, default_vehicle })
+        body: JSON.stringify({ name, default_vehicle, default_site, default_origin, default_destination })
       });
       $('input-worker-name').value = '';
       $('input-worker-default-vehicle').value = '';
+      if ($('input-worker-default-site')) $('input-worker-default-site').value = '';
+      if ($('input-worker-default-origin')) $('input-worker-default-origin').value = '';
+      if ($('input-worker-default-destination')) $('input-worker-default-destination').value = '';
       showToast(`เพิ่มรายชื่อคนขับ "${name}" เรียบร้อยแล้ว`, 'success');
       await loadMasterData();
     } catch (err) {
@@ -3432,14 +3719,16 @@
     e.preventDefault();
     const site_name = $('input-site-name').value.trim();
     const zone_name = $('input-site-zone').value.trim();
+    const default_origin = $('input-site-default-origin') ? $('input-site-default-origin').value.trim() : '';
     if (!site_name) return;
     try {
       await apiFetch('/api/master/sites', {
         method: 'POST',
-        body: JSON.stringify({ site_name, zone_name })
+        body: JSON.stringify({ site_name, zone_name, default_origin })
       });
       $('input-site-name').value = '';
       $('input-site-zone').value = '';
+      if ($('input-site-default-origin')) $('input-site-default-origin').value = '';
       showToast(`เพิ่มไซต์งาน/โครงการ "${site_name}" เรียบร้อยแล้ว`, 'success');
       await loadMasterData();
     } catch (err) {
@@ -3456,7 +3745,8 @@
     }
     const payload = {
       origin,
-      destination: '',
+      destination: $('input-route-destination') ? $('input-route-destination').value.trim() : '',
+      default_site: $('input-route-default-site') ? $('input-route-default-site').value.trim() : '',
       route_sheet_name: $('input-route-sheet-name').value.trim(),
       billing_title: $('input-route-billing-title').value.trim(),
       default_dep_time: $('input-route-dep-time').value.trim(),
@@ -3523,19 +3813,36 @@
     openModal(
       `
       <div class="p-5 sm:p-6 space-y-4">
-        <h3 class="text-base font-bold text-slate-900">แก้ไขข้อมูลคนขับ</h3>
+        <h3 class="text-base font-bold text-slate-900">แก้ไขข้อมูลคนขับ &amp; ค่าที่ผูกประจำ</h3>
         <form id="modal-edit-form" class="space-y-3.5">
-          <div>
-            <label class="block text-xs font-semibold text-slate-700 mb-1">ชื่อคนขับ *</label>
-            <input type="text" id="m-name" value="${escapeHtml(w.name)}" required
-              class="w-full min-h-[42px] px-3 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600" />
-          </div>
-          <div>
-            <label class="block text-xs font-semibold text-slate-700 mb-1">ทะเบียนรถประจำตัว</label>
-            <select id="m-veh" class="w-full min-h-[42px] px-3 py-2 rounded-xl border border-slate-300 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-600">
-              <option value="">-- ยังไม่ผูกทะเบียนรถ --</option>
-              ${vehOpts}
-            </select>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">ชื่อคนขับ *</label>
+              <input type="text" id="m-name" value="${escapeHtml(w.name)}" required
+                class="w-full min-h-[42px] px-3 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600" />
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">ทะเบียนรถประจำตัว</label>
+              <select id="m-veh" class="w-full min-h-[42px] px-3 py-2 rounded-xl border border-slate-300 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-600">
+                <option value="">-- ยังไม่ผูกทะเบียนรถ --</option>
+                ${vehOpts}
+              </select>
+            </div>
+            <div class="sm:col-span-2">
+              <label class="block text-xs font-semibold text-slate-700 mb-1">โครงการที่ผูกประจำ (ไม่บังคับ)</label>
+              <input type="text" id="m-worker-site" list="dl-bo-sites" autocomplete="off" value="${escapeHtml(w.default_site || '')}" placeholder="เลือกหรือพิมพ์ชื่อโครงการ..."
+                class="w-full min-h-[42px] px-3 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600" />
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">ต้นทาง / จาก ที่ผูก (ไม่บังคับ)</label>
+              <input type="text" id="m-worker-origin" list="dl-bo-origins" autocomplete="off" value="${escapeHtml(w.default_origin || '')}" placeholder="เลือกหรือพิมพ์จุดรับ..."
+                class="w-full min-h-[42px] px-3 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600" />
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">ปลายทาง / ถึง ที่ผูก (ไม่บังคับ)</label>
+              <input type="text" id="m-worker-dest" list="dl-bo-destinations" autocomplete="off" value="${escapeHtml(w.default_destination || '')}" placeholder="เว้นว่าง = ใช้โครงการที่ผูก"
+                class="w-full min-h-[42px] px-3 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600" />
+            </div>
           </div>
           <div class="flex justify-end gap-2 pt-2 border-t border-slate-100">
             <button type="button" id="m-cancel" class="min-h-[40px] px-4 py-2 rounded-xl border border-slate-300 text-xs sm:text-sm cursor-pointer">ยกเลิก</button>
@@ -3553,7 +3860,10 @@
               method: 'PUT',
               body: JSON.stringify({
                 name: box.querySelector('#m-name').value.trim(),
-                default_vehicle: box.querySelector('#m-veh').value.trim()
+                default_vehicle: box.querySelector('#m-veh').value.trim(),
+                default_site: box.querySelector('#m-worker-site').value.trim(),
+                default_origin: box.querySelector('#m-worker-origin').value.trim(),
+                default_destination: box.querySelector('#m-worker-dest').value.trim()
               })
             });
             closeModal();
@@ -3583,6 +3893,11 @@
             <input type="text" id="m-zone-name" value="${escapeHtml(s.zone_name)}"
               class="w-full min-h-[42px] px-3 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600" />
           </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1">จุดรับต้นทางที่ผูกกับโครงการนี้ (ไม่บังคับ)</label>
+            <input type="text" id="m-site-origin" list="dl-bo-origins" autocomplete="off" value="${escapeHtml(s.default_origin || '')}" placeholder="เลือกหรือพิมพ์จุดรับประจำ..."
+              class="w-full min-h-[42px] px-3 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600" />
+          </div>
           <div class="flex justify-end gap-2 pt-2 border-t border-slate-100">
             <button type="button" id="m-cancel" class="min-h-[40px] px-4 py-2 rounded-xl border border-slate-300 text-xs sm:text-sm cursor-pointer">ยกเลิก</button>
             <button type="submit" class="min-h-[40px] px-4 py-2 rounded-xl bg-zinc-900 text-white text-xs sm:text-sm font-semibold cursor-pointer">บันทึก</button>
@@ -3600,7 +3915,8 @@
               method: 'PUT',
               body: JSON.stringify({
                 site_name: newSiteName,
-                zone_name: box.querySelector('#m-zone-name').value.trim()
+                zone_name: box.querySelector('#m-zone-name').value.trim(),
+                default_origin: box.querySelector('#m-site-origin').value.trim()
               })
             });
             if (state.boundBillingSite && state.boundBillingSite === s.site_name && newSiteName) {
@@ -3626,9 +3942,19 @@
         <h3 class="text-base font-bold text-slate-900">แก้ไขเส้นทาง / ที่หมาย</h3>
         <form id="modal-edit-form" class="space-y-3">
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div class="sm:col-span-2">
+            <div>
               <label class="block text-xs font-semibold text-slate-700 mb-1">ต้นทาง (จุดรับ) *</label>
               <input type="text" id="m-origin" value="${escapeHtml(r.origin)}" required
+                class="w-full min-h-[40px] px-3 py-2 rounded-xl border border-slate-300 text-sm" />
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">ปลายทางที่ผูก (ไม่บังคับ)</label>
+              <input type="text" id="m-dest" list="dl-bo-destinations" autocomplete="off" value="${escapeHtml(r.destination || '')}" placeholder="เว้นว่าง หรือเลือก/พิมพ์..."
+                class="w-full min-h-[40px] px-3 py-2 rounded-xl border border-slate-300 text-sm" />
+            </div>
+            <div class="sm:col-span-2">
+              <label class="block text-xs font-semibold text-slate-700 mb-1">โครงการที่ผูกกับเส้นทางนี้ (ไม่บังคับ)</label>
+              <input type="text" id="m-route-site" list="dl-bo-sites" autocomplete="off" value="${escapeHtml(r.default_site || '')}" placeholder="เว้นว่าง หรือเลือกโครงการ..."
                 class="w-full min-h-[40px] px-3 py-2 rounded-xl border border-slate-300 text-sm" />
             </div>
             <div>
@@ -3682,7 +4008,8 @@
               method: 'PUT',
               body: JSON.stringify({
                 origin: box.querySelector('#m-origin').value.trim(),
-                destination: '',
+                destination: box.querySelector('#m-dest').value.trim(),
+                default_site: box.querySelector('#m-route-site').value.trim(),
                 route_sheet_name: box.querySelector('#m-sheet').value.trim(),
                 billing_title: box.querySelector('#m-billing').value.trim(),
                 default_dep_time: box.querySelector('#m-dep').value.trim(),
@@ -3941,6 +4268,28 @@
 
     $('form-worker').addEventListener('input', onWorkerSelectChange);
     $('form-worker').addEventListener('change', onWorkerSelectChange);
+    $('form-worker-vehicle-hint').addEventListener('click', (e) => {
+      const btn = e.target.closest('button[data-apply-all-worker]');
+      if (!btn) return;
+      const rec = getFieldRecommendations();
+      if (rec.recPlate) {
+        $('form-vehicle').value = rec.recPlate;
+        pulseElement($('form-vehicle'));
+      }
+      if (rec.recSite) {
+        $('form-site').value = rec.recSite;
+        pulseElement($('form-site'));
+      }
+      if (rec.recOrigin) {
+        $('form-origin').value = rec.recOrigin;
+        pulseElement($('form-origin'));
+      }
+      if (rec.recDest) {
+        $('form-destination').value = rec.recDest;
+        pulseElement($('form-destination'));
+      }
+      applyRoutePresetFromInput();
+    });
     $('form-vehicle').addEventListener('input', onVehicleSelectChange);
     $('form-vehicle').addEventListener('change', onVehicleSelectChange);
     $('form-vehicle-worker-hint').addEventListener('click', (e) => {
@@ -3954,6 +4303,45 @@
     });
     $('form-site').addEventListener('input', onSiteInputChange);
     $('form-site').addEventListener('change', onSiteInputChange);
+    $('form-site-rec-hint').addEventListener('click', (e) => {
+      const btn = e.target.closest('button[data-use-rec-site]');
+      if (!btn) return;
+      const siteVal = btn.dataset.useRecSite || '';
+      const siteEl = $('form-site');
+      siteEl.value = siteVal;
+      pulseElement(siteEl);
+      onSiteInputChange();
+    });
+    $('form-route-rec-hint').addEventListener('click', (e) => {
+      const bothBtn = e.target.closest('button[data-use-rec-route]');
+      if (bothBtn) {
+        const o = bothBtn.dataset.recOrig || '';
+        const d = bothBtn.dataset.recDest || '';
+        if (o) {
+          $('form-origin').value = o;
+          pulseElement($('form-origin'));
+        }
+        if (d) {
+          $('form-destination').value = d;
+          pulseElement($('form-destination'));
+        }
+        applyRoutePresetFromInput();
+        return;
+      }
+      const origBtn = e.target.closest('button[data-use-rec-origin]');
+      if (origBtn) {
+        $('form-origin').value = origBtn.dataset.useRecOrigin || '';
+        pulseElement($('form-origin'));
+        applyRoutePresetFromInput();
+        return;
+      }
+      const destBtn = e.target.closest('button[data-use-rec-dest]');
+      if (destBtn) {
+        $('form-destination').value = destBtn.dataset.useRecDest || '';
+        pulseElement($('form-destination'));
+        applyRoutePresetFromInput();
+      }
+    });
     $('btn-swap-route').addEventListener('click', onSwapRouteClick);
     $('form-auto-return').addEventListener('change', updateAutoReturnUI);
     $('btn-toggle-route-meta').addEventListener('click', () => toggleRouteMetaBox());
