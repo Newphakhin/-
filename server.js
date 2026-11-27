@@ -342,20 +342,32 @@ app.put(
     let history = null;
     if (body.record_history) {
       const kind = body.history_kind === 'billing' ? 'billing' : body.history_kind === 'zone' ? 'zone' : 'general';
+      const entrySite = body.billing_site_entry && body.billing_site_entry.site_name
+        ? String(body.billing_site_entry.site_name).trim()
+        : '';
+      const perSiteObj = entrySite && config.billing_by_site ? config.billing_by_site[entrySite] : null;
       const sheetName =
-        kind === 'billing'
-          ? config.billing_name || (config.billing_url ? 'Google Sheet ใบเบิก' : '')
+        entrySite
+          ? (perSiteObj && perSiteObj.name) || (perSiteObj && perSiteObj.url ? `Google Sheet ${entrySite}` : '')
+          : kind === 'billing'
+            ? config.billing_name || (config.billing_url ? 'Google Sheet ใบเบิก' : '')
+            : kind === 'zone'
+              ? config.zone_name || (config.zone_url ? 'Google Sheet สำเนาโซน' : '')
+              : '';
+      const sheetUrl = entrySite
+        ? (perSiteObj && perSiteObj.sheet_url) || ''
+        : kind === 'billing'
+          ? config.billing_sheet_url
           : kind === 'zone'
-            ? config.zone_name || (config.zone_url ? 'Google Sheet สำเนาโซน' : '')
+            ? config.zone_sheet_url
             : '';
-      const sheetUrl = kind === 'billing' ? config.billing_sheet_url : kind === 'zone' ? config.zone_sheet_url : '';
       const added = await store.addGoogleSheetsHistory({
         kind,
         mode: 'config_saved',
         status: 'info',
         spreadsheet_name: sheetName,
         spreadsheet_url: sheetUrl,
-        site_name: kind === 'billing' ? config.billing_site : '',
+        site_name: entrySite || (kind === 'billing' ? config.billing_site : ''),
         triggered_by: (req.user && (req.user.full_name || req.user.username)) || 'ผู้ใช้ระบบ',
         note: String(body.history_note || 'บันทึกการตั้งค่า Google Sheets').trim()
       });
@@ -452,16 +464,34 @@ app.post(
     const mode = body.mode === 'auto' ? 'auto' : 'manual';
     const triggeredBy = (req.user && (req.user.full_name || req.user.username)) || 'ผู้ใช้ระบบ';
     const cfg = await store.getGoogleSheetsConfig();
-    const targetUrl = kind === 'billing' ? cfg.billing_url : cfg.zone_url;
+    const requestedSite = String(body.site_name || '').trim();
+    const perSiteEntry =
+      kind === 'billing' && requestedSite && cfg.billing_by_site && cfg.billing_by_site[requestedSite]
+        ? cfg.billing_by_site[requestedSite]
+        : null;
+    const isPerSiteBilling = Boolean(kind === 'billing' && requestedSite && (perSiteEntry || body.per_site_only));
+
+    const targetUrl = isPerSiteBilling
+      ? (perSiteEntry ? perSiteEntry.url : '')
+      : kind === 'billing'
+        ? cfg.billing_url
+        : cfg.zone_url;
+
     if (!targetUrl) {
       return res.status(400).json({
-        error: kind === 'billing' ? 'ยังไม่ได้ผูก Google Sheet ใบเบิกโครงการ' : 'ยังไม่ได้ผูก Google Sheet สำเนาโซน'
+        error: isPerSiteBilling
+          ? `ยังไม่ได้ผูก Google Sheet ใบเบิกสำหรับโครงการ "${requestedSite}"`
+          : kind === 'billing'
+            ? 'ยังไม่ได้ผูก Google Sheet ใบเบิกโครงการ'
+            : 'ยังไม่ได้ผูก Google Sheet สำเนาโซน'
       });
     }
 
-    const effectiveSite = kind === 'billing'
-      ? String(cfg.billing_site || body.site_name || '').trim()
-      : String(body.site_name || '').trim();
+    const effectiveSite = isPerSiteBilling
+      ? requestedSite
+      : kind === 'billing'
+        ? String(cfg.billing_site || requestedSite || '').trim()
+        : requestedSite;
     const dateFrom = String(body.date_from || '').trim();
     const dateTo = String(body.date_to || '').trim();
 
@@ -480,6 +510,17 @@ app.post(
         ? `${protoHeader}://${hostHeader}/logo.jpg`
         : 'https://worker-dispatch-xi.vercel.app/logo.jpg';
 
+    const existingName = isPerSiteBilling
+      ? (perSiteEntry && perSiteEntry.name) || ''
+      : kind === 'billing'
+        ? cfg.billing_name
+        : cfg.zone_name;
+    const existingSheetUrl = isPerSiteBilling
+      ? (perSiteEntry && perSiteEntry.sheet_url) || ''
+      : kind === 'billing'
+        ? cfg.billing_sheet_url
+        : cfg.zone_sheet_url;
+
     let result;
     try {
       result = await postToAppsScript(targetUrl, {
@@ -497,8 +538,8 @@ app.post(
         kind,
         mode,
         status: 'error',
-        spreadsheet_name: kind === 'billing' ? cfg.billing_name : cfg.zone_name,
-        spreadsheet_url: kind === 'billing' ? cfg.billing_sheet_url : cfg.zone_sheet_url,
+        spreadsheet_name: existingName,
+        spreadsheet_url: existingSheetUrl,
         site_name: effectiveSite,
         date_from: dateFrom,
         date_to: dateTo,
@@ -511,13 +552,22 @@ app.post(
     }
 
     // อัปเดตชื่อไฟล์และลิงก์เปิดชีตอัตโนมัติหากมีการเปลี่ยนชื่อบน Google Drive
-    const spreadsheetName = result.spreadsheetName || (kind === 'billing' ? cfg.billing_name : cfg.zone_name) || '';
-    const spreadsheetUrl = result.spreadsheetUrl || (kind === 'billing' ? cfg.billing_sheet_url : cfg.zone_sheet_url) || '';
+    const spreadsheetName = result.spreadsheetName || existingName || '';
+    const spreadsheetUrl = result.spreadsheetUrl || existingSheetUrl || '';
     const sheetCount = result.sheetCount || (Array.isArray(result.sheets) ? result.sheets.length : 0);
 
-    const metaPatch = kind === 'billing'
-      ? { billing_name: spreadsheetName, billing_sheet_url: spreadsheetUrl }
-      : { zone_name: spreadsheetName, zone_sheet_url: spreadsheetUrl };
+    const metaPatch = isPerSiteBilling
+      ? {
+          billing_site_entry: {
+            site_name: requestedSite,
+            url: targetUrl,
+            name: spreadsheetName,
+            sheet_url: spreadsheetUrl
+          }
+        }
+      : kind === 'billing'
+        ? { billing_name: spreadsheetName, billing_sheet_url: spreadsheetUrl }
+        : { zone_name: spreadsheetName, zone_sheet_url: spreadsheetUrl };
     const updatedConfig = await store.saveGoogleSheetsConfig(metaPatch);
 
     const { entry: historyEntry, history } = await store.addGoogleSheetsHistory({
