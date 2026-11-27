@@ -961,36 +961,39 @@
             </p>
             <div class="grid grid-cols-1 xl:grid-cols-2 gap-2.5">
 
-              <!-- 1. ผูกไฟล์สำเนาโซน -->
+              <!-- 1. สำเนาโซนแยกตามโครงการ (ไม่รวมกัน) -->
               <div class="flex flex-wrap items-center gap-2 p-2 rounded-2xl bg-amber-50/80 border border-amber-200">
-                <button
-                  type="button"
-                  id="btn-bind-zone"
-                  class="flex-1 min-w-[200px] min-h-[40px] px-3.5 py-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100/80 border border-emerald-300 text-left text-xs sm:text-sm font-semibold text-emerald-900 flex items-center gap-2 transition cursor-pointer"
-                >
-                  <i class="fa-solid fa-link text-amber-600 shrink-0"></i>
-                  <span class="shrink-0">ผูกไฟล์สำเนา:</span>
-                  <span id="bind-zone-label" class="truncate text-amber-800">ยังไม่ได้เลือกไฟล์ (กดเพื่อเลือก)</span>
-                  <span id="bind-zone-dot" class="hidden w-2 h-2 rounded-full bg-emerald-500 ml-auto shrink-0"></span>
-                </button>
+                <div class="flex-1 min-w-[200px] min-h-[40px] px-3.5 py-1.5 rounded-xl bg-white border border-amber-300 text-xs sm:text-sm font-semibold text-amber-950 flex items-center gap-2">
+                  <i class="fa-solid fa-layer-group text-amber-600 shrink-0"></i>
+                  <span class="truncate">ไฟล์สำเนาแยกแต่ละโครงการ:</span>
+                  <span id="excel-zone-sites-bound-count" class="px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 text-[11px] font-bold shrink-0">ผูกแล้ว 0 โครงการ</span>
+                </div>
 
                 <button
                   type="button"
-                  id="btn-unbind-zone"
-                  title="ยกเลิกการผูกไฟล์สำเนา"
-                  class="hidden w-9 h-9 rounded-xl bg-white hover:bg-rose-50 text-slate-500 hover:text-rose-600 border border-slate-300 items-center justify-center transition cursor-pointer shrink-0"
-                >
-                  <i class="fa-solid fa-link-slash text-xs"></i>
-                </button>
-
-                <button
-                  type="button"
-                  id="btn-sync-zone"
+                  id="btn-sync-all-excel-zone-sites"
                   class="min-h-[40px] px-4 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 active:bg-amber-800 text-white text-xs sm:text-sm font-semibold shadow-sm flex items-center gap-1.5 transition cursor-pointer shrink-0"
+                  title="เขียนข้อมูลล่าสุดลงไฟล์สำเนา Excel ของทุกโครงการที่ผูกไว้ (แยกไฟล์แต่ละโครงการ ไม่รวมกัน)"
                 >
                   <i class="fa-solid fa-file-arrow-down"></i>
-                  <span>เขียนลงไฟล์สำเนาตอนนี้</span>
+                  <span>เขียนสำเนาทุกโครงการที่ผูก</span>
                 </button>
+
+                <!-- Legacy combined zone controls (hidden unless legacy handle exists) -->
+                <div id="legacy-zone-bind-wrap" class="hidden w-full flex flex-wrap items-center gap-1.5 pt-1.5 border-t border-amber-200/80 text-xs">
+                  <button type="button" id="btn-bind-zone" class="flex-1 min-w-[160px] px-2.5 py-1 rounded-lg bg-white border border-amber-200 text-left text-amber-950 flex items-center gap-1.5 cursor-pointer">
+                    <i class="fa-solid fa-link text-amber-600 text-[11px]"></i>
+                    <span class="shrink-0 text-[11px]">ไฟล์สำเนาเดิม:</span>
+                    <span id="bind-zone-label" class="truncate text-[11px] text-amber-800">ยังไม่ได้เลือก</span>
+                    <span id="bind-zone-dot" class="hidden w-2 h-2 rounded-full bg-emerald-500 ml-auto shrink-0"></span>
+                  </button>
+                  <button type="button" id="btn-unbind-zone" title="ยกเลิกการผูกไฟล์สำเนาเดิม" class="hidden w-7 h-7 rounded-lg bg-white hover:bg-rose-50 text-slate-500 hover:text-rose-600 border border-slate-300 items-center justify-center cursor-pointer">
+                    <i class="fa-solid fa-link-slash text-[10px]"></i>
+                  </button>
+                  <button type="button" id="btn-sync-zone" class="px-2.5 py-1 rounded-lg bg-slate-700 hover:bg-slate-800 text-white text-[11px] font-semibold cursor-pointer">
+                    เขียนไฟล์เดิม
+                  </button>
+                </div>
               </div>
 
               <!-- 2. ใบเบิกแยกตามโครงการ (ไม่รวมกัน) -->
@@ -1005,10 +1008,10 @@
                   type="button"
                   id="btn-sync-all-excel-sites"
                   class="min-h-[40px] px-4 py-1.5 rounded-xl bg-sky-600 hover:bg-sky-700 active:bg-sky-800 text-white text-xs sm:text-sm font-semibold shadow-sm flex items-center gap-1.5 transition cursor-pointer shrink-0"
-                  title="เขียนข้อมูลล่าสุดลงไฟล์ Excel ของทุกโครงการที่ผูกไว้ (แยกไฟล์แต่ละโครงการ ไม่รวมกัน)"
+                  title="เขียนข้อมูลล่าสุดลงไฟล์ใบเบิก Excel ของทุกโครงการที่ผูกไว้ (แยกไฟล์แต่ละโครงการ ไม่รวมกัน)"
                 >
                   <i class="fa-solid fa-file-invoice"></i>
-                  <span>เขียนทุกโครงการที่ผูก</span>
+                  <span>เขียนใบเบิกทุกโครงการที่ผูก</span>
                 </button>
 
                 <!-- Legacy combined billing controls (hidden unless legacy handle exists) -->
@@ -1030,12 +1033,12 @@
 
             </div>
 
-            <!-- ปุ่มแยกไฟล์ Excel ใบเบิกแต่ละโครงการ (ไม่เอารวม) -->
-            <div id="excel-per-site-section" class="p-3 rounded-2xl bg-sky-50/50 border border-sky-200/90 space-y-2.5">
+            <!-- ปุ่มแยกไฟล์ Excel สำเนา & ใบเบิกแต่ละโครงการ (ไม่เอารวม) -->
+            <div id="excel-per-site-section" class="p-3 rounded-2xl bg-slate-50/80 border border-slate-200/90 space-y-2.5">
               <div class="flex flex-wrap items-center justify-between gap-2">
-                <div class="flex flex-wrap items-center gap-2 text-xs font-bold text-sky-950">
+                <div class="flex flex-wrap items-center gap-2 text-xs font-bold text-slate-900">
                   <i class="fa-solid fa-building-circle-arrow-right text-sky-600"></i>
-                  <span>ปุ่มแยกแต่ละโครงการ (Excel ใบเบิก — แยกไฟล์ใครไฟล์มัน ไม่รวมกัน)</span>
+                  <span>ปุ่มแยกแต่ละโครงการ (Excel — แยกทั้ง <span class="text-amber-700">สำเนา</span> และ <span class="text-sky-700">ใบเบิก</span> ใครโครงการมัน ไม่รวมกัน)</span>
                 </div>
                 <div class="flex flex-wrap items-center gap-2">
                   <div class="relative">
@@ -1044,7 +1047,7 @@
                       type="text"
                       id="excel-sites-search"
                       placeholder="ค้นหาชื่อโครงการ..."
-                      class="w-44 sm:w-52 min-h-[30px] pl-7 pr-2.5 py-1 rounded-lg border border-sky-300 bg-white text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-500"
+                      class="w-44 sm:w-52 min-h-[30px] pl-7 pr-2.5 py-1 rounded-lg border border-slate-300 bg-white text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-500"
                     />
                   </div>
                   <button
@@ -1056,7 +1059,7 @@
                   </button>
                 </div>
               </div>
-              <div id="excel-per-site-list" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2 max-h-60 overflow-y-auto pr-0.5"></div>
+              <div id="excel-per-site-list" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2.5 max-h-80 overflow-y-auto pr-0.5"></div>
             </div>
 
             <div class="flex flex-wrap items-center justify-between gap-2 text-xs">
@@ -1104,38 +1107,39 @@
 
             <div class="grid grid-cols-1 xl:grid-cols-2 gap-2.5">
 
-              <!-- 1. Google Sheet สำเนาโซน -->
+              <!-- 1. Google Sheet สำเนาโซนแยกตามโครงการ -->
               <div class="flex flex-wrap items-center gap-2 p-2 rounded-2xl bg-emerald-50/80 border border-emerald-200">
-                <button
-                  type="button"
-                  id="btn-gsheet-bind-zone"
-                  class="flex-1 min-w-[200px] min-h-[40px] px-3.5 py-1.5 rounded-xl bg-white hover:bg-emerald-100/60 border border-emerald-300 text-left text-xs sm:text-sm font-semibold text-emerald-900 flex items-center gap-2 transition cursor-pointer"
-                >
+                <div class="flex-1 min-w-[200px] min-h-[40px] px-3.5 py-1.5 rounded-xl bg-white border border-emerald-300 text-xs sm:text-sm font-semibold text-emerald-900 flex items-center gap-2">
                   <i class="fa-brands fa-google text-emerald-600 shrink-0"></i>
-                  <span class="shrink-0">ชีตสำเนา:</span>
-                  <span id="gsheet-zone-label" class="truncate text-emerald-700">ยังไม่ได้ผูก (กดเพื่อตั้งค่า)</span>
-                  <span id="gsheet-zone-dot" class="hidden w-2 h-2 rounded-full bg-emerald-500 ml-auto shrink-0"></span>
-                </button>
-
-                <a
-                  id="btn-gsheet-open-zone"
-                  href="#"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  title="เปิด Google Sheet สำเนาโซน"
-                  class="hidden w-9 h-9 rounded-xl bg-white hover:bg-emerald-100 text-emerald-700 border border-emerald-300 items-center justify-center transition shrink-0"
-                >
-                  <i class="fa-solid fa-arrow-up-right-from-square text-xs"></i>
-                </a>
+                  <span class="truncate">ชีตสำเนาแยกโครงการ:</span>
+                  <span id="gsheet-zone-sites-bound-count" class="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[11px] font-bold shrink-0">ผูกแล้ว 0 โครงการ</span>
+                </div>
 
                 <button
                   type="button"
-                  id="btn-gsheet-sync-zone"
+                  id="btn-sync-all-gsheet-zone-sites"
                   class="min-h-[40px] px-4 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white text-xs sm:text-sm font-semibold shadow-sm flex items-center gap-1.5 transition cursor-pointer shrink-0"
+                  title="ไหลข้อมูลลง Google Sheet สำเนาของทุกโครงการที่ผูกไว้ (แยกแต่ละโครงการ ไม่รวมกัน)"
                 >
                   <i class="fa-solid fa-cloud-arrow-up"></i>
-                  <span>ไหลลง Google Sheet สำเนา</span>
+                  <span>ไหลสำเนาทุกโครงการที่ผูก</span>
                 </button>
+
+                <!-- Legacy single zone Google Sheet (shown only if already bound) -->
+                <div id="legacy-gsheet-zone-wrap" class="hidden w-full flex flex-wrap items-center gap-1.5 pt-1.5 border-t border-emerald-200/80 text-xs">
+                  <button type="button" id="btn-gsheet-bind-zone" class="flex-1 min-w-[160px] px-2.5 py-1 rounded-lg bg-white border border-emerald-200 text-left text-emerald-900 flex items-center gap-1.5 cursor-pointer">
+                    <i class="fa-brands fa-google text-emerald-600 text-[11px]"></i>
+                    <span class="shrink-0 text-[11px]">ชีตสำเนาเดิม:</span>
+                    <span id="gsheet-zone-label" class="truncate text-[11px] text-emerald-700">ยังไม่ได้ผูก</span>
+                    <span id="gsheet-zone-dot" class="hidden w-2 h-2 rounded-full bg-emerald-500 ml-auto shrink-0"></span>
+                  </button>
+                  <a id="btn-gsheet-open-zone" href="#" target="_blank" rel="noopener noreferrer" title="เปิดชีตสำเนาเดิม" class="hidden w-7 h-7 rounded-lg bg-white hover:bg-emerald-100 text-emerald-700 border border-emerald-300 items-center justify-center shrink-0">
+                    <i class="fa-solid fa-arrow-up-right-from-square text-[10px]"></i>
+                  </a>
+                  <button type="button" id="btn-gsheet-sync-zone" class="px-2.5 py-1 rounded-lg bg-slate-700 hover:bg-slate-800 text-white text-[11px] font-semibold cursor-pointer">
+                    ไหลลงชีตเดิม
+                  </button>
+                </div>
               </div>
 
               <!-- 2. Google Sheet ใบเบิกแยกตามโครงการ -->
@@ -1150,10 +1154,10 @@
                   type="button"
                   id="btn-sync-all-gsheet-sites"
                   class="min-h-[40px] px-4 py-1.5 rounded-xl bg-teal-700 hover:bg-teal-800 active:bg-teal-900 text-white text-xs sm:text-sm font-semibold shadow-sm flex items-center gap-1.5 transition cursor-pointer shrink-0"
-                  title="ไหลข้อมูลลง Google Sheet ของทุกโครงการที่ผูกไว้ (แยกแต่ละโครงการ ไม่รวมกัน)"
+                  title="ไหลข้อมูลลง Google Sheet ใบเบิกของทุกโครงการที่ผูกไว้ (แยกแต่ละโครงการ ไม่รวมกัน)"
                 >
                   <i class="fa-solid fa-cloud-arrow-up"></i>
-                  <span>ไหลทุกโครงการที่ผูก</span>
+                  <span>ไหลใบเบิกทุกโครงการที่ผูก</span>
                 </button>
 
                 <!-- Legacy single billing Google Sheet (shown only if already bound) -->
@@ -1175,12 +1179,12 @@
 
             </div>
 
-            <!-- ปุ่มแยก Google Sheet ใบเบิกแต่ละโครงการ (ไม่เอารวม) -->
-            <div id="gsheet-per-site-section" class="p-3 rounded-2xl bg-teal-50/50 border border-teal-200/90 space-y-2.5">
+            <!-- ปุ่มแยก Google Sheet สำเนา & ใบเบิกแต่ละโครงการ (ไม่เอารวม) -->
+            <div id="gsheet-per-site-section" class="p-3 rounded-2xl bg-emerald-50/40 border border-emerald-200/90 space-y-2.5">
               <div class="flex flex-wrap items-center justify-between gap-2">
-                <div class="flex flex-wrap items-center gap-2 text-xs font-bold text-teal-950">
-                  <i class="fa-brands fa-google text-teal-600"></i>
-                  <span>ปุ่มแยกแต่ละโครงการ (Google Sheet ใบเบิก — แยกชีตใครชีตมัน ไม่รวมกัน)</span>
+                <div class="flex flex-wrap items-center gap-2 text-xs font-bold text-slate-900">
+                  <i class="fa-brands fa-google text-emerald-600"></i>
+                  <span>ปุ่มแยกแต่ละโครงการ (Google Sheet — แยกทั้ง <span class="text-emerald-700">สำเนา</span> และ <span class="text-teal-700">ใบเบิก</span> ใครโครงการมัน ไม่รวมกัน)</span>
                 </div>
                 <div class="flex flex-wrap items-center gap-2">
                   <div class="relative">
@@ -1189,19 +1193,19 @@
                       type="text"
                       id="gsheet-sites-search"
                       placeholder="ค้นหาชื่อโครงการ..."
-                      class="w-44 sm:w-52 min-h-[30px] pl-7 pr-2.5 py-1 rounded-lg border border-teal-300 bg-white text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-500"
+                      class="w-44 sm:w-52 min-h-[30px] pl-7 pr-2.5 py-1 rounded-lg border border-emerald-300 bg-white text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                     />
                   </div>
                   <button
                     type="button"
                     id="btn-gsheet-sites-toggle"
-                    class="min-h-[30px] px-2.5 py-1 rounded-lg bg-white hover:bg-teal-100 text-teal-800 border border-teal-300 text-[11px] font-semibold cursor-pointer transition"
+                    class="min-h-[30px] px-2.5 py-1 rounded-lg bg-white hover:bg-emerald-100 text-emerald-800 border border-emerald-300 text-[11px] font-semibold cursor-pointer transition"
                   >
                     แสดงทุกโครงการ
                   </button>
                 </div>
               </div>
-              <div id="gsheet-per-site-list" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2 max-h-60 overflow-y-auto pr-0.5"></div>
+              <div id="gsheet-per-site-list" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2.5 max-h-80 overflow-y-auto pr-0.5"></div>
             </div>
 
             <div class="flex flex-wrap items-center justify-between gap-2 text-xs">
@@ -1851,6 +1855,6 @@
   <!-- Vendored ExcelJS + Dual Export Engine + Main Frontend Logic -->
   <script src="/vendor/exceljs.min.js?v=6"></script>
   <script src="/excel-export.js?v=7"></script>
-  <script src="/app.js?v=21"></script>
+  <script src="/app.js?v=22"></script>
 </body>
 </html>

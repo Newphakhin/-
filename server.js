@@ -342,13 +342,17 @@ app.put(
     let history = null;
     if (body.record_history) {
       const kind = body.history_kind === 'billing' ? 'billing' : body.history_kind === 'zone' ? 'zone' : 'general';
-      const entrySite = body.billing_site_entry && body.billing_site_entry.site_name
-        ? String(body.billing_site_entry.site_name).trim()
-        : '';
-      const perSiteObj = entrySite && config.billing_by_site ? config.billing_by_site[entrySite] : null;
+      const siteEntry =
+        body.zone_site_entry && body.zone_site_entry.site_name
+          ? { map: config.zone_by_site, site: String(body.zone_site_entry.site_name).trim(), label: 'สำเนา' }
+          : body.billing_site_entry && body.billing_site_entry.site_name
+            ? { map: config.billing_by_site, site: String(body.billing_site_entry.site_name).trim(), label: 'ใบเบิก' }
+            : null;
+      const entrySite = siteEntry ? siteEntry.site : '';
+      const perSiteObj = siteEntry && siteEntry.map ? siteEntry.map[entrySite] : null;
       const sheetName =
         entrySite
-          ? (perSiteObj && perSiteObj.name) || (perSiteObj && perSiteObj.url ? `Google Sheet ${entrySite}` : '')
+          ? (perSiteObj && perSiteObj.name) || (perSiteObj && perSiteObj.url ? `Google Sheet ${siteEntry.label} ${entrySite}` : '')
           : kind === 'billing'
             ? config.billing_name || (config.billing_url ? 'Google Sheet ใบเบิก' : '')
             : kind === 'zone'
@@ -465,13 +469,11 @@ app.post(
     const triggeredBy = (req.user && (req.user.full_name || req.user.username)) || 'ผู้ใช้ระบบ';
     const cfg = await store.getGoogleSheetsConfig();
     const requestedSite = String(body.site_name || '').trim();
-    const perSiteEntry =
-      kind === 'billing' && requestedSite && cfg.billing_by_site && cfg.billing_by_site[requestedSite]
-        ? cfg.billing_by_site[requestedSite]
-        : null;
-    const isPerSiteBilling = Boolean(kind === 'billing' && requestedSite && (perSiteEntry || body.per_site_only));
+    const siteMap = kind === 'billing' ? cfg.billing_by_site : cfg.zone_by_site;
+    const perSiteEntry = requestedSite && siteMap && siteMap[requestedSite] ? siteMap[requestedSite] : null;
+    const isPerSite = Boolean(requestedSite && (perSiteEntry || body.per_site_only));
 
-    const targetUrl = isPerSiteBilling
+    const targetUrl = isPerSite
       ? (perSiteEntry ? perSiteEntry.url : '')
       : kind === 'billing'
         ? cfg.billing_url
@@ -479,15 +481,15 @@ app.post(
 
     if (!targetUrl) {
       return res.status(400).json({
-        error: isPerSiteBilling
-          ? `ยังไม่ได้ผูก Google Sheet ใบเบิกสำหรับโครงการ "${requestedSite}"`
+        error: isPerSite
+          ? `ยังไม่ได้ผูก Google Sheet ${kind === 'billing' ? 'ใบเบิก' : 'สำเนา'}สำหรับโครงการ "${requestedSite}"`
           : kind === 'billing'
             ? 'ยังไม่ได้ผูก Google Sheet ใบเบิกโครงการ'
             : 'ยังไม่ได้ผูก Google Sheet สำเนาโซน'
       });
     }
 
-    const effectiveSite = isPerSiteBilling
+    const effectiveSite = isPerSite
       ? requestedSite
       : kind === 'billing'
         ? String(cfg.billing_site || requestedSite || '').trim()
@@ -499,8 +501,8 @@ app.post(
       date_from: dateFrom,
       date_to: dateTo,
       site_name: effectiveSite,
-      trip_type: kind === 'billing' ? '' : String(body.trip_type || '').trim(),
-      search: kind === 'billing' ? '' : String(body.search || '').trim()
+      trip_type: isPerSite || kind === 'billing' ? '' : String(body.trip_type || '').trim(),
+      search: isPerSite || kind === 'billing' ? '' : String(body.search || '').trim()
     });
 
     const hostHeader = String(req.headers['x-forwarded-host'] || req.headers.host || '').trim();
@@ -510,12 +512,12 @@ app.post(
         ? `${protoHeader}://${hostHeader}/logo.jpg`
         : 'https://worker-dispatch-xi.vercel.app/logo.jpg';
 
-    const existingName = isPerSiteBilling
+    const existingName = isPerSite
       ? (perSiteEntry && perSiteEntry.name) || ''
       : kind === 'billing'
         ? cfg.billing_name
         : cfg.zone_name;
-    const existingSheetUrl = isPerSiteBilling
+    const existingSheetUrl = isPerSite
       ? (perSiteEntry && perSiteEntry.sheet_url) || ''
       : kind === 'billing'
         ? cfg.billing_sheet_url
@@ -556,15 +558,24 @@ app.post(
     const spreadsheetUrl = result.spreadsheetUrl || existingSheetUrl || '';
     const sheetCount = result.sheetCount || (Array.isArray(result.sheets) ? result.sheets.length : 0);
 
-    const metaPatch = isPerSiteBilling
-      ? {
-          billing_site_entry: {
-            site_name: requestedSite,
-            url: targetUrl,
-            name: spreadsheetName,
-            sheet_url: spreadsheetUrl
+    const metaPatch = isPerSite
+      ? kind === 'billing'
+        ? {
+            billing_site_entry: {
+              site_name: requestedSite,
+              url: targetUrl,
+              name: spreadsheetName,
+              sheet_url: spreadsheetUrl
+            }
           }
-        }
+        : {
+            zone_site_entry: {
+              site_name: requestedSite,
+              url: targetUrl,
+              name: spreadsheetName,
+              sheet_url: spreadsheetUrl
+            }
+          }
       : kind === 'billing'
         ? { billing_name: spreadsheetName, billing_sheet_url: spreadsheetUrl }
         : { zone_name: spreadsheetName, zone_sheet_url: spreadsheetUrl };

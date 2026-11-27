@@ -590,9 +590,15 @@ async function updateSite(id, { site_name, zone_name, default_origin, active }) 
     }
     if (rChanged) await setKV(KV_ROUTES, routes);
 
-    // อัปเดตชื่อโครงการที่ผูกไว้ใน Google Sheets แยกตามโครงการด้วย
+    // อัปเดตชื่อโครงการที่ผูกไว้ใน Google Sheets แยกตามโครงการด้วย (ทั้งสำเนาและใบเบิก)
     const gs = await getGoogleSheetsConfig();
     let gsChanged = false;
+    const zoneBySite = { ...(gs.zone_by_site || {}) };
+    if (zoneBySite[existing.site_name]) {
+      zoneBySite[newName] = zoneBySite[existing.site_name];
+      delete zoneBySite[existing.site_name];
+      gsChanged = true;
+    }
     const bySite = { ...(gs.billing_by_site || {}) };
     if (bySite[existing.site_name]) {
       bySite[newName] = bySite[existing.site_name];
@@ -602,7 +608,7 @@ async function updateSite(id, { site_name, zone_name, default_origin, active }) 
     const nextBillingSite = gs.billing_site === existing.site_name ? newName : gs.billing_site;
     if (nextBillingSite !== gs.billing_site) gsChanged = true;
     if (gsChanged) {
-      await setKV(KV_GSHEET, { ...gs, billing_site: nextBillingSite, billing_by_site: bySite });
+      await setKV(KV_GSHEET, { ...gs, billing_site: nextBillingSite, zone_by_site: zoneBySite, billing_by_site: bySite });
     }
   }
   return { ...items[idx], cascadedLogsCount };
@@ -945,6 +951,7 @@ const GSHEET_DEFAULT = {
   zone_url: '',
   zone_name: '',
   zone_sheet_url: '',
+  zone_by_site: {},
   billing_url: '',
   billing_name: '',
   billing_sheet_url: '',
@@ -965,7 +972,7 @@ function validateAppsScriptUrl(url, label) {
   return u;
 }
 
-function normalizeBillingBySite(raw) {
+function normalizeSiteSheetMap(raw) {
   const out = {};
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;
   for (const [siteKey, val] of Object.entries(raw)) {
@@ -990,7 +997,8 @@ async function getGoogleSheetsConfig() {
   };
   return {
     ...merged,
-    billing_by_site: normalizeBillingBySite(merged.billing_by_site),
+    zone_by_site: normalizeSiteSheetMap(merged.zone_by_site),
+    billing_by_site: normalizeSiteSheetMap(merged.billing_by_site),
     auto_sync: saved && typeof saved.auto_sync === 'boolean' ? saved.auto_sync : true
   };
 }
@@ -999,6 +1007,7 @@ async function saveGoogleSheetsConfig(patch = {}) {
   const cur = await getGoogleSheetsConfig();
   const next = {
     ...cur,
+    zone_by_site: { ...(cur.zone_by_site || {}) },
     billing_by_site: { ...(cur.billing_by_site || {}) }
   };
   if (patch.zone_url !== undefined) next.zone_url = validateAppsScriptUrl(patch.zone_url, 'Google Sheet สำเนาโซน');
@@ -1010,11 +1019,41 @@ async function saveGoogleSheetsConfig(patch = {}) {
   if (patch.billing_site !== undefined) next.billing_site = str(patch.billing_site);
   if (patch.auto_sync !== undefined) next.auto_sync = Boolean(patch.auto_sync);
 
-  // ผูก/แก้/ยกเลิก Google Sheet แยกเฉพาะโครงการเดียวแบบไม่กระทบโครงการอื่น
+  // ผูก/แก้/ยกเลิก Google Sheet สำเนาแยกเฉพาะโครงการเดียวแบบไม่กระทบโครงการอื่น
+  if (patch.zone_site_entry && typeof patch.zone_site_entry === 'object') {
+    const sName = str(patch.zone_site_entry.site_name);
+    if (!sName) throw httpError(400, 'กรุณาระบุชื่อโครงการที่ต้องการผูก Google Sheet สำเนา');
+    const cleanUrl = validateAppsScriptUrl(patch.zone_site_entry.url, `Google Sheet สำเนาโครงการ ${sName}`);
+    if (!cleanUrl) {
+      delete next.zone_by_site[sName];
+    } else {
+      next.zone_by_site[sName] = {
+        url: cleanUrl,
+        name: str(patch.zone_site_entry.name),
+        sheet_url: str(patch.zone_site_entry.sheet_url)
+      };
+    }
+  } else if (patch.zone_by_site && typeof patch.zone_by_site === 'object') {
+    const cleaned = {};
+    for (const [sKey, val] of Object.entries(patch.zone_by_site)) {
+      const sName = str(sKey);
+      if (!sName || !val || typeof val !== 'object') continue;
+      const cleanUrl = validateAppsScriptUrl(val.url, `Google Sheet สำเนาโครงการ ${sName}`);
+      if (!cleanUrl) continue;
+      cleaned[sName] = {
+        url: cleanUrl,
+        name: str(val.name),
+        sheet_url: str(val.sheet_url)
+      };
+    }
+    next.zone_by_site = cleaned;
+  }
+
+  // ผูก/แก้/ยกเลิก Google Sheet ใบเบิกแยกเฉพาะโครงการเดียวแบบไม่กระทบโครงการอื่น
   if (patch.billing_site_entry && typeof patch.billing_site_entry === 'object') {
     const sName = str(patch.billing_site_entry.site_name);
-    if (!sName) throw httpError(400, 'กรุณาระบุชื่อโครงการที่ต้องการผูก Google Sheet');
-    const cleanUrl = validateAppsScriptUrl(patch.billing_site_entry.url, `Google Sheet โครงการ ${sName}`);
+    if (!sName) throw httpError(400, 'กรุณาระบุชื่อโครงการที่ต้องการผูก Google Sheet ใบเบิก');
+    const cleanUrl = validateAppsScriptUrl(patch.billing_site_entry.url, `Google Sheet ใบเบิกโครงการ ${sName}`);
     if (!cleanUrl) {
       delete next.billing_by_site[sName];
     } else {
@@ -1029,7 +1068,7 @@ async function saveGoogleSheetsConfig(patch = {}) {
     for (const [sKey, val] of Object.entries(patch.billing_by_site)) {
       const sName = str(sKey);
       if (!sName || !val || typeof val !== 'object') continue;
-      const cleanUrl = validateAppsScriptUrl(val.url, `Google Sheet โครงการ ${sName}`);
+      const cleanUrl = validateAppsScriptUrl(val.url, `Google Sheet ใบเบิกโครงการ ${sName}`);
       if (!cleanUrl) continue;
       cleaned[sName] = {
         url: cleanUrl,

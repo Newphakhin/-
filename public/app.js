@@ -38,6 +38,7 @@
     boundZoneHandle: null,
     boundBillingHandle: null,
     boundBillingSite: localStorage.getItem(BOUND_BILLING_SITE_KEY) || '',
+    boundZoneHandlesBySite: {}, // { [site_name]: FileSystemFileHandle }
     boundBillingHandlesBySite: {}, // { [site_name]: FileSystemFileHandle }
     excelSitesShowAll: false,
     gsheetSitesShowAll: false,
@@ -48,6 +49,7 @@
       zone_url: '',
       zone_name: '',
       zone_sheet_url: '',
+      zone_by_site: {},
       billing_url: '',
       billing_name: '',
       billing_sheet_url: '',
@@ -1987,11 +1989,13 @@
     }
   }
 
-  const IDB_SITE_PREFIX = 'billing_site::';
-  const siteHandleKey = (siteName) => `${IDB_SITE_PREFIX}${String(siteName || '').trim()}`;
+  const IDB_ZONE_SITE_PREFIX = 'zone_site::';
+  const IDB_BILLING_SITE_PREFIX = 'billing_site::';
+  const siteHandleKey = (kind, siteName) =>
+    `${kind === 'zone' ? IDB_ZONE_SITE_PREFIX : IDB_BILLING_SITE_PREFIX}${String(siteName || '').trim()}`;
 
   async function loadAllSiteHandlesFromDb() {
-    const out = {};
+    const out = { zone: {}, billing: {} };
     try {
       const db = await openHandleDb();
       if (!db) return out;
@@ -2002,15 +2006,25 @@
         req.onerror = () => reject(req.error);
       });
       for (const k of keys) {
-        if (typeof k !== 'string' || !k.startsWith(IDB_SITE_PREFIX)) continue;
-        const siteName = k.slice(IDB_SITE_PREFIX.length);
+        if (typeof k !== 'string') continue;
+        let bucket = null;
+        let siteName = '';
+        if (k.startsWith(IDB_ZONE_SITE_PREFIX)) {
+          bucket = out.zone;
+          siteName = k.slice(IDB_ZONE_SITE_PREFIX.length);
+        } else if (k.startsWith(IDB_BILLING_SITE_PREFIX)) {
+          bucket = out.billing;
+          siteName = k.slice(IDB_BILLING_SITE_PREFIX.length);
+        } else {
+          continue;
+        }
         const h = await new Promise((resolve, reject) => {
           const tx = db.transaction(IDB_STORE, 'readonly');
           const req = tx.objectStore(IDB_STORE).get(k);
           req.onsuccess = () => resolve(req.result || null);
           req.onerror = () => reject(req.error);
         });
-        if (siteName && h) out[siteName] = h;
+        if (siteName && h && bucket) bucket[siteName] = h;
       }
       db.close();
     } catch {
@@ -2030,7 +2044,14 @@
     for (const l of state.logs || []) {
       if (l && l.site_name) set.add(String(l.site_name).trim());
     }
+    for (const k of Object.keys(state.boundZoneHandlesBySite || {})) {
+      if (k) set.add(k.trim());
+    }
     for (const k of Object.keys(state.boundBillingHandlesBySite || {})) {
+      if (k) set.add(k.trim());
+    }
+    const gsZoneBySite = (state.gsheet && state.gsheet.zone_by_site) || {};
+    for (const k of Object.keys(gsZoneBySite)) {
       if (k) set.add(k.trim());
     }
     const gsBySite = (state.gsheet && state.gsheet.billing_by_site) || {};
@@ -2063,23 +2084,32 @@
     ]);
     state.boundZoneHandle = zoneHandle;
     state.boundBillingHandle = billingHandle;
-    state.boundBillingHandlesBySite = siteHandles || {};
+    state.boundZoneHandlesBySite = (siteHandles && siteHandles.zone) || {};
+    state.boundBillingHandlesBySite = (siteHandles && siteHandles.billing) || {};
     await updateBindingUI();
   }
 
   async function renderPerSiteExcelBindingList() {
     const listEl = $('excel-per-site-list');
-    const countBadge = $('excel-sites-bound-count');
+    const zoneCountBadge = $('excel-zone-sites-bound-count');
+    const billingCountBadge = $('excel-sites-bound-count');
     const toggleBtn = $('btn-excel-sites-toggle');
     const searchEl = $('excel-sites-search');
-    const syncAllBtn = $('btn-sync-all-excel-sites');
+    const syncAllZoneBtn = $('btn-sync-all-excel-zone-sites');
+    const syncAllBillingBtn = $('btn-sync-all-excel-sites');
     if (!listEl) return;
 
-    const handlesMap = state.boundBillingHandlesBySite || {};
-    const boundCount = Object.keys(handlesMap).length;
-    if (countBadge) countBadge.textContent = `ผูกแล้ว ${formatInt(boundCount)} โครงการ`;
-    if (syncAllBtn) {
-      syncAllBtn.innerHTML = `<i class="fa-solid fa-file-invoice"></i><span>เขียนทุกโครงการที่ผูก (${formatInt(boundCount)})</span>`;
+    const zoneHandlesMap = state.boundZoneHandlesBySite || {};
+    const billingHandlesMap = state.boundBillingHandlesBySite || {};
+    const zoneBoundCount = Object.keys(zoneHandlesMap).length;
+    const billingBoundCount = Object.keys(billingHandlesMap).length;
+    if (zoneCountBadge) zoneCountBadge.textContent = `ผูกแล้ว ${formatInt(zoneBoundCount)} โครงการ`;
+    if (billingCountBadge) billingCountBadge.textContent = `ผูกแล้ว ${formatInt(billingBoundCount)} โครงการ`;
+    if (syncAllZoneBtn) {
+      syncAllZoneBtn.innerHTML = `<i class="fa-solid fa-file-arrow-down"></i><span>เขียนสำเนาทุกโครงการที่ผูก (${formatInt(zoneBoundCount)})</span>`;
+    }
+    if (syncAllBillingBtn) {
+      syncAllBillingBtn.innerHTML = `<i class="fa-solid fa-file-invoice"></i><span>เขียนใบเบิกทุกโครงการที่ผูก (${formatInt(billingBoundCount)})</span>`;
     }
 
     const logCounts = getLogCountBySite();
@@ -2088,8 +2118,8 @@
 
     // เรียง: โครงการที่ผูกแล้วขึ้นก่อน -> โครงการที่มีเที่ยววิ่งในงวดนี้ -> ชื่อ ก-ฮ
     const sorted = [...allProjects].sort((a, b) => {
-      const ab = handlesMap[a] ? 1 : 0;
-      const bb = handlesMap[b] ? 1 : 0;
+      const ab = zoneHandlesMap[a] || billingHandlesMap[a] ? 1 : 0;
+      const bb = zoneHandlesMap[b] || billingHandlesMap[b] ? 1 : 0;
       if (ab !== bb) return bb - ab;
       const ac = logCounts[a] || 0;
       const bc = logCounts[b] || 0;
@@ -2097,7 +2127,9 @@
       return a.localeCompare(b, 'th');
     });
 
-    const important = sorted.filter((s) => Boolean(handlesMap[s]) || (logCounts[s] || 0) > 0);
+    const important = sorted.filter(
+      (s) => Boolean(zoneHandlesMap[s] || billingHandlesMap[s]) || (logCounts[s] || 0) > 0
+    );
     const defaultList = state.excelSitesShowAll || q || important.length === 0 ? sorted : important;
     const filtered = q ? defaultList.filter((s) => s.toLowerCase().includes(q)) : defaultList;
 
@@ -2114,71 +2146,126 @@
 
     if (filtered.length === 0) {
       listEl.innerHTML = allProjects.length === 0
-        ? '<div class="col-span-full py-3 text-center text-xs text-slate-400">ยังไม่มีโครงการ — เพิ่มโครงการในหน้า "ตั้งค่า" ก่อน เพื่อผูกไฟล์ใบเบิกแยกแต่ละโครงการ</div>'
+        ? '<div class="col-span-full py-3 text-center text-xs text-slate-400">ยังไม่มีโครงการ — เพิ่มโครงการในหน้า "ตั้งค่า" ก่อน เพื่อผูกไฟล์สำเนาและใบเบิกแยกแต่ละโครงการ</div>'
         : '<div class="col-span-full py-3 text-center text-xs text-slate-400">ไม่พบโครงการที่ค้นหา</div>';
       return;
     }
 
-    const permMap = {};
+    const zonePermMap = {};
+    const billingPermMap = {};
     await Promise.all(
       filtered.map(async (s) => {
-        const h = handlesMap[s];
-        if (!h) return;
-        try {
-          permMap[s] = await h.queryPermission({ mode: 'readwrite' });
-        } catch {
-          permMap[s] = 'prompt';
+        const zh = zoneHandlesMap[s];
+        if (zh) {
+          try {
+            zonePermMap[s] = await zh.queryPermission({ mode: 'readwrite' });
+          } catch {
+            zonePermMap[s] = 'prompt';
+          }
+        }
+        const bh = billingHandlesMap[s];
+        if (bh) {
+          try {
+            billingPermMap[s] = await bh.queryPermission({ mode: 'readwrite' });
+          } catch {
+            billingPermMap[s] = 'prompt';
+          }
         }
       })
     );
 
     listEl.innerHTML = filtered
       .map((siteName) => {
-        const handle = handlesMap[siteName];
+        const zHandle = zoneHandlesMap[siteName];
+        const bHandle = billingHandlesMap[siteName];
         const trips = logCounts[siteName] || 0;
-        const perm = permMap[siteName] || 'prompt';
-        const dotCls = perm === 'granted' ? 'bg-emerald-500' : 'bg-amber-400';
+        const zDotCls = (zonePermMap[siteName] || 'prompt') === 'granted' ? 'bg-emerald-500' : 'bg-amber-400';
+        const bDotCls = (billingPermMap[siteName] || 'prompt') === 'granted' ? 'bg-emerald-500' : 'bg-amber-400';
+        const hasAnyBound = Boolean(zHandle || bHandle);
         return `
-          <div class="p-2.5 rounded-xl bg-white border ${handle ? 'border-sky-300 shadow-xs' : 'border-slate-200'} flex flex-col gap-2">
-            <div class="flex items-start justify-between gap-2 min-w-0">
-              <div class="min-w-0 flex-1">
+          <div class="p-2.5 rounded-xl bg-white border ${hasAnyBound ? 'border-sky-300 shadow-xs' : 'border-slate-200'} flex flex-col gap-2">
+            <div class="flex items-center justify-between gap-2 min-w-0">
+              <div class="flex items-center gap-1.5 min-w-0">
+                <i class="fa-solid fa-building text-amber-500 text-[11px] shrink-0"></i>
+                <span class="font-bold text-xs text-slate-900 truncate" title="${escapeHtml(siteName)}">${escapeHtml(siteName)}</span>
+              </div>
+              ${trips > 0 ? `<span class="px-1.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 text-[10px] font-bold shrink-0">${formatInt(trips)} เที่ยว</span>` : ''}
+            </div>
+
+            <!-- แถวสำเนาโซน (เฉพาะโครงการนี้) -->
+            <div class="p-2 rounded-lg bg-amber-50/70 border border-amber-200/80 space-y-1.5">
+              <div class="flex items-center justify-between gap-1.5 min-w-0">
                 <div class="flex items-center gap-1.5 min-w-0">
-                  <i class="fa-solid fa-building text-amber-500 text-[11px] shrink-0"></i>
-                  <span class="font-bold text-xs text-slate-900 truncate" title="${escapeHtml(siteName)}">${escapeHtml(siteName)}</span>
-                  ${trips > 0 ? `<span class="px-1.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 text-[10px] font-bold shrink-0">${formatInt(trips)} เที่ยว</span>` : ''}
-                </div>
-                <div class="flex items-center gap-1.5 mt-0.5 min-w-0">
+                  <span class="px-1.5 py-0.5 rounded bg-amber-200/80 text-amber-950 text-[10px] font-bold shrink-0">สำเนา</span>
                   ${
-                    handle
-                      ? `<span class="w-2 h-2 rounded-full ${dotCls} shrink-0"></span><span class="text-[11px] text-sky-800 font-semibold truncate" title="${escapeHtml(handle.name)}">${escapeHtml(handle.name)}</span>`
-                      : '<span class="text-[11px] text-slate-400">ยังไม่ผูกไฟล์ Excel</span>'
+                    zHandle
+                      ? `<span class="w-2 h-2 rounded-full ${zDotCls} shrink-0"></span><span class="text-[11px] text-amber-950 font-semibold truncate" title="${escapeHtml(zHandle.name)}">${escapeHtml(zHandle.name)}</span>`
+                      : '<span class="text-[11px] text-slate-400 truncate">ยังไม่ผูกไฟล์สำเนา</span>'
                   }
                 </div>
+                ${
+                  zHandle
+                    ? `<button type="button" data-excel-zone-site-unbind="${escapeHtml(siteName)}" title="ยกเลิกการผูกไฟล์สำเนาของโครงการนี้"
+                        class="w-6 h-6 rounded-md bg-white hover:bg-rose-50 text-slate-400 hover:text-rose-600 border border-amber-200 inline-flex items-center justify-center cursor-pointer shrink-0">
+                        <i class="fa-solid fa-link-slash text-[10px]"></i>
+                      </button>`
+                    : ''
+                }
               </div>
-              ${
-                handle
-                  ? `<button type="button" data-excel-site-unbind="${escapeHtml(siteName)}" title="ยกเลิกการผูกไฟล์ของโครงการนี้"
-                      class="w-7 h-7 rounded-lg bg-slate-50 hover:bg-rose-50 text-slate-400 hover:text-rose-600 border border-slate-200 inline-flex items-center justify-center cursor-pointer shrink-0">
-                      <i class="fa-solid fa-link-slash text-[10px]"></i>
-                    </button>`
-                  : ''
-              }
+              <div class="flex flex-wrap items-center gap-1.5">
+                <button type="button" data-excel-zone-site-bind="${escapeHtml(siteName)}"
+                  class="flex-1 min-h-[28px] px-2 py-1 rounded-lg bg-white hover:bg-amber-100 text-amber-950 border border-amber-300 text-[11px] font-semibold flex items-center justify-center gap-1 cursor-pointer transition">
+                  <i class="fa-solid fa-link text-[10px]"></i><span>${zHandle ? 'เปลี่ยนไฟล์' : 'ผูกสำเนา'}</span>
+                </button>
+                <button type="button" data-excel-zone-site-sync="${escapeHtml(siteName)}"
+                  class="flex-1 min-h-[28px] px-2 py-1 rounded-lg ${zHandle ? 'bg-amber-600 hover:bg-amber-700 text-white' : 'bg-white/90 hover:bg-amber-600 hover:text-white text-amber-900 border border-amber-200'} text-[11px] font-semibold flex items-center justify-center gap-1 cursor-pointer transition"
+                  title="เขียนเฉพาะข้อมูลสำเนาของโครงการ ${escapeHtml(siteName)} ลงไฟล์ Excel">
+                  <i class="fa-solid fa-file-arrow-down text-[10px]"></i><span>เขียนสำเนา</span>
+                </button>
+                <button type="button" data-excel-zone-site-dl="${escapeHtml(siteName)}"
+                  class="min-h-[28px] px-2 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-semibold flex items-center justify-center gap-1 cursor-pointer transition shrink-0"
+                  title="ดาวน์โหลดไฟล์สำเนา (.xlsx) เฉพาะโครงการ ${escapeHtml(siteName)}">
+                  <i class="fa-solid fa-download text-[10px]"></i><span>โหลด</span>
+                </button>
+              </div>
             </div>
-            <div class="flex flex-wrap items-center gap-1.5">
-              <button type="button" data-excel-site-bind="${escapeHtml(siteName)}"
-                class="flex-1 min-h-[30px] px-2 py-1 rounded-lg bg-sky-50 hover:bg-sky-100 text-sky-900 border border-sky-200 text-[11px] font-semibold flex items-center justify-center gap-1 cursor-pointer transition">
-                <i class="fa-solid fa-link text-[10px]"></i><span>${handle ? 'เปลี่ยนไฟล์' : 'ผูกไฟล์'}</span>
-              </button>
-              <button type="button" data-excel-site-sync="${escapeHtml(siteName)}"
-                class="flex-1 min-h-[30px] px-2 py-1 rounded-lg ${handle ? 'bg-sky-600 hover:bg-sky-700 text-white' : 'bg-slate-100 hover:bg-sky-600 hover:text-white text-slate-700'} text-[11px] font-semibold flex items-center justify-center gap-1 cursor-pointer transition"
-                title="เขียนเฉพาะข้อมูลของโครงการ ${escapeHtml(siteName)} ลงไฟล์ Excel">
-                <i class="fa-solid fa-file-arrow-down text-[10px]"></i><span>เขียนไฟล์นี้</span>
-              </button>
-              <button type="button" data-excel-site-dl="${escapeHtml(siteName)}"
-                class="min-h-[30px] px-2 py-1 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-white text-[11px] font-semibold flex items-center justify-center gap-1 cursor-pointer transition shrink-0"
-                title="ดาวน์โหลดไฟล์ใบเบิก (.xlsx) เฉพาะโครงการ ${escapeHtml(siteName)}">
-                <i class="fa-solid fa-download text-amber-400 text-[10px]"></i><span>โหลด</span>
-              </button>
+
+            <!-- แถวใบเบิก (เฉพาะโครงการนี้) -->
+            <div class="p-2 rounded-lg bg-sky-50/70 border border-sky-200/80 space-y-1.5">
+              <div class="flex items-center justify-between gap-1.5 min-w-0">
+                <div class="flex items-center gap-1.5 min-w-0">
+                  <span class="px-1.5 py-0.5 rounded bg-sky-200/80 text-sky-950 text-[10px] font-bold shrink-0">ใบเบิก</span>
+                  ${
+                    bHandle
+                      ? `<span class="w-2 h-2 rounded-full ${bDotCls} shrink-0"></span><span class="text-[11px] text-sky-900 font-semibold truncate" title="${escapeHtml(bHandle.name)}">${escapeHtml(bHandle.name)}</span>`
+                      : '<span class="text-[11px] text-slate-400 truncate">ยังไม่ผูกไฟล์ใบเบิก</span>'
+                  }
+                </div>
+                ${
+                  bHandle
+                    ? `<button type="button" data-excel-site-unbind="${escapeHtml(siteName)}" title="ยกเลิกการผูกไฟล์ใบเบิกของโครงการนี้"
+                        class="w-6 h-6 rounded-md bg-white hover:bg-rose-50 text-slate-400 hover:text-rose-600 border border-sky-200 inline-flex items-center justify-center cursor-pointer shrink-0">
+                        <i class="fa-solid fa-link-slash text-[10px]"></i>
+                      </button>`
+                    : ''
+                }
+              </div>
+              <div class="flex flex-wrap items-center gap-1.5">
+                <button type="button" data-excel-site-bind="${escapeHtml(siteName)}"
+                  class="flex-1 min-h-[28px] px-2 py-1 rounded-lg bg-white hover:bg-sky-100 text-sky-900 border border-sky-300 text-[11px] font-semibold flex items-center justify-center gap-1 cursor-pointer transition">
+                  <i class="fa-solid fa-link text-[10px]"></i><span>${bHandle ? 'เปลี่ยนไฟล์' : 'ผูกใบเบิก'}</span>
+                </button>
+                <button type="button" data-excel-site-sync="${escapeHtml(siteName)}"
+                  class="flex-1 min-h-[28px] px-2 py-1 rounded-lg ${bHandle ? 'bg-sky-600 hover:bg-sky-700 text-white' : 'bg-white/90 hover:bg-sky-600 hover:text-white text-sky-900 border border-sky-200'} text-[11px] font-semibold flex items-center justify-center gap-1 cursor-pointer transition"
+                  title="เขียนเฉพาะข้อมูลใบเบิกของโครงการ ${escapeHtml(siteName)} ลงไฟล์ Excel">
+                  <i class="fa-solid fa-file-arrow-down text-[10px]"></i><span>เขียนใบเบิก</span>
+                </button>
+                <button type="button" data-excel-site-dl="${escapeHtml(siteName)}"
+                  class="min-h-[28px] px-2 py-1 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-white text-[11px] font-semibold flex items-center justify-center gap-1 cursor-pointer transition shrink-0"
+                  title="ดาวน์โหลดไฟล์ใบเบิก (.xlsx) เฉพาะโครงการ ${escapeHtml(siteName)}">
+                  <i class="fa-solid fa-download text-amber-400 text-[10px]"></i><span>โหลด</span>
+                </button>
+              </div>
             </div>
           </div>
         `;
@@ -2189,6 +2276,9 @@
   async function updateBindingUI() {
     const autoCheck = $('toggle-auto-sync');
     if (autoCheck) autoCheck.checked = Boolean(state.autoSync);
+
+    const legacyZoneWrap = $('legacy-zone-bind-wrap');
+    if (legacyZoneWrap) legacyZoneWrap.classList.toggle('hidden', !state.boundZoneHandle);
 
     const legacyWrap = $('legacy-billing-bind-wrap');
     if (legacyWrap) legacyWrap.classList.toggle('hidden', !state.boundBillingHandle);
@@ -2260,6 +2350,21 @@
     return state.sites.find((s) => s.site_name === siteName) || null;
   }
 
+  async function buildZonePayload({ siteName, dateFrom, dateTo }) {
+    const params = new URLSearchParams();
+    if (siteName) params.set('site_name', siteName);
+    if (dateFrom) params.set('date_from', dateFrom);
+    if (dateTo) params.set('date_to', dateTo);
+    const logs = await apiFetch(`/api/logs${params.toString() ? `?${params.toString()}` : ''}`);
+    const siteMeta = siteName ? findSiteMeta(siteName) : null;
+    const zoneName = siteMeta ? siteMeta.zone_name : '';
+
+    const wb = window.CkpExcel.buildZoneCopyWorkbook(window.ExcelJS, logs, { siteName, zoneName });
+    const { start, end } = window.CkpExcel.dateRangeOf(logs, dateFrom, dateTo);
+    const filename = window.CkpExcel.zoneCopyFilename({ zoneName, siteName, start, end });
+    return { wb, filename, logs };
+  }
+
   async function buildZonePayloadFromFilters() {
     const f = getFilterParams();
     const params = new URLSearchParams();
@@ -2316,12 +2421,8 @@
 
   function showFileLockedModal({ kind, siteName = '', handle, wb, suggestedName, onRetry }) {
     const cleanSite = String(siteName || '').trim();
-    const typeLabel =
-      kind === 'billing'
-        ? cleanSite
-          ? `ใบเบิกโครงการ (${cleanSite})`
-          : 'ใบเบิกโครงการ'
-        : 'สำเนาโซน';
+    const baseLabel = kind === 'billing' ? 'ใบเบิกโครงการ' : 'สำเนาโซน';
+    const typeLabel = cleanSite ? `${baseLabel} (${cleanSite})` : baseLabel;
     openModal(
       `
       <div class="p-5 sm:p-6 space-y-4">
@@ -2368,12 +2469,13 @@
             const writable = await newHandle.createWritable();
             await writable.write(buffer);
             await writable.close();
-            if (kind === 'zone') {
+            if (cleanSite) {
+              if (kind === 'zone') state.boundZoneHandlesBySite[cleanSite] = newHandle;
+              else state.boundBillingHandlesBySite[cleanSite] = newHandle;
+              await saveHandleToDb(siteHandleKey(kind, cleanSite), newHandle);
+            } else if (kind === 'zone') {
               state.boundZoneHandle = newHandle;
               await saveHandleToDb('zone', newHandle);
-            } else if (cleanSite) {
-              state.boundBillingHandlesBySite[cleanSite] = newHandle;
-              await saveHandleToDb(siteHandleKey(cleanSite), newHandle);
             } else {
               state.boundBillingHandle = newHandle;
               await saveHandleToDb('billing', newHandle);
@@ -2426,8 +2528,8 @@
           wb,
           suggestedName,
           onRetry: () =>
-            kind === 'billing' && cleanSite
-              ? syncSiteBillingFile(cleanSite, { interactive: true })
+            cleanSite
+              ? syncSiteExcelFile(kind, cleanSite, { interactive: true })
               : syncToBoundFile(kind, { interactive: true })
         });
         return { status: 'locked' };
@@ -2438,14 +2540,15 @@
 
   function openBindFileModal(kind, fixedSiteName = '') {
     const isBilling = kind === 'billing';
-    const fixedSite = isBilling ? String(fixedSiteName || '').trim() : '';
+    const fixedSite = String(fixedSiteName || '').trim();
+    const kindThai = isBilling ? 'ใบเบิก' : 'สำเนา';
     const title = fixedSite
-      ? `ผูกไฟล์ Excel ใบเบิกเฉพาะโครงการ: ${fixedSite}`
+      ? `ผูกไฟล์ Excel ${kindThai}เฉพาะโครงการ: ${fixedSite}`
       : isBilling
         ? 'ผูกไฟล์ที่ 2: ใบเบิกโครงการ (.xlsx)'
         : 'ผูกไฟล์ที่ 1: สำเนาโซน (.xlsx)';
     const desc = fixedSite
-      ? `เลือกไฟล์ .xlsx เดิม หรือสร้างไฟล์ใหม่เพื่อผูกไว้เฉพาะโครงการ "${fixedSite}" (จะเขียนเฉพาะเที่ยววิ่งของโครงการนี้เท่านั้น ไม่รวมกับโครงการอื่น)`
+      ? `เลือกไฟล์ .xlsx เดิม หรือสร้างไฟล์ใหม่เพื่อผูก${kindThai}ไว้เฉพาะโครงการ "${fixedSite}" (จะเขียนเฉพาะเที่ยววิ่งของโครงการนี้เท่านั้น ไม่รวมกับโครงการอื่น)`
       : isBilling
         ? 'เลือกไฟล์ใบเบิกเดิมบนเครื่อง หรือสร้างไฟล์ใหม่ไว้ผูกกับระบบ เพื่อให้กดบันทึกข้อมูล (พร้อมโลโก้และสูตรคำนวณ) ลงไฟล์ได้ทันที'
         : 'เลือกไฟล์สำเนาโซนเดิมบนเครื่อง หรือสร้างไฟล์ใหม่ไว้ผูกกับระบบ เพื่อให้กดบันทึกข้อมูล (พร้อมสรุปเที่ยว COUNTIF/SUM) ลงไฟล์ได้ทันที';
@@ -2468,9 +2571,11 @@
           box.querySelector('#m-bind-close').addEventListener('click', closeModal);
           box.querySelector('#m-bind-dl').addEventListener('click', async () => {
             closeModal();
-            if (fixedSite) {
-              const f = getFilterParams();
+            const f = getFilterParams();
+            if (fixedSite && isBilling) {
               await runBillingExport({ siteName: fixedSite, dateFrom: f.date_from, dateTo: f.date_to, issueDate: todayIso() });
+            } else if (fixedSite && !isBilling) {
+              await runZoneExport({ siteName: fixedSite, dateFrom: f.date_from, dateTo: f.date_to });
             } else if (isBilling) {
               handleExportBilling();
             } else {
@@ -2501,9 +2606,9 @@
         ${
           fixedSite
             ? `
-          <div class="p-3 rounded-xl bg-sky-50 border border-sky-200 text-xs text-sky-950 font-semibold flex items-center gap-2">
+          <div class="p-3 rounded-xl ${isBilling ? 'bg-sky-50 border-sky-200 text-sky-950' : 'bg-amber-50 border-amber-200 text-amber-950'} border text-xs font-semibold flex items-center gap-2">
             <i class="fa-solid fa-building text-amber-500"></i>
-            <span>โครงการที่ผูก: <strong class="text-sky-900">${escapeHtml(fixedSite)}</strong> (แยกเฉพาะโครงการนี้ ไม่รวมโครงการอื่น)</span>
+            <span>โครงการที่ผูก (${escapeHtml(kindThai)}): <strong>${escapeHtml(fixedSite)}</strong> (แยกเฉพาะโครงการนี้ ไม่รวมโครงการอื่น)</span>
           </div>
         `
             : isBilling
@@ -2553,8 +2658,8 @@
       `,
       (box) => {
         const readChosenSite = () => {
-          if (!isBilling) return '';
           if (fixedSite) return fixedSite;
+          if (!isBilling) return '';
           const sel = box.querySelector('#m-bind-billing-site');
           const val = sel ? sel.value.trim() : '';
           state.boundBillingSite = val;
@@ -2563,9 +2668,10 @@
         };
 
         const storeBoundHandle = async (chosenSite, handle) => {
-          if (isBilling && chosenSite) {
-            state.boundBillingHandlesBySite[chosenSite] = handle;
-            await saveHandleToDb(siteHandleKey(chosenSite), handle);
+          if (chosenSite) {
+            if (isBilling) state.boundBillingHandlesBySite[chosenSite] = handle;
+            else state.boundZoneHandlesBySite[chosenSite] = handle;
+            await saveHandleToDb(siteHandleKey(kind, chosenSite), handle);
           } else if (isBilling) {
             state.boundBillingHandle = handle;
             await saveHandleToDb('billing', handle);
@@ -2594,16 +2700,16 @@
             await storeBoundHandle(chosenSite, handle);
             await updateBindingUI();
             closeModal();
-            const targetLabel = chosenSite ? `โครงการ "${chosenSite}"` : isBilling ? 'ใบเบิก' : 'สำเนาโซน';
+            const targetLabel = chosenSite ? `${kindThai}โครงการ "${chosenSite}"` : kindThai;
             if (perm !== 'granted') {
               showToast(
-                `ผูกไฟล์ "${handle.name}" ให้ ${targetLabel} แล้ว — กดปุ่มเขียนไฟล์ 1 ครั้งเพื่ออนุญาตสิทธิ์`,
+                `ผูกไฟล์ "${handle.name}" ให้${targetLabel} แล้ว — กดปุ่มเขียนไฟล์ 1 ครั้งเพื่ออนุญาตสิทธิ์`,
                 'warning',
                 4800
               );
             } else {
               showToast(
-                `ผูกไฟล์ "${handle.name}" ให้ ${targetLabel} เรียบร้อยแล้ว`,
+                `ผูกไฟล์ "${handle.name}" ให้${targetLabel} เรียบร้อยแล้ว`,
                 'success',
                 4500
               );
@@ -2619,7 +2725,7 @@
           try {
             // คำนวณชื่อไฟล์แนะนำแบบ synchronous และเปิด showSaveFilePicker ทันทีเพื่อรักษา User Gesture ใน Chrome/Edge
             const f = getFilterParams();
-            const targetSite = isBilling ? chosenSite || f.site_name : f.site_name;
+            const targetSite = chosenSite || f.site_name;
             const siteMeta = targetSite ? findSiteMeta(targetSite) : null;
             const zoneName = siteMeta ? siteMeta.zone_name : '';
             const { start, end } = window.CkpExcel.dateRangeOf(state.logs, f.date_from, f.date_to);
@@ -2644,7 +2750,13 @@
                   dateTo: f.date_to,
                   issueDate: todayIso()
                 })
-              : await buildZonePayloadFromFilters();
+              : chosenSite
+                ? await buildZonePayload({
+                    siteName: chosenSite,
+                    dateFrom: f.date_from,
+                    dateTo: f.date_to
+                  })
+                : await buildZonePayloadFromFilters();
 
             const buffer = await payload.wb.xlsx.writeBuffer();
             const writable = await handle.createWritable();
@@ -2655,7 +2767,7 @@
             await updateBindingUI();
             closeModal();
             showToast(
-              `สร้างและผูกไฟล์ "${handle.name}"${chosenSite ? ` สำหรับโครงการ "${chosenSite}"` : ''} สำเร็จ (${payload.wb.worksheets.length} ชีต, ${payload.logs.length} เที่ยว)`,
+              `สร้างและผูกไฟล์${kindThai} "${handle.name}"${chosenSite ? ` สำหรับโครงการ "${chosenSite}"` : ''} สำเร็จ (${payload.wb.worksheets.length} ชีต, ${payload.logs.length} เที่ยว)`,
               'success',
               4500
             );
@@ -2668,31 +2780,37 @@
     );
   }
 
-  async function unbindSiteBillingFile(siteName) {
+  async function unbindSiteExcelFile(kind, siteName) {
     const cleanSite = String(siteName || '').trim();
-    const handle = state.boundBillingHandlesBySite[cleanSite];
+    const isZone = kind === 'zone';
+    const map = isZone ? state.boundZoneHandlesBySite : state.boundBillingHandlesBySite;
+    const handle = map[cleanSite];
     if (!handle) return;
+    const kindThai = isZone ? 'สำเนา' : 'ใบเบิก';
     const ok = await confirmModal({
-      title: `ยกเลิกการผูกไฟล์โครงการ "${cleanSite}"`,
-      message: `ต้องการยกเลิกการผูกไฟล์ "${handle.name}" ออกจากโครงการ "${cleanSite}" ใช่หรือไม่? (ไฟล์บนเครื่องของคุณจะไม่ถูกลบ)`,
+      title: `ยกเลิกการผูกไฟล์${kindThai}โครงการ "${cleanSite}"`,
+      message: `ต้องการยกเลิกการผูกไฟล์ "${handle.name}" ออกจาก${kindThai}โครงการ "${cleanSite}" ใช่หรือไม่? (ไฟล์บนเครื่องของคุณจะไม่ถูกลบ)`,
       confirmText: 'ยกเลิกการผูก'
     });
     if (!ok) return;
-    delete state.boundBillingHandlesBySite[cleanSite];
-    await saveHandleToDb(siteHandleKey(cleanSite), null);
+    delete map[cleanSite];
+    await saveHandleToDb(siteHandleKey(kind, cleanSite), null);
     await updateBindingUI();
-    showToast(`ยกเลิกการผูกไฟล์ของโครงการ "${cleanSite}" เรียบร้อยแล้ว`, 'info');
+    showToast(`ยกเลิกการผูกไฟล์${kindThai}ของโครงการ "${cleanSite}" เรียบร้อยแล้ว`, 'info');
   }
 
-  async function syncSiteBillingFile(siteName, { interactive = true, triggerBtn = null } = {}) {
+  async function syncSiteExcelFile(kind, siteName, { interactive = true, triggerBtn = null } = {}) {
     if (typeof window.ExcelJS === 'undefined' || !window.CkpExcel) {
       if (interactive) showToast('ไม่พบไลบรารี ExcelJS กรุณารีเฟรชหน้าเว็บ', 'error');
       return { status: 'error' };
     }
+    const isZone = kind === 'zone';
+    const kindThai = isZone ? 'สำเนา' : 'ใบเบิก';
     const cleanSite = String(siteName || '').trim();
-    const handle = state.boundBillingHandlesBySite[cleanSite];
+    const map = isZone ? state.boundZoneHandlesBySite : state.boundBillingHandlesBySite;
+    const handle = map[cleanSite];
     if (!handle) {
-      if (interactive) openBindFileModal('billing', cleanSite);
+      if (interactive) openBindFileModal(kind, cleanSite);
       return { status: 'unbound' };
     }
 
@@ -2705,26 +2823,32 @@
     try {
       const f = getFilterParams();
       // กรองเฉพาะเที่ยววิ่งของโครงการนี้เท่านั้น ไม่รวมกับโครงการอื่น
-      const payload = await buildBillingPayload({
-        siteName: cleanSite,
-        dateFrom: f.date_from,
-        dateTo: f.date_to,
-        issueDate: todayIso()
-      });
-      const res = await writeWorkbookToHandle('billing', handle, payload.wb, payload.filename, {
+      const payload = isZone
+        ? await buildZonePayload({
+            siteName: cleanSite,
+            dateFrom: f.date_from,
+            dateTo: f.date_to
+          })
+        : await buildBillingPayload({
+            siteName: cleanSite,
+            dateFrom: f.date_from,
+            dateTo: f.date_to,
+            issueDate: todayIso()
+          });
+      const res = await writeWorkbookToHandle(kind, handle, payload.wb, payload.filename, {
         interactive,
         siteName: cleanSite
       });
       if (res.status === 'ok' && interactive) {
         showToast(
-          `เขียนไฟล์โครงการ "${cleanSite}" (${handle.name}) สำเร็จ (${payload.wb.worksheets.length} ชีต, ${payload.logs.length} เที่ยว)`,
+          `เขียนไฟล์${kindThai}โครงการ "${cleanSite}" (${handle.name}) สำเร็จ (${payload.wb.worksheets.length} ชีต, ${payload.logs.length} เที่ยว)`,
           'success',
           4200
         );
       }
       return { ...res, siteName: cleanSite, name: handle.name, sheets: payload.wb.worksheets.length, count: payload.logs.length };
     } catch (err) {
-      if (interactive) showToast(`เขียนไฟล์โครงการ "${cleanSite}" ไม่สำเร็จ: ${err.message}`, 'error', 5000);
+      if (interactive) showToast(`เขียนไฟล์${kindThai}โครงการ "${cleanSite}" ไม่สำเร็จ: ${err.message}`, 'error', 5000);
       return { status: 'error', siteName: cleanSite, error: err };
     } finally {
       if (triggerBtn && interactive) {
@@ -2734,30 +2858,33 @@
     }
   }
 
-  async function syncAllBoundExcelSites() {
-    const sites = Object.keys(state.boundBillingHandlesBySite || {});
+  async function syncAllBoundExcelSites(kind = 'billing') {
+    const isZone = kind === 'zone';
+    const kindThai = isZone ? 'สำเนา' : 'ใบเบิก';
+    const map = isZone ? state.boundZoneHandlesBySite : state.boundBillingHandlesBySite;
+    const sites = Object.keys(map || {});
     if (sites.length === 0) {
-      showToast('ยังไม่ได้ผูกไฟล์ Excel ให้โครงการใด — กดปุ่ม "ผูกไฟล์" ที่การ์ดโครงการด้านล่างก่อนครับ', 'warning', 4500);
+      showToast(`ยังไม่ได้ผูกไฟล์${kindThai} Excel ให้โครงการใด — กดปุ่ม "ผูก${kindThai}" ที่การ์ดโครงการด้านล่างก่อนครับ`, 'warning', 4500);
       return;
     }
-    const btn = $('btn-sync-all-excel-sites');
+    const btn = $(isZone ? 'btn-sync-all-excel-zone-sites' : 'btn-sync-all-excel-sites');
     const origHtml = btn ? btn.innerHTML : '';
     if (btn) {
       btn.disabled = true;
-      btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i><span>กำลังเขียนทุกโครงการ...</span>';
+      btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i><span>กำลังเขียน${kindThai}ทุกโครงการ...</span>`;
     }
     try {
       const okNames = [];
       let failCount = 0;
       for (const sName of sites) {
-        const r = await syncSiteBillingFile(sName, { interactive: true });
+        const r = await syncSiteExcelFile(kind, sName, { interactive: true });
         if (r.status === 'ok') okNames.push(sName);
         else if (r.status === 'error') failCount += 1;
       }
       if (okNames.length > 0) {
-        showToast(`เขียนไฟล์แยกสำเร็จครบ ${okNames.length} โครงการ: ${okNames.join(', ')}`, 'success', 5000);
+        showToast(`เขียนไฟล์${kindThai}แยกสำเร็จครบ ${okNames.length} โครงการ: ${okNames.join(', ')}`, 'success', 5000);
       } else if (failCount > 0) {
-        showToast('ไม่สามารถเขียนไฟล์บางโครงการได้ กรุณาตรวจสอบว่าไม่ได้เปิดไฟล์ค้างไว้ใน Excel', 'error', 5000);
+        showToast(`ไม่สามารถเขียนไฟล์${kindThai}บางโครงการได้ กรุณาตรวจสอบว่าไม่ได้เปิดไฟล์ค้างไว้ใน Excel`, 'error', 5000);
       }
     } finally {
       if (btn) {
@@ -2839,8 +2966,13 @@
   }
 
   async function autoSyncBoundFiles() {
-    const perSiteKeys = Object.keys(state.boundBillingHandlesBySite || {});
-    if (state.autoSync && supportsFileBinding() && (state.boundZoneHandle || state.boundBillingHandle || perSiteKeys.length > 0)) {
+    const perSiteZoneKeys = Object.keys(state.boundZoneHandlesBySite || {});
+    const perSiteBillingKeys = Object.keys(state.boundBillingHandlesBySite || {});
+    if (
+      state.autoSync &&
+      supportsFileBinding() &&
+      (state.boundZoneHandle || state.boundBillingHandle || perSiteZoneKeys.length > 0 || perSiteBillingKeys.length > 0)
+    ) {
       const syncedNames = [];
       let needsPerm = false;
 
@@ -2854,16 +2986,21 @@
         if (r.status === 'ok') syncedNames.push(r.name);
         else if (r.status === 'need_permission') needsPerm = true;
       }
-      for (const sName of perSiteKeys) {
-        const r = await syncSiteBillingFile(sName, { interactive: false });
-        if (r.status === 'ok') syncedNames.push(`${sName}`);
+      for (const sName of perSiteZoneKeys) {
+        const r = await syncSiteExcelFile('zone', sName, { interactive: false });
+        if (r.status === 'ok') syncedNames.push(`สำเนา:${sName}`);
+        else if (r.status === 'need_permission') needsPerm = true;
+      }
+      for (const sName of perSiteBillingKeys) {
+        const r = await syncSiteExcelFile('billing', sName, { interactive: false });
+        if (r.status === 'ok') syncedNames.push(`ใบเบิก:${sName}`);
         else if (r.status === 'need_permission') needsPerm = true;
       }
 
       if (syncedNames.length > 0) {
         showToast(`ซิงค์ลงไฟล์ที่ผูกไว้อัตโนมัติแล้ว: ${syncedNames.join(', ')}`, 'info', 3500);
       } else if (needsPerm) {
-        showToast('กดปุ่ม "เขียนไฟล์นี้" หรือ "เขียนทุกโครงการที่ผูก" 1 ครั้งเพื่ออนุญาตสิทธิ์หลังรีเฟรชหน้า', 'warning', 4500);
+        showToast('กดปุ่ม "เขียนสำเนา" หรือ "เขียนใบเบิก" 1 ครั้งเพื่ออนุญาตสิทธิ์หลังรีเฟรชหน้า', 'warning', 4500);
       }
     }
 
@@ -2945,18 +3082,26 @@
 
   function renderPerSiteGoogleSheetsList() {
     const listEl = $('gsheet-per-site-list');
-    const countBadge = $('gsheet-sites-bound-count');
+    const zoneCountBadge = $('gsheet-zone-sites-bound-count');
+    const billingCountBadge = $('gsheet-sites-bound-count');
     const toggleBtn = $('btn-gsheet-sites-toggle');
     const searchEl = $('gsheet-sites-search');
-    const syncAllBtn = $('btn-sync-all-gsheet-sites');
+    const syncAllZoneBtn = $('btn-sync-all-gsheet-zone-sites');
+    const syncAllBillingBtn = $('btn-sync-all-gsheet-sites');
     if (!listEl) return;
 
     const cfg = state.gsheet || {};
-    const bySite = cfg.billing_by_site || {};
-    const boundCount = Object.keys(bySite).length;
-    if (countBadge) countBadge.textContent = `ผูกแล้ว ${formatInt(boundCount)} โครงการ`;
-    if (syncAllBtn) {
-      syncAllBtn.innerHTML = `<i class="fa-solid fa-cloud-arrow-up"></i><span>ไหลทุกโครงการที่ผูก (${formatInt(boundCount)})</span>`;
+    const zoneBySite = cfg.zone_by_site || {};
+    const billingBySite = cfg.billing_by_site || {};
+    const zoneBoundCount = Object.keys(zoneBySite).filter((k) => zoneBySite[k] && zoneBySite[k].url).length;
+    const billingBoundCount = Object.keys(billingBySite).filter((k) => billingBySite[k] && billingBySite[k].url).length;
+    if (zoneCountBadge) zoneCountBadge.textContent = `ผูกแล้ว ${formatInt(zoneBoundCount)} โครงการ`;
+    if (billingCountBadge) billingCountBadge.textContent = `ผูกแล้ว ${formatInt(billingBoundCount)} โครงการ`;
+    if (syncAllZoneBtn) {
+      syncAllZoneBtn.innerHTML = `<i class="fa-solid fa-cloud-arrow-up"></i><span>ไหลสำเนาทุกโครงการที่ผูก (${formatInt(zoneBoundCount)})</span>`;
+    }
+    if (syncAllBillingBtn) {
+      syncAllBillingBtn.innerHTML = `<i class="fa-solid fa-cloud-arrow-up"></i><span>ไหลใบเบิกทุกโครงการที่ผูก (${formatInt(billingBoundCount)})</span>`;
     }
 
     const logCounts = getLogCountBySite();
@@ -2964,8 +3109,8 @@
     const q = searchEl ? searchEl.value.trim().toLowerCase() : '';
 
     const sorted = [...allProjects].sort((a, b) => {
-      const ab = bySite[a] && bySite[a].url ? 1 : 0;
-      const bb = bySite[b] && bySite[b].url ? 1 : 0;
+      const ab = (zoneBySite[a] && zoneBySite[a].url) || (billingBySite[a] && billingBySite[a].url) ? 1 : 0;
+      const bb = (zoneBySite[b] && zoneBySite[b].url) || (billingBySite[b] && billingBySite[b].url) ? 1 : 0;
       if (ab !== bb) return bb - ab;
       const ac = logCounts[a] || 0;
       const bc = logCounts[b] || 0;
@@ -2973,7 +3118,11 @@
       return a.localeCompare(b, 'th');
     });
 
-    const important = sorted.filter((s) => Boolean(bySite[s] && bySite[s].url) || (logCounts[s] || 0) > 0);
+    const important = sorted.filter(
+      (s) =>
+        Boolean((zoneBySite[s] && zoneBySite[s].url) || (billingBySite[s] && billingBySite[s].url)) ||
+        (logCounts[s] || 0) > 0
+    );
     const defaultList = state.gsheetSitesShowAll || q || important.length === 0 ? sorted : important;
     const filtered = q ? defaultList.filter((s) => s.toLowerCase().includes(q)) : defaultList;
 
@@ -2990,51 +3139,91 @@
 
     if (filtered.length === 0) {
       listEl.innerHTML = allProjects.length === 0
-        ? '<div class="col-span-full py-3 text-center text-xs text-slate-400">ยังไม่มีโครงการ — เพิ่มโครงการในหน้า "ตั้งค่า" ก่อน เพื่อผูก Google Sheet แยกแต่ละโครงการ</div>'
+        ? '<div class="col-span-full py-3 text-center text-xs text-slate-400">ยังไม่มีโครงการ — เพิ่มโครงการในหน้า "ตั้งค่า" ก่อน เพื่อผูก Google Sheet สำเนาและใบเบิกแยกแต่ละโครงการ</div>'
         : '<div class="col-span-full py-3 text-center text-xs text-slate-400">ไม่พบโครงการที่ค้นหา</div>';
       return;
     }
 
     listEl.innerHTML = filtered
       .map((siteName) => {
-        const entry = bySite[siteName] && bySite[siteName].url ? bySite[siteName] : null;
+        const zEntry = zoneBySite[siteName] && zoneBySite[siteName].url ? zoneBySite[siteName] : null;
+        const bEntry = billingBySite[siteName] && billingBySite[siteName].url ? billingBySite[siteName] : null;
         const trips = logCounts[siteName] || 0;
+        const hasAnyBound = Boolean(zEntry || bEntry);
         return `
-          <div class="p-2.5 rounded-xl bg-white border ${entry ? 'border-teal-300 shadow-xs' : 'border-slate-200'} flex flex-col gap-2">
-            <div class="flex items-start justify-between gap-2 min-w-0">
-              <div class="min-w-0 flex-1">
+          <div class="p-2.5 rounded-xl bg-white border ${hasAnyBound ? 'border-emerald-300 shadow-xs' : 'border-slate-200'} flex flex-col gap-2">
+            <div class="flex items-center justify-between gap-2 min-w-0">
+              <div class="flex items-center gap-1.5 min-w-0">
+                <i class="fa-solid fa-building text-amber-500 text-[11px] shrink-0"></i>
+                <span class="font-bold text-xs text-slate-900 truncate" title="${escapeHtml(siteName)}">${escapeHtml(siteName)}</span>
+              </div>
+              ${trips > 0 ? `<span class="px-1.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 text-[10px] font-bold shrink-0">${formatInt(trips)} เที่ยว</span>` : ''}
+            </div>
+
+            <!-- ชีตสำเนา (เฉพาะโครงการนี้) -->
+            <div class="p-2 rounded-lg bg-emerald-50/70 border border-emerald-200/80 space-y-1.5">
+              <div class="flex items-center justify-between gap-1.5 min-w-0">
                 <div class="flex items-center gap-1.5 min-w-0">
-                  <i class="fa-solid fa-building text-amber-500 text-[11px] shrink-0"></i>
-                  <span class="font-bold text-xs text-slate-900 truncate" title="${escapeHtml(siteName)}">${escapeHtml(siteName)}</span>
-                  ${trips > 0 ? `<span class="px-1.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 text-[10px] font-bold shrink-0">${formatInt(trips)} เที่ยว</span>` : ''}
-                </div>
-                <div class="flex items-center gap-1.5 mt-0.5 min-w-0">
+                  <span class="px-1.5 py-0.5 rounded bg-emerald-200/80 text-emerald-950 text-[10px] font-bold shrink-0">สำเนา</span>
                   ${
-                    entry
-                      ? `<span class="w-2 h-2 rounded-full bg-emerald-500 shrink-0"></span><span class="text-[11px] text-teal-800 font-semibold truncate" title="${escapeHtml(entry.name || entry.url)}">${escapeHtml(entry.name || 'เชื่อมต่อ Google Sheet แล้ว')}</span>`
-                      : '<span class="text-[11px] text-slate-400">ยังไม่ผูก Google Sheet</span>'
+                    zEntry
+                      ? `<span class="w-2 h-2 rounded-full bg-emerald-500 shrink-0"></span><span class="text-[11px] text-emerald-900 font-semibold truncate" title="${escapeHtml(zEntry.name || zEntry.url)}">${escapeHtml(zEntry.name || 'เชื่อมต่อชีตสำเนาแล้ว')}</span>`
+                      : '<span class="text-[11px] text-slate-400 truncate">ยังไม่ผูกชีตสำเนา</span>'
                   }
                 </div>
+                ${
+                  zEntry && zEntry.sheet_url
+                    ? `<a href="${escapeHtml(zEntry.sheet_url)}" target="_blank" rel="noopener noreferrer" title="เปิด Google Sheet สำเนาโครงการ ${escapeHtml(siteName)}"
+                        class="w-6 h-6 rounded-md bg-white hover:bg-emerald-100 text-emerald-700 border border-emerald-200 inline-flex items-center justify-center shrink-0">
+                        <i class="fa-solid fa-arrow-up-right-from-square text-[10px]"></i>
+                      </a>`
+                    : ''
+                }
               </div>
-              ${
-                entry && entry.sheet_url
-                  ? `<a href="${escapeHtml(entry.sheet_url)}" target="_blank" rel="noopener noreferrer" title="เปิด Google Sheet โครงการ ${escapeHtml(siteName)}"
-                      class="w-7 h-7 rounded-lg bg-teal-50 hover:bg-teal-100 text-teal-700 border border-teal-200 inline-flex items-center justify-center shrink-0">
-                      <i class="fa-solid fa-arrow-up-right-from-square text-[10px]"></i>
-                    </a>`
-                  : ''
-              }
+              <div class="flex flex-wrap items-center gap-1.5">
+                <button type="button" data-gsheet-zone-site-bind="${escapeHtml(siteName)}"
+                  class="flex-1 min-h-[28px] px-2 py-1 rounded-lg bg-white hover:bg-emerald-100 text-emerald-900 border border-emerald-300 text-[11px] font-semibold flex items-center justify-center gap-1 cursor-pointer transition">
+                  <i class="fa-brands fa-google text-[10px]"></i><span>${zEntry ? 'ตั้งค่าชีต' : 'ผูกชีตสำเนา'}</span>
+                </button>
+                <button type="button" data-gsheet-zone-site-sync="${escapeHtml(siteName)}"
+                  class="flex-1 min-h-[28px] px-2 py-1 rounded-lg ${zEntry ? 'bg-emerald-600 hover:bg-emerald-700 text-white' : 'bg-white/90 hover:bg-emerald-600 hover:text-white text-emerald-900 border border-emerald-200'} text-[11px] font-semibold flex items-center justify-center gap-1 cursor-pointer transition"
+                  title="ไหลเฉพาะข้อมูลสำเนาของโครงการ ${escapeHtml(siteName)} ลง Google Sheet">
+                  <i class="fa-solid fa-cloud-arrow-up text-[10px]"></i><span>ไหลลงสำเนา</span>
+                </button>
+              </div>
             </div>
-            <div class="flex flex-wrap items-center gap-1.5">
-              <button type="button" data-gsheet-site-bind="${escapeHtml(siteName)}"
-                class="flex-1 min-h-[30px] px-2 py-1 rounded-lg bg-teal-50 hover:bg-teal-100 text-teal-900 border border-teal-200 text-[11px] font-semibold flex items-center justify-center gap-1 cursor-pointer transition">
-                <i class="fa-brands fa-google text-[10px]"></i><span>${entry ? 'ตั้งค่าชีต' : 'ผูกชีต'}</span>
-              </button>
-              <button type="button" data-gsheet-site-sync="${escapeHtml(siteName)}"
-                class="flex-1 min-h-[30px] px-2 py-1 rounded-lg ${entry ? 'bg-teal-700 hover:bg-teal-800 text-white' : 'bg-slate-100 hover:bg-teal-700 hover:text-white text-slate-700'} text-[11px] font-semibold flex items-center justify-center gap-1 cursor-pointer transition"
-                title="ไหลเฉพาะข้อมูลของโครงการ ${escapeHtml(siteName)} ลง Google Sheet">
-                <i class="fa-solid fa-cloud-arrow-up text-[10px]"></i><span>ไหลลงชีตนี้</span>
-              </button>
+
+            <!-- ชีตใบเบิก (เฉพาะโครงการนี้) -->
+            <div class="p-2 rounded-lg bg-teal-50/70 border border-teal-200/80 space-y-1.5">
+              <div class="flex items-center justify-between gap-1.5 min-w-0">
+                <div class="flex items-center gap-1.5 min-w-0">
+                  <span class="px-1.5 py-0.5 rounded bg-teal-200/80 text-teal-950 text-[10px] font-bold shrink-0">ใบเบิก</span>
+                  ${
+                    bEntry
+                      ? `<span class="w-2 h-2 rounded-full bg-emerald-500 shrink-0"></span><span class="text-[11px] text-teal-900 font-semibold truncate" title="${escapeHtml(bEntry.name || bEntry.url)}">${escapeHtml(bEntry.name || 'เชื่อมต่อชีตใบเบิกแล้ว')}</span>`
+                      : '<span class="text-[11px] text-slate-400 truncate">ยังไม่ผูกชีตใบเบิก</span>'
+                  }
+                </div>
+                ${
+                  bEntry && bEntry.sheet_url
+                    ? `<a href="${escapeHtml(bEntry.sheet_url)}" target="_blank" rel="noopener noreferrer" title="เปิด Google Sheet ใบเบิกโครงการ ${escapeHtml(siteName)}"
+                        class="w-6 h-6 rounded-md bg-white hover:bg-teal-100 text-teal-700 border border-teal-200 inline-flex items-center justify-center shrink-0">
+                        <i class="fa-solid fa-arrow-up-right-from-square text-[10px]"></i>
+                      </a>`
+                    : ''
+                }
+              </div>
+              <div class="flex flex-wrap items-center gap-1.5">
+                <button type="button" data-gsheet-site-bind="${escapeHtml(siteName)}"
+                  class="flex-1 min-h-[28px] px-2 py-1 rounded-lg bg-white hover:bg-teal-100 text-teal-900 border border-teal-300 text-[11px] font-semibold flex items-center justify-center gap-1 cursor-pointer transition">
+                  <i class="fa-brands fa-google text-[10px]"></i><span>${bEntry ? 'ตั้งค่าชีต' : 'ผูกชีตใบเบิก'}</span>
+                </button>
+                <button type="button" data-gsheet-site-sync="${escapeHtml(siteName)}"
+                  class="flex-1 min-h-[28px] px-2 py-1 rounded-lg ${bEntry ? 'bg-teal-700 hover:bg-teal-800 text-white' : 'bg-white/90 hover:bg-teal-700 hover:text-white text-teal-900 border border-teal-200'} text-[11px] font-semibold flex items-center justify-center gap-1 cursor-pointer transition"
+                  title="ไหลเฉพาะข้อมูลใบเบิกของโครงการ ${escapeHtml(siteName)} ลง Google Sheet">
+                  <i class="fa-solid fa-cloud-arrow-up text-[10px]"></i><span>ไหลลงใบเบิก</span>
+                </button>
+              </div>
             </div>
           </div>
         `;
@@ -3047,6 +3236,7 @@
     const zLabel = $('gsheet-zone-label');
     const zDot = $('gsheet-zone-dot');
     const zOpen = $('btn-gsheet-open-zone');
+    const legacyGsZoneWrap = $('legacy-gsheet-zone-wrap');
     const bLabel = $('gsheet-billing-label');
     const bDot = $('gsheet-billing-dot');
     const bOpen = $('btn-gsheet-open-billing');
@@ -3057,13 +3247,23 @@
 
     if (autoToggle) autoToggle.checked = cfg.auto_sync !== false;
     if (histBadge) histBadge.textContent = formatInt(state.gsheetHistoryCount || 0);
+    if (legacyGsZoneWrap) legacyGsZoneWrap.classList.toggle('hidden', !cfg.zone_url);
     if (legacyGsWrap) legacyGsWrap.classList.toggle('hidden', !cfg.billing_url);
 
     if (lastNote) {
       const h = state.gsheetLastHistory;
       if (h) {
         const dt = formatDateTimeBE(h.synced_at);
-        const kindLabel = h.kind === 'billing' ? (h.site_name ? `ใบเบิก [${h.site_name}]` : 'ใบเบิก') : h.kind === 'zone' ? 'สำเนาโซน' : 'ตั้งค่า/บันทึก';
+        const kindLabel =
+          h.kind === 'billing'
+            ? h.site_name
+              ? `ใบเบิก [${h.site_name}]`
+              : 'ใบเบิก'
+            : h.kind === 'zone'
+              ? h.site_name
+                ? `สำเนา [${h.site_name}]`
+                : 'สำเนาโซน'
+              : 'ตั้งค่า/บันทึก';
         const targetText = h.spreadsheet_name ? ` (${escapeHtml(h.spreadsheet_name)})` : '';
         if (h.status === 'error') {
           lastNote.innerHTML = `<i class="fa-solid fa-circle-exclamation text-rose-600 mr-1"></i>บันทึกล่าสุด ${escapeHtml(dt)} • ${escapeHtml(kindLabel)} ไม่สำเร็จ`;
@@ -3142,7 +3342,14 @@
     const cfg = state.gsheet || {};
     if (btn) btn.disabled = true;
     try {
+      const perSiteZoneCount = Object.keys(cfg.zone_by_site || {}).length;
       const perSiteCount = Object.keys(cfg.billing_by_site || {}).length;
+      const zoneSummary =
+        perSiteZoneCount > 0
+          ? `สำเนาแยกโครงการ: ${perSiteZoneCount} โครงการ` + (cfg.zone_url ? ` + ชีตรวมเดิม (${cfg.zone_name || 'ผูกแล้ว'})` : '')
+          : cfg.zone_url
+            ? `สำเนา: ${cfg.zone_name || 'ผูกแล้ว'}`
+            : 'สำเนาแยกโครงการ: ยังไม่ผูก';
       const billingSummary =
         perSiteCount > 0
           ? `ใบเบิกแยกโครงการ: ${perSiteCount} โครงการ` + (cfg.billing_url ? ` + ชีตรวมเดิม (${cfg.billing_name || 'ผูกแล้ว'})` : '')
@@ -3150,7 +3357,7 @@
             ? `ใบเบิก: ${cfg.billing_name || 'ผูกแล้ว'}`
             : 'ใบเบิกแยกโครงการ: ยังไม่ผูก';
       const boundSummary = [
-        cfg.zone_url ? `สำเนา: ${cfg.zone_name || 'ผูกแล้ว'}` : 'สำเนา: ยังไม่ผูก',
+        zoneSummary,
         billingSummary,
         `อัปเดตอัตโนมัติ: ${autoVal ? 'เปิด' : 'ปิด'}`
       ].join(' • ');
@@ -3176,11 +3383,13 @@
 
   function openGoogleSheetBindModal(kind = 'zone', fixedSiteName = '') {
     const isBilling = kind === 'billing';
-    const fixedSite = isBilling ? String(fixedSiteName || '').trim() : '';
+    const fixedSite = String(fixedSiteName || '').trim();
+    const kindThai = isBilling ? 'ใบเบิก' : 'สำเนา';
     const cfg = state.gsheet || {};
-    const perSiteEntry = fixedSite && cfg.billing_by_site ? cfg.billing_by_site[fixedSite] : null;
+    const siteMap = isBilling ? cfg.billing_by_site : cfg.zone_by_site;
+    const perSiteEntry = fixedSite && siteMap ? siteMap[fixedSite] : null;
     const title = fixedSite
-      ? `ผูก Google Sheet ใบเบิกเฉพาะโครงการ: ${fixedSite}`
+      ? `ผูก Google Sheet ${kindThai}เฉพาะโครงการ: ${fixedSite}`
       : isBilling
         ? 'ผูก Google Sheets ใบเบิกโครงการ'
         : 'ผูก Google Sheets สำเนาโซน';
@@ -3211,7 +3420,7 @@
           </div>
           <div>
             <h3 class="text-base font-bold text-slate-900">${escapeHtml(title)}</h3>
-            <p class="text-xs text-slate-500">${fixedSite ? `ไหลเฉพาะเที่ยววิ่งของโครงการ "${escapeHtml(fixedSite)}" เท่านั้น ไม่รวมกับโครงการอื่น` : 'ตั้งค่าครั้งเดียว ใช้ร่วมกันได้ทุกเครื่องทั้งคอมพิวเตอร์และมือถือ'}</p>
+            <p class="text-xs text-slate-500">${fixedSite ? `ไหลเฉพาะข้อมูล${kindThai}ของโครงการ "${escapeHtml(fixedSite)}" เท่านั้น ไม่รวมกับโครงการอื่น` : 'ตั้งค่าครั้งเดียว ใช้ร่วมกันได้ทุกเครื่องทั้งคอมพิวเตอร์และมือถือ'}</p>
           </div>
         </div>
 
@@ -3247,9 +3456,9 @@
           ${
             fixedSite
               ? `
-            <div class="p-3 rounded-xl bg-teal-50 border border-teal-200 text-xs text-teal-950 font-semibold flex items-center gap-2">
+            <div class="p-3 rounded-xl ${isBilling ? 'bg-teal-50 border-teal-200 text-teal-950' : 'bg-emerald-50 border-emerald-200 text-emerald-950'} border text-xs font-semibold flex items-center gap-2">
               <i class="fa-solid fa-building text-amber-500"></i>
-              <span>โครงการที่ผูก: <strong>${escapeHtml(fixedSite)}</strong> (แยกชีตเฉพาะโครงการนี้ ไม่รวมโครงการอื่น)</span>
+              <span>โครงการที่ผูก (${escapeHtml(kindThai)}): <strong>${escapeHtml(fixedSite)}</strong> (แยกชีตเฉพาะโครงการนี้ ไม่รวมโครงการอื่น)</span>
             </div>
           `
               : isBilling
@@ -3348,14 +3557,14 @@
         const buildPatch = (url, meta, historyNote) =>
           fixedSite
             ? {
-                billing_site_entry: {
+                [isBilling ? 'billing_site_entry' : 'zone_site_entry']: {
                   site_name: fixedSite,
                   url,
                   name: (meta && meta.name) || '',
                   sheet_url: (meta && meta.sheetUrl) || ''
                 },
                 record_history: true,
-                history_kind: 'billing',
+                history_kind: kind,
                 history_note: historyNote
               }
             : isBilling
@@ -3385,10 +3594,15 @@
             try {
               const patch = fixedSite
                 ? {
-                    billing_site_entry: { site_name: fixedSite, url: '', name: '', sheet_url: '' },
+                    [isBilling ? 'billing_site_entry' : 'zone_site_entry']: {
+                      site_name: fixedSite,
+                      url: '',
+                      name: '',
+                      sheet_url: ''
+                    },
                     record_history: true,
-                    history_kind: 'billing',
-                    history_note: `ยกเลิกการผูก Google Sheet โครงการ ${fixedSite}`
+                    history_kind: kind,
+                    history_note: `ยกเลิกการผูก Google Sheet ${kindThai}โครงการ ${fixedSite}`
                   }
                 : isBilling
                   ? {
@@ -3741,11 +3955,12 @@
 
   async function syncToGoogleSheet(kind, { interactive = true, mode = '', siteName = '', triggerBtn = null } = {}) {
     const isBilling = kind === 'billing';
-    const fixedSite = isBilling ? String(siteName || '').trim() : '';
+    const kindThai = isBilling ? 'ใบเบิก' : 'สำเนา';
+    const fixedSite = String(siteName || '').trim();
     const cfg = state.gsheet || {};
-    const bySite = cfg.billing_by_site || {};
+    const siteMap = isBilling ? (cfg.billing_by_site || {}) : (cfg.zone_by_site || {});
     const targetUrl = fixedSite
-      ? ((bySite[fixedSite] && bySite[fixedSite].url) || '')
+      ? ((siteMap[fixedSite] && siteMap[fixedSite].url) || '')
       : isBilling
         ? cfg.billing_url
         : cfg.zone_url;
@@ -3772,8 +3987,8 @@
           per_site_only: Boolean(fixedSite),
           date_from: f.date_from,
           date_to: f.date_to,
-          trip_type: isBilling ? '' : f.trip_type,
-          search: isBilling ? '' : f.search,
+          trip_type: fixedSite || isBilling ? '' : f.trip_type,
+          search: fixedSite || isBilling ? '' : f.search,
           issue_date: todayIso()
         })
       });
@@ -3782,11 +3997,13 @@
       if (typeof res.historyCount === 'number') state.gsheetHistoryCount = res.historyCount;
       renderGoogleSheetsUI();
 
-      const labelTarget = fixedSite ? `โครงการ "${fixedSite}" (${res.spreadsheetName || 'ใบเบิก'})` : `"${res.spreadsheetName || (isBilling ? 'ใบเบิก' : 'สำเนาโซน')}"`;
+      const labelTarget = fixedSite
+        ? `${kindThai}โครงการ "${fixedSite}" (${res.spreadsheetName || kindThai})`
+        : `"${res.spreadsheetName || (isBilling ? 'ใบเบิก' : 'สำเนาโซน')}"`;
       if (interactive) {
         if (isBilling && res.scriptVersion !== LATEST_APPS_SCRIPT_VERSION) {
           showToast(
-            `ไหลลงชีต ${labelTarget} สำเร็จ (${res.logCount} เที่ยว) แต่โค้ด Apps Script ในชีตยังเป็นเวอร์ชันเก่าเลยยังไม่มีโลโก้ — กดคัดลอกโค้ดใหม่ไปวางแล้วเลือก "จัดการการทำให้ใช้งานได้ → แก้ไข ✏️ → เวอร์ชันใหม่"`,
+            `ไหลลงชีต${labelTarget} สำเร็จ (${res.logCount} เที่ยว) แต่โค้ด Apps Script ในชีตยังเป็นเวอร์ชันเก่าเลยยังไม่มีโลโก้ — กดคัดลอกโค้ดใหม่ไปวางแล้วเลือก "จัดการการทำให้ใช้งานได้ → แก้ไข ✏️ → เวอร์ชันใหม่"`,
             'warning',
             8000
           );
@@ -3798,10 +4015,10 @@
           );
         }
       }
-      return { status: 'ok', name: fixedSite || res.spreadsheetName || (isBilling ? 'ใบเบิก' : 'สำเนาโซน') };
+      return { status: 'ok', name: fixedSite ? `${kindThai}:${fixedSite}` : res.spreadsheetName || kindThai };
     } catch (err) {
       loadGoogleSheetsConfig();
-      if (interactive) showToast(`ไหลลง Google Sheets${fixedSite ? ` (${fixedSite})` : ''} ไม่สำเร็จ: ${err.message}`, 'error', 5500);
+      if (interactive) showToast(`ไหลลง Google Sheets${fixedSite ? ` (${kindThai}: ${fixedSite})` : ''} ไม่สำเร็จ: ${err.message}`, 'error', 5500);
       return { status: 'error', error: err };
     } finally {
       if (btn && interactive) {
@@ -3811,29 +4028,31 @@
     }
   }
 
-  async function syncAllBoundGoogleSheetSites() {
-    const bySite = (state.gsheet && state.gsheet.billing_by_site) || {};
+  async function syncAllBoundGoogleSheetSites(kind = 'billing') {
+    const isZone = kind === 'zone';
+    const kindThai = isZone ? 'สำเนา' : 'ใบเบิก';
+    const bySite = (state.gsheet && (isZone ? state.gsheet.zone_by_site : state.gsheet.billing_by_site)) || {};
     const sites = Object.keys(bySite).filter((s) => bySite[s] && bySite[s].url);
     if (sites.length === 0) {
-      showToast('ยังไม่ได้ผูก Google Sheet ใบเบิกให้โครงการใด — กดปุ่ม "ผูกชีต" ที่การ์ดโครงการด้านล่างก่อนครับ', 'warning', 4500);
+      showToast(`ยังไม่ได้ผูก Google Sheet ${kindThai}ให้โครงการใด — กดปุ่ม "ผูกชีต${kindThai}" ที่การ์ดโครงการด้านล่างก่อนครับ`, 'warning', 4500);
       return;
     }
-    const btn = $('btn-sync-all-gsheet-sites');
+    const btn = $(isZone ? 'btn-sync-all-gsheet-zone-sites' : 'btn-sync-all-gsheet-sites');
     const origHtml = btn ? btn.innerHTML : '';
     if (btn) {
       btn.disabled = true;
-      btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i><span>กำลังไหลทุกโครงการ...</span>';
+      btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i><span>กำลังไหล${kindThai}ทุกโครงการ...</span>`;
     }
     try {
       const okNames = [];
       for (const sName of sites) {
-        const r = await syncToGoogleSheet('billing', { interactive: false, mode: 'manual', siteName: sName });
+        const r = await syncToGoogleSheet(kind, { interactive: false, mode: 'manual', siteName: sName });
         if (r.status === 'ok') okNames.push(sName);
       }
       if (okNames.length > 0) {
-        showToast(`ไหลลง Google Sheet แยกสำเร็จครบ ${okNames.length} โครงการ: ${okNames.join(', ')}`, 'success', 5000);
+        showToast(`ไหลลง Google Sheet ${kindThai}แยกสำเร็จครบ ${okNames.length} โครงการ: ${okNames.join(', ')}`, 'success', 5000);
       } else {
-        showToast('ไม่สามารถไหลลง Google Sheet บางโครงการได้ กรุณาตรวจสอบในบันทึกประวัติการไหล', 'error', 5000);
+        showToast(`ไม่สามารถไหลลง Google Sheet ${kindThai}บางโครงการได้ กรุณาตรวจสอบในบันทึกประวัติการไหล`, 'error', 5000);
       }
     } finally {
       if (btn) {
@@ -3845,10 +4064,12 @@
 
   async function autoSyncGoogleSheets() {
     const cfg = state.gsheet || {};
-    const bySite = cfg.billing_by_site || {};
-    const siteKeys = Object.keys(bySite).filter((s) => bySite[s] && bySite[s].url);
+    const zoneBySite = cfg.zone_by_site || {};
+    const billingBySite = cfg.billing_by_site || {};
+    const zoneSiteKeys = Object.keys(zoneBySite).filter((s) => zoneBySite[s] && zoneBySite[s].url);
+    const billingSiteKeys = Object.keys(billingBySite).filter((s) => billingBySite[s] && billingBySite[s].url);
     if (!cfg.auto_sync) return;
-    if (!cfg.zone_url && !cfg.billing_url && siteKeys.length === 0) return;
+    if (!cfg.zone_url && !cfg.billing_url && zoneSiteKeys.length === 0 && billingSiteKeys.length === 0) return;
 
     const syncedNames = [];
     if (cfg.zone_url) {
@@ -3859,13 +4080,27 @@
       const r = await syncToGoogleSheet('billing', { interactive: false, mode: 'auto' });
       if (r.status === 'ok') syncedNames.push(r.name);
     }
-    for (const sName of siteKeys) {
+    for (const sName of zoneSiteKeys) {
+      const r = await syncToGoogleSheet('zone', { interactive: false, mode: 'auto', siteName: sName });
+      if (r.status === 'ok') syncedNames.push(r.name);
+    }
+    for (const sName of billingSiteKeys) {
       const r = await syncToGoogleSheet('billing', { interactive: false, mode: 'auto', siteName: sName });
-      if (r.status === 'ok') syncedNames.push(sName);
+      if (r.status === 'ok') syncedNames.push(r.name);
     }
     if (syncedNames.length > 0) {
       showToast(`ไหลลง Google Sheets อัตโนมัติแล้ว: ${syncedNames.join(', ')}`, 'info', 3500);
     }
+  }
+
+  async function runZoneExport({ siteName, dateFrom, dateTo }) {
+    const { wb, filename, logs } = await buildZonePayload({ siteName, dateFrom, dateTo });
+    await downloadWorkbook(wb, filename);
+    showToast(
+      `ส่งออกไฟล์สำเนาโครงการ "${siteName}" สำเร็จ: ${filename} (${wb.worksheets.length} ชีต, ${logs.length} เที่ยว)`,
+      'success',
+      4500
+    );
   }
 
   async function handleExportZoneCopy() {
@@ -4470,13 +4705,25 @@
               localStorage.setItem(BOUND_BILLING_SITE_KEY, newSiteName);
               await updateBindingUI();
             }
-            if (newSiteName && newSiteName !== s.site_name && state.boundBillingHandlesBySite[s.site_name]) {
-              const movedHandle = state.boundBillingHandlesBySite[s.site_name];
-              state.boundBillingHandlesBySite[newSiteName] = movedHandle;
-              delete state.boundBillingHandlesBySite[s.site_name];
-              await saveHandleToDb(siteHandleKey(newSiteName), movedHandle);
-              await saveHandleToDb(siteHandleKey(s.site_name), null);
-              await updateBindingUI();
+            if (newSiteName && newSiteName !== s.site_name) {
+              let migrated = false;
+              if (state.boundZoneHandlesBySite[s.site_name]) {
+                const movedZone = state.boundZoneHandlesBySite[s.site_name];
+                state.boundZoneHandlesBySite[newSiteName] = movedZone;
+                delete state.boundZoneHandlesBySite[s.site_name];
+                await saveHandleToDb(siteHandleKey('zone', newSiteName), movedZone);
+                await saveHandleToDb(siteHandleKey('zone', s.site_name), null);
+                migrated = true;
+              }
+              if (state.boundBillingHandlesBySite[s.site_name]) {
+                const movedHandle = state.boundBillingHandlesBySite[s.site_name];
+                state.boundBillingHandlesBySite[newSiteName] = movedHandle;
+                delete state.boundBillingHandlesBySite[s.site_name];
+                await saveHandleToDb(siteHandleKey('billing', newSiteName), movedHandle);
+                await saveHandleToDb(siteHandleKey('billing', s.site_name), null);
+                migrated = true;
+              }
+              if (migrated) await updateBindingUI();
             }
             closeModal();
             showToast('อัปเดตไซต์งาน/โครงการเรียบร้อยแล้ว', 'success');
@@ -4940,13 +5187,44 @@
     $('btn-bind-billing').addEventListener('click', () => openBindFileModal('billing'));
     $('btn-unbind-billing').addEventListener('click', () => unbindFile('billing'));
     $('btn-sync-billing').addEventListener('click', () => syncToBoundFile('billing', { interactive: true }));
-    $('btn-sync-all-excel-sites').addEventListener('click', syncAllBoundExcelSites);
+    $('btn-sync-all-excel-zone-sites').addEventListener('click', () => syncAllBoundExcelSites('zone'));
+    $('btn-sync-all-excel-sites').addEventListener('click', () => syncAllBoundExcelSites('billing'));
     $('excel-sites-search').addEventListener('input', () => renderPerSiteExcelBindingList());
     $('btn-excel-sites-toggle').addEventListener('click', () => {
       state.excelSitesShowAll = !state.excelSitesShowAll;
       renderPerSiteExcelBindingList();
     });
     $('excel-per-site-list').addEventListener('click', async (e) => {
+      const zBindBtn = e.target.closest('button[data-excel-zone-site-bind]');
+      if (zBindBtn) {
+        openBindFileModal('zone', zBindBtn.dataset.excelZoneSiteBind || '');
+        return;
+      }
+      const zSyncBtn = e.target.closest('button[data-excel-zone-site-sync]');
+      if (zSyncBtn) {
+        await syncSiteExcelFile('zone', zSyncBtn.dataset.excelZoneSiteSync || '', { interactive: true, triggerBtn: zSyncBtn });
+        return;
+      }
+      const zDlBtn = e.target.closest('button[data-excel-zone-site-dl]');
+      if (zDlBtn) {
+        const sName = zDlBtn.dataset.excelZoneSiteDl || '';
+        zDlBtn.disabled = true;
+        try {
+          const f = getFilterParams();
+          await runZoneExport({ siteName: sName, dateFrom: f.date_from, dateTo: f.date_to });
+        } catch (err) {
+          showToast(`ส่งออกสำเนา "${sName}" ไม่สำเร็จ: ${err.message}`, 'error', 5000);
+        } finally {
+          zDlBtn.disabled = false;
+        }
+        return;
+      }
+      const zUnbindBtn = e.target.closest('button[data-excel-zone-site-unbind]');
+      if (zUnbindBtn) {
+        await unbindSiteExcelFile('zone', zUnbindBtn.dataset.excelZoneSiteUnbind || '');
+        return;
+      }
+
       const bindBtn = e.target.closest('button[data-excel-site-bind]');
       if (bindBtn) {
         openBindFileModal('billing', bindBtn.dataset.excelSiteBind || '');
@@ -4954,7 +5232,7 @@
       }
       const syncBtn = e.target.closest('button[data-excel-site-sync]');
       if (syncBtn) {
-        await syncSiteBillingFile(syncBtn.dataset.excelSiteSync || '', { interactive: true, triggerBtn: syncBtn });
+        await syncSiteExcelFile('billing', syncBtn.dataset.excelSiteSync || '', { interactive: true, triggerBtn: syncBtn });
         return;
       }
       const dlBtn = e.target.closest('button[data-excel-site-dl]');
@@ -4973,7 +5251,7 @@
       }
       const unbindBtn = e.target.closest('button[data-excel-site-unbind]');
       if (unbindBtn) {
-        await unbindSiteBillingFile(unbindBtn.dataset.excelSiteUnbind || '');
+        await unbindSiteExcelFile('billing', unbindBtn.dataset.excelSiteUnbind || '');
       }
     });
     $('toggle-auto-sync').addEventListener('change', (e) => {
@@ -4994,13 +5272,29 @@
     $('btn-gsheet-sync-zone').addEventListener('click', () => syncToGoogleSheet('zone', { interactive: true, mode: 'manual' }));
     $('btn-gsheet-bind-billing').addEventListener('click', () => openGoogleSheetBindModal('billing'));
     $('btn-gsheet-sync-billing').addEventListener('click', () => syncToGoogleSheet('billing', { interactive: true, mode: 'manual' }));
-    $('btn-sync-all-gsheet-sites').addEventListener('click', syncAllBoundGoogleSheetSites);
+    $('btn-sync-all-gsheet-zone-sites').addEventListener('click', () => syncAllBoundGoogleSheetSites('zone'));
+    $('btn-sync-all-gsheet-sites').addEventListener('click', () => syncAllBoundGoogleSheetSites('billing'));
     $('gsheet-sites-search').addEventListener('input', () => renderPerSiteGoogleSheetsList());
     $('btn-gsheet-sites-toggle').addEventListener('click', () => {
       state.gsheetSitesShowAll = !state.gsheetSitesShowAll;
       renderPerSiteGoogleSheetsList();
     });
     $('gsheet-per-site-list').addEventListener('click', async (e) => {
+      const zBindBtn = e.target.closest('button[data-gsheet-zone-site-bind]');
+      if (zBindBtn) {
+        openGoogleSheetBindModal('zone', zBindBtn.dataset.gsheetZoneSiteBind || '');
+        return;
+      }
+      const zSyncBtn = e.target.closest('button[data-gsheet-zone-site-sync]');
+      if (zSyncBtn) {
+        await syncToGoogleSheet('zone', {
+          interactive: true,
+          mode: 'manual',
+          siteName: zSyncBtn.dataset.gsheetZoneSiteSync || '',
+          triggerBtn: zSyncBtn
+        });
+        return;
+      }
       const bindBtn = e.target.closest('button[data-gsheet-site-bind]');
       if (bindBtn) {
         openGoogleSheetBindModal('billing', bindBtn.dataset.gsheetSiteBind || '');
