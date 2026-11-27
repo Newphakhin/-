@@ -508,31 +508,65 @@ async function deleteVehicle(id) {
 // Master: Sites  (id, site_name, zone_name, default_origin, active)  — เก็บใน system_settings
 // ============================================================================
 
-const siteFromItem = (s) => ({
-  id: Number(s.id),
-  site_name: String(s.site_name || ''),
-  zone_name: String(s.zone_name || ''),
-  default_origin: String(s.default_origin || ''),
-  active: s.active === undefined ? true : Boolean(s.active)
-});
+function normalizeStringList(arr, fallbackSingle = '') {
+  const raw = Array.isArray(arr)
+    ? arr
+    : typeof arr === 'string' && arr.trim()
+      ? arr.split(/[\n,]+/)
+      : [];
+  const seen = new Set();
+  const out = [];
+  for (const item of raw) {
+    const v = str(item);
+    if (!v || seen.has(v)) continue;
+    seen.add(v);
+    out.push(v);
+  }
+  const fb = str(fallbackSingle);
+  if (fb && !seen.has(fb)) {
+    seen.add(fb);
+    out.push(fb);
+  }
+  return out;
+}
+
+const siteFromItem = (s) => {
+  const origins = normalizeStringList(
+    Array.isArray(s.default_origins) ? s.default_origins : [],
+    s.default_origin
+  );
+  return {
+    id: Number(s.id),
+    site_name: String(s.site_name || ''),
+    zone_name: String(s.zone_name || ''),
+    default_origin: origins[0] || '',
+    default_origins: origins,
+    active: s.active === undefined ? true : Boolean(s.active)
+  };
+};
 
 async function listSites(activeOnly = false) {
   const items = (await getKV(KV_SITES, [])).map(siteFromItem);
   return activeOnly ? items.filter((s) => s.active) : items;
 }
 
-async function createSite({ site_name, zone_name, default_origin, active }) {
+async function createSite({ site_name, zone_name, default_origin, default_origins, active }) {
   const name = str(site_name);
   if (!name) throw httpError(400, 'กรุณาระบุชื่อไซต์งาน / โครงการ');
   const items = await listSites();
   if (items.some((s) => s.site_name === name)) {
     throw httpError(409, `ไซต์งาน/โครงการ "${name}" มีอยู่ในระบบแล้ว`);
   }
+  const origins =
+    default_origins !== undefined
+      ? normalizeStringList(default_origins)
+      : normalizeStringList([], default_origin);
   const created = {
     id: items.reduce((m, s) => Math.max(m, s.id), 0) + 1,
     site_name: name,
     zone_name: str(zone_name),
-    default_origin: str(default_origin),
+    default_origin: origins[0] || '',
+    default_origins: origins,
     active: active === undefined ? true : Boolean(active)
   };
   items.push(created);
@@ -540,7 +574,7 @@ async function createSite({ site_name, zone_name, default_origin, active }) {
   return created;
 }
 
-async function updateSite(id, { site_name, zone_name, default_origin, active }) {
+async function updateSite(id, { site_name, zone_name, default_origin, default_origins, active }) {
   const items = await listSites();
   const idx = items.findIndex((s) => s.id === Number(id));
   if (idx === -1) throw httpError(404, 'ไม่พบไซต์งาน/โครงการที่ต้องการแก้ไข');
@@ -550,11 +584,18 @@ async function updateSite(id, { site_name, zone_name, default_origin, active }) 
   if (newName !== existing.site_name && items.some((s) => s.site_name === newName)) {
     throw httpError(409, `ไซต์งาน/โครงการ "${newName}" มีอยู่ในระบบแล้ว`);
   }
+  const origins =
+    default_origins !== undefined
+      ? normalizeStringList(default_origins)
+      : default_origin !== undefined
+        ? normalizeStringList([], default_origin)
+        : existing.default_origins;
   items[idx] = {
     id: existing.id,
     site_name: newName,
     zone_name: zone_name !== undefined ? str(zone_name) : existing.zone_name,
-    default_origin: default_origin !== undefined ? str(default_origin) : existing.default_origin,
+    default_origin: origins[0] || '',
+    default_origins: origins,
     active: active !== undefined ? Boolean(active) : existing.active
   };
   await setKV(KV_SITES, items);
@@ -700,6 +741,7 @@ async function updateRoute(id, input) {
   const items = await listRoutes();
   const idx = items.findIndex((r) => r.id === Number(id));
   if (idx === -1) throw httpError(404, 'ไม่พบเส้นทางที่ต้องการแก้ไข');
+  const oldOrigin = items[idx].origin;
   const record = buildRouteRecord(input, items[idx]);
   if (
     items.some(
@@ -711,6 +753,21 @@ async function updateRoute(id, input) {
   }
   items[idx] = { id: items[idx].id, ...record };
   await setKV(KV_ROUTES, items);
+  if (oldOrigin && record.origin && oldOrigin !== record.origin) {
+    const sites = await listSites();
+    let sChanged = false;
+    for (const s of sites) {
+      if (Array.isArray(s.default_origins) && s.default_origins.includes(oldOrigin)) {
+        const nextOrigins = normalizeStringList(
+          s.default_origins.map((o) => (o === oldOrigin ? record.origin : o))
+        );
+        s.default_origins = nextOrigins;
+        s.default_origin = nextOrigins[0] || '';
+        sChanged = true;
+      }
+    }
+    if (sChanged) await setKV(KV_SITES, sites);
+  }
   return items[idx];
 }
 

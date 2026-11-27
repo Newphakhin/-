@@ -1582,50 +1582,68 @@
               <span>3. โครงการ</span>
             </h2>
             <p class="text-xs text-slate-500 mt-0.5">
-              เพิ่มโครงการที่จะวางบิล และผูกจุดรับต้นทางประจำโครงการได้ — หน้าบันทึกจะขึ้นแนะนำให้อัตโนมัติ (แก้ไขหรือพิมพ์เองได้)
+              เพิ่มโครงการที่จะวางบิล และผูกได้ <strong>หลายเส้นทาง / หลายจุดรับ</strong> ต่อ 1 โครงการ — หน้าบันทึกจะขึ้นปุ่มแนะนำครบทุกเส้นทางที่ผูกไว้ (เลือกหรือพิมพ์เองได้อิสระ)
             </p>
           </div>
 
           <div class="p-5 sm:p-6 space-y-5">
-            <form id="form-add-site" class="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
-              <div class="sm:col-span-4">
-                <label for="input-site-name" class="block text-xs font-semibold text-slate-600 mb-1">ชื่อโครงการ (แสดงบนใบเบิก) *</label>
-                <input
-                  type="text"
-                  id="input-site-name"
-                  placeholder="กรอกชื่อโครงการสำหรับวางบิล..."
-                  required
-                  class="w-full min-h-[42px] px-3.5 py-2 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 transition"
-                />
+            <form id="form-add-site" class="p-4 rounded-xl bg-slate-50/90 border border-slate-200 space-y-3">
+              <div class="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
+                <div class="sm:col-span-5">
+                  <label for="input-site-name" class="block text-xs font-semibold text-slate-600 mb-1">ชื่อโครงการ (แสดงบนใบเบิก) *</label>
+                  <input
+                    type="text"
+                    id="input-site-name"
+                    placeholder="กรอกชื่อโครงการสำหรับวางบิล..."
+                    required
+                    class="w-full min-h-[42px] px-3.5 py-2 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 transition"
+                  />
+                </div>
+                <div class="sm:col-span-4">
+                  <label for="input-site-zone" class="block text-xs font-semibold text-slate-600 mb-1">ชื่อโซน (ไม่บังคับ)</label>
+                  <input
+                    type="text"
+                    id="input-site-zone"
+                    placeholder="เช่น โซนวิภา (ถ้ามี)..."
+                    class="w-full min-h-[42px] px-3.5 py-2 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 transition"
+                  />
+                </div>
+                <div class="sm:col-span-3">
+                  <button
+                    type="submit"
+                    class="w-full min-h-[42px] px-4 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-white text-sm font-semibold flex items-center justify-center gap-1.5 transition cursor-pointer"
+                  >
+                    <i class="fa-solid fa-plus text-amber-400"></i>
+                    <span>เพิ่มโครงการ</span>
+                  </button>
+                </div>
               </div>
-              <div class="sm:col-span-3">
-                <label for="input-site-zone" class="block text-xs font-semibold text-slate-600 mb-1">ชื่อโซน (ไม่บังคับ)</label>
-                <input
-                  type="text"
-                  id="input-site-zone"
-                  placeholder="เช่น โซนวิภา (ถ้ามี)..."
-                  class="w-full min-h-[42px] px-3.5 py-2 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 transition"
-                />
-              </div>
-              <div class="sm:col-span-3">
-                <label for="input-site-default-origin" class="block text-xs font-semibold text-slate-600 mb-1">จุดรับต้นทางที่ผูก (ไม่บังคับ)</label>
-                <input
-                  type="text"
-                  id="input-site-default-origin"
-                  list="dl-bo-origins"
-                  autocomplete="off"
-                  placeholder="เลือกหรือพิมพ์จุดรับประจำ..."
-                  class="w-full min-h-[42px] px-3.5 py-2 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 transition"
-                />
-              </div>
-              <div class="sm:col-span-2">
-                <button
-                  type="submit"
-                  class="w-full min-h-[42px] px-4 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-white text-sm font-semibold flex items-center justify-center gap-1.5 transition cursor-pointer"
-                >
-                  <i class="fa-solid fa-plus text-amber-400"></i>
-                  <span>เพิ่มโครงการ</span>
-                </button>
+
+              <!-- ผูกหลายเส้นทาง / จุดรับต้นทาง (เลือกได้หลายรายการ) -->
+              <div class="pt-2.5 border-t border-slate-200/80 space-y-2">
+                <label for="input-site-default-origin" class="block text-xs font-semibold text-slate-700">
+                  <i class="fa-solid fa-route text-emerald-600 mr-1"></i>เส้นทาง / จุดรับที่ผูกกับโครงการนี้ (ผูกได้หลายเส้นทาง — ไม่บังคับ)
+                </label>
+                <div class="flex flex-wrap sm:flex-nowrap items-center gap-2">
+                  <input
+                    type="text"
+                    id="input-site-default-origin"
+                    list="dl-bo-origins"
+                    autocomplete="off"
+                    placeholder="พิมพ์หรือเลือกจุดรับ/เส้นทาง แล้วกด + เพิ่มเส้นทาง..."
+                    class="flex-1 min-w-[200px] min-h-[38px] px-3 py-1.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-emerald-600 transition"
+                  />
+                  <button
+                    type="button"
+                    id="btn-add-site-origin-tag"
+                    class="min-h-[38px] px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer shrink-0"
+                  >
+                    <i class="fa-solid fa-plus"></i>
+                    <span>เพิ่มเส้นทาง</span>
+                  </button>
+                </div>
+                <div id="site-add-origins-tags" class="flex flex-wrap items-center gap-1.5"></div>
+                <div id="site-add-quick-routes" class="flex flex-wrap items-center gap-1.5"></div>
               </div>
             </form>
 
@@ -1855,6 +1873,6 @@
   <!-- Vendored ExcelJS + Dual Export Engine + Main Frontend Logic -->
   <script src="/vendor/exceljs.min.js?v=6"></script>
   <script src="/excel-export.js?v=7"></script>
-  <script src="/app.js?v=22"></script>
+  <script src="/app.js?v=23"></script>
 </body>
 </html>

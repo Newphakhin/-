@@ -33,6 +33,7 @@
     isSwapped: false,
     routeMetaExpanded: false,
     searchTimer: null,
+    newSiteOrigins: [],
 
     // Bound local Excel file handles (File System Access API + IndexedDB)
     boundZoneHandle: null,
@@ -696,6 +697,20 @@
     const originVal = $('form-origin') ? $('form-origin').value.trim() : '';
     const destVal = $('form-destination') ? $('form-destination').value.trim() : '';
 
+    const siteOriginsOf = (s) => {
+      if (!s) return [];
+      const arr = Array.isArray(s.default_origins) ? s.default_origins : [];
+      const out = [];
+      const seen = new Set();
+      for (const x of [...arr, s.default_origin]) {
+        const v = String(x || '').trim();
+        if (!v || seen.has(v)) continue;
+        seen.add(v);
+        out.push(v);
+      }
+      return out;
+    };
+
     const worker = workerName ? state.workers.find((w) => w.name === workerName) : null;
     const owner = plate ? state.workers.find((w) => w.default_vehicle === plate) : null;
     const siteObj = siteName ? state.sites.find((s) => s.site_name === siteName) : null;
@@ -703,62 +718,106 @@
       (originVal && state.routes.find((r) => r.active && r.origin === originVal)) ||
       (destVal && state.routes.find((r) => r.active && r.origin === destVal)) ||
       null;
-    const routeBySite = siteName
-      ? state.routes.find((r) => r.active && (r.default_site === siteName || r.destination === siteName))
-      : null;
+    const routesBySite = siteName
+      ? state.routes.filter((r) => r.active && (r.default_site === siteName || r.destination === siteName))
+      : [];
 
     // 1. ทะเบียนรถแนะนำ (จากคนขับ)
     const recPlate = worker && worker.default_vehicle ? worker.default_vehicle : '';
     const recPlateReason = recPlate ? `รถประจำของ ${worker.name}` : '';
 
-    // 2. โครงการแนะนำ (จากคนขับ -> จากเส้นทางที่เลือก)
-    let recSite = '';
-    let recSiteReason = '';
+    // 2. โครงการแนะนำ (จากคนขับ -> จากเส้นทาง/จุดรับที่เลือก — รองรับหลายโครงการ)
+    const recSites = [];
+    const seenSites = new Set();
+    const pushRecSite = (value, reason) => {
+      const v = String(value || '').trim();
+      if (!v || seenSites.has(v)) return;
+      seenSites.add(v);
+      recSites.push({ value: v, reason });
+    };
     if (worker && worker.default_site) {
-      recSite = worker.default_site;
-      recSiteReason = `ผูกกับ ${worker.name}`;
-    } else if (matchedRoute && matchedRoute.default_site) {
-      recSite = matchedRoute.default_site;
-      recSiteReason = `ผูกกับเส้นทาง ${matchedRoute.origin}`;
-    } else if (matchedRoute && matchedRoute.destination && state.sites.some((s) => s.site_name === matchedRoute.destination)) {
-      recSite = matchedRoute.destination;
-      recSiteReason = `ผูกกับเส้นทาง ${matchedRoute.origin}`;
+      pushRecSite(worker.default_site, `ผูกกับ ${worker.name}`);
+    }
+    if (matchedRoute && matchedRoute.default_site) {
+      pushRecSite(matchedRoute.default_site, `ผูกกับเส้นทาง ${matchedRoute.origin}`);
+    }
+    if (matchedRoute && matchedRoute.destination && state.sites.some((s) => s.site_name === matchedRoute.destination)) {
+      pushRecSite(matchedRoute.destination, `ผูกกับเส้นทาง ${matchedRoute.origin}`);
+    }
+    // หาโครงการทุกโครงการที่ผูกจุดรับตรงกับ originVal หรือ destVal
+    const probeOrigins = [originVal, destVal].filter(Boolean);
+    if (probeOrigins.length > 0) {
+      for (const s of state.sites) {
+        if (!s || !s.active) continue;
+        const sOrigs = siteOriginsOf(s);
+        const hit = probeOrigins.find((p) => sOrigs.includes(p));
+        if (hit) pushRecSite(s.site_name, `ผูกกับเส้นทาง ${hit}`);
+      }
+      for (const r of state.routes) {
+        if (!r || !r.active) continue;
+        if (probeOrigins.includes(r.origin) && r.default_site) {
+          pushRecSite(r.default_site, `ผูกกับเส้นทาง ${r.origin}`);
+        }
+      }
+    }
+    const recSite = recSites[0] ? recSites[0].value : '';
+    const recSiteReason = recSites[0] ? recSites[0].reason : '';
+
+    // 3. รวบรวมเส้นทางทั้งหมดที่ผูกไว้ (รองรับหลายเส้นทางต่อ 1 โครงการ!)
+    const rawRoutes = [];
+    const seenRouteKey = new Set();
+    const pushRawRoute = (orig, dest, reason) => {
+      const o = String(orig || '').trim();
+      const d = String(dest || '').trim();
+      if (!o && !d) return;
+      const key = `${o}||${d}`;
+      if (seenRouteKey.has(key)) return;
+      seenRouteKey.add(key);
+      rawRoutes.push({ orig: o, dest: d, reason });
+    };
+
+    const effectiveDestForSite = siteName || (worker && worker.default_site) || '';
+    if (worker && (worker.default_origin || worker.default_destination)) {
+      const wDest = worker.default_destination || siteName || worker.default_site || '';
+      pushRawRoute(worker.default_origin, wDest, `ผูกกับ ${worker.name}`);
+    }
+    if (siteObj) {
+      for (const orig of siteOriginsOf(siteObj)) {
+        const mr = state.routes.find((r) => r.active && r.origin === orig && (r.default_site === siteObj.site_name || r.destination === siteObj.site_name));
+        const dest = (mr && mr.destination) || siteObj.site_name;
+        pushRawRoute(orig, dest, `ผูกกับโครงการ ${siteObj.site_name}`);
+      }
+    }
+    for (const r of routesBySite) {
+      pushRawRoute(r.origin, r.destination || siteName, `ผูกกับโครงการ ${siteName}`);
+    }
+    if (rawRoutes.length === 0) {
+      let fallbackDest = '';
+      let fallbackDestReason = '';
+      if (siteName) {
+        fallbackDest = siteName;
+        fallbackDestReason = 'โครงการที่เลือก';
+      } else if (matchedRoute && matchedRoute.destination) {
+        fallbackDest = matchedRoute.destination;
+        fallbackDestReason = `ผูกกับจุดรับ ${matchedRoute.origin}`;
+      } else if (effectiveDestForSite) {
+        fallbackDest = effectiveDestForSite;
+        fallbackDestReason = worker ? `โครงการของ ${worker.name}` : 'โครงการที่เลือก';
+      }
+      if (fallbackDest) pushRawRoute('', fallbackDest, fallbackDestReason);
     }
 
-    // 3. ต้นทาง (จาก) และปลายทาง (ถึง) แนะนำ (จากคนขับ -> จากโครงการ -> จากเส้นทาง)
-    let rawOrig = '';
-    let rawOrigReason = '';
-    if (worker && worker.default_origin) {
-      rawOrig = worker.default_origin;
-      rawOrigReason = `ผูกกับ ${worker.name}`;
-    } else if (siteObj && siteObj.default_origin) {
-      rawOrig = siteObj.default_origin;
-      rawOrigReason = `ผูกกับโครงการ ${siteObj.site_name}`;
-    } else if (routeBySite && routeBySite.origin) {
-      rawOrig = routeBySite.origin;
-      rawOrigReason = `ผูกกับโครงการ ${siteName}`;
-    }
+    const recRoutes = rawRoutes.map((r) => ({
+      orig: state.isSwapped ? r.dest : r.orig,
+      dest: state.isSwapped ? r.orig : r.dest,
+      reason: r.reason
+    }));
 
-    let rawDest = '';
-    let rawDestReason = '';
-    if (worker && worker.default_destination) {
-      rawDest = worker.default_destination;
-      rawDestReason = `ผูกกับ ${worker.name}`;
-    } else if (siteName) {
-      rawDest = siteName;
-      rawDestReason = `โครงการที่เลือก`;
-    } else if (matchedRoute && matchedRoute.destination) {
-      rawDest = matchedRoute.destination;
-      rawDestReason = `ผูกกับจุดรับ ${matchedRoute.origin}`;
-    } else if (worker && worker.default_site) {
-      rawDest = worker.default_site;
-      rawDestReason = `โครงการของ ${worker.name}`;
-    }
-
-    const recOrigin = state.isSwapped ? rawDest : rawOrig;
-    const recOriginReason = state.isSwapped ? rawDestReason : rawOrigReason;
-    const recDest = state.isSwapped ? rawOrig : rawDest;
-    const recDestReason = state.isSwapped ? rawOrigReason : rawDestReason;
+    const primary = recRoutes[0] || { orig: '', dest: '', reason: '' };
+    const recOrigin = primary.orig;
+    const recOriginReason = primary.orig ? primary.reason : '';
+    const recDest = primary.dest;
+    const recDestReason = primary.dest ? primary.reason : '';
 
     return {
       worker,
@@ -772,10 +831,12 @@
       recPlateReason,
       recSite,
       recSiteReason,
+      recSites,
       recOrigin,
       recOriginReason,
       recDest,
-      recDestReason
+      recDestReason,
+      recRoutes
     };
   }
 
@@ -794,6 +855,20 @@
         if (!value || seen.has(value)) continue;
         seen.add(value);
         out.push({ value, sub: String(it.sub || '').trim(), recommended: Boolean(it.recommended) });
+      }
+      return out;
+    };
+
+    const siteOriginsOf = (s) => {
+      if (!s) return [];
+      const arr = Array.isArray(s.default_origins) ? s.default_origins : [];
+      const seen = new Set();
+      const out = [];
+      for (const x of [...arr, s.default_origin]) {
+        const v = String(x || '').trim();
+        if (!v || seen.has(v)) continue;
+        seen.add(v);
+        out.push(v);
       }
       return out;
     };
@@ -828,21 +903,25 @@
     }
     if (id === 'form-site') {
       const list = [];
-      if (rec.recSite) {
-        list.push({ value: rec.recSite, sub: `★ แนะนำ (${rec.recSiteReason})`, recommended: true });
+      for (const rs of rec.recSites || []) {
+        list.push({ value: rs.value, sub: `★ แนะนำ (${rs.reason})`, recommended: true });
       }
       for (const s of activeSites) {
         const parts = [];
         if (s.zone_name) parts.push(`โซน: ${s.zone_name}`);
-        if (s.default_origin) parts.push(`จุดรับ: ${s.default_origin}`);
+        const origs = siteOriginsOf(s);
+        if (origs.length === 1) parts.push(`เส้นทาง: ${origs[0]}`);
+        else if (origs.length > 1) parts.push(`เส้นทาง: ${origs.slice(0, 2).join(', ')}${origs.length > 2 ? ` +${origs.length - 2}` : ''}`);
         list.push({ value: s.site_name, sub: parts.join(' • ') });
       }
       return dedup(list);
     }
     if (id === 'form-origin') {
       const list = [];
-      if (rec.recOrigin) {
-        list.push({ value: rec.recOrigin, sub: `★ แนะนำ (${rec.recOriginReason})`, recommended: true });
+      for (const rr of rec.recRoutes || []) {
+        if (rr.orig) {
+          list.push({ value: rr.orig, sub: `★ แนะนำ (${rr.reason})`, recommended: true });
+        }
       }
       for (const r of activeRoutes) {
         list.push({
@@ -851,14 +930,21 @@
         });
       }
       for (const s of activeSites) {
+        for (const orig of siteOriginsOf(s)) {
+          list.push({ value: orig, sub: `จุดรับโครงการ: ${s.site_name}` });
+        }
+      }
+      for (const s of activeSites) {
         list.push({ value: s.site_name, sub: 'โครงการ' });
       }
       return dedup(list);
     }
     if (id === 'form-destination') {
       const list = [];
-      if (rec.recDest) {
-        list.push({ value: rec.recDest, sub: `★ แนะนำ (${rec.recDestReason})`, recommended: true });
+      for (const rr of rec.recRoutes || []) {
+        if (rr.dest) {
+          list.push({ value: rr.dest, sub: `★ แนะนำ (${rr.reason})`, recommended: true });
+        }
       }
       for (const s of activeSites) {
         list.push({ value: s.site_name, sub: s.zone_name ? `โครงการ • โซน ${s.zone_name}` : 'โครงการ' });
@@ -1055,7 +1141,7 @@
     fillDatalist('dl-bo-sites', state.sites.map((s) => s.site_name));
     fillDatalist('dl-bo-origins', [
       ...state.routes.map((r) => r.origin),
-      ...state.sites.map((s) => s.default_origin),
+      ...state.sites.flatMap((s) => (Array.isArray(s.default_origins) ? s.default_origins : [s.default_origin])),
       ...state.sites.map((s) => s.site_name)
     ]);
     fillDatalist('dl-bo-destinations', [
@@ -1271,9 +1357,27 @@
       }
     }
 
-    // 5. โครงการ — ป้ายแนะนำคลิกได้แบบเดียวกับทะเบียนรถ
+    // 5. โครงการ — ป้ายแนะนำคลิกได้แบบเดียวกับทะเบียนรถ (รองรับหลายโครงการที่ผูกกับเส้นทางเดียวกัน)
+    const recSites = rec.recSites || [];
     if (sHint) {
-      if (recSite && siteName !== recSite) {
+      const matchedSiteRec = recSites.some((rs) => rs.value === siteName);
+      if (recSites.length > 1) {
+        const siteBtns = recSites
+          .map((rs) => {
+            const active = rs.value === siteName;
+            return `<button type="button" data-use-rec-site="${escapeHtml(rs.value)}"
+              class="px-2 py-0.5 rounded-md ${active ? 'bg-emerald-100 text-emerald-900 border-emerald-300' : 'bg-amber-100 hover:bg-amber-200 text-amber-950 border-amber-300'} border font-bold text-[11px] cursor-pointer transition">
+              ${active ? '<i class="fa-solid fa-check text-[10px] mr-0.5"></i>' : ''}${escapeHtml(rs.value)}${active ? '' : ' (กดใช้)'}
+            </button>`;
+          })
+          .join('');
+        sHint.innerHTML = `
+          <span class="inline-flex flex-wrap items-center gap-1.5">
+            <span class="text-amber-700 font-semibold"><i class="fa-solid fa-star text-[10px] mr-0.5"></i>แนะนำ (${recSites.length} โครงการ):</span>
+            ${siteBtns}
+          </span>
+        `;
+      } else if (recSite && !matchedSiteRec) {
         sHint.innerHTML = `
           <span class="inline-flex flex-wrap items-center gap-1.5">
             <span class="text-amber-700 font-semibold"><i class="fa-solid fa-star text-[10px] mr-0.5"></i>แนะนำ:</span>
@@ -1284,57 +1388,82 @@
             <span class="text-slate-500">${siteName ? 'หรือใช้โครงการที่พิมพ์นี้ต่อได้เลย' : 'หรือเลือก/พิมพ์โครงการอื่นได้'}</span>
           </span>
         `;
-      } else if (recSite && siteName === recSite) {
+      } else if (recSite && matchedSiteRec) {
         sHint.innerHTML = `<span class="text-emerald-700 font-semibold"><i class="fa-solid fa-circle-check mr-1"></i>ตรงกับโครงการที่ผูกไว้ (${escapeHtml(recSite)}) — พิมพ์หรือเปลี่ยนได้อิสระ</span>`;
       } else {
         sHint.textContent = 'เลือกจากดรอปดาวน์หรือพิมพ์เองได้ — ระบบขึ้นแนะนำโครงการที่ผูกไว้ให้';
       }
     }
 
-    // 6. เส้นทาง (จาก ↔ ถึง) — ป้ายแนะนำคลิกได้แบบเดียวกับทะเบียนรถ
+    // 6. เส้นทาง (จาก ↔ ถึง) — ป้ายแนะนำคลิกได้ครบทุกเส้นทางที่ผูกกับโครงการ/คนขับ
+    const recRoutes = (rec.recRoutes || []).filter((r) => r.orig || r.dest);
     if (rHint) {
-      const needOrig = Boolean(recOrigin && originVal !== recOrigin);
-      const needDest = Boolean(recDest && destVal !== recDest);
-      const hasAnyRec = Boolean(recOrigin || recDest);
-
-      if (needOrig || needDest) {
-        const btns = [];
-        if (recOrigin && recDest && (needOrig || needDest)) {
-          btns.push(`
-            <button type="button" data-use-rec-route="1"
-              data-rec-orig="${escapeHtml(recOrigin)}" data-rec-dest="${escapeHtml(recDest)}"
-              class="px-2 py-0.5 rounded-md bg-amber-100 hover:bg-amber-200 text-amber-950 border border-amber-300 font-bold text-[11px] cursor-pointer transition">
-              ${escapeHtml(recOrigin)} → ${escapeHtml(recDest)} (กดใช้ทั้งคู่)
-            </button>
-          `);
-        }
-        if (needOrig) {
-          btns.push(`
-            <button type="button" data-use-rec-origin="${escapeHtml(recOrigin)}"
-              class="px-2 py-0.5 rounded-md bg-white hover:bg-amber-50 text-amber-900 border border-amber-300 font-semibold text-[11px] cursor-pointer transition">
-              จาก: ${escapeHtml(recOrigin)}
-            </button>
-          `);
-        }
-        if (needDest) {
-          btns.push(`
-            <button type="button" data-use-rec-dest="${escapeHtml(recDest)}"
-              class="px-2 py-0.5 rounded-md bg-white hover:bg-amber-50 text-amber-900 border border-amber-300 font-semibold text-[11px] cursor-pointer transition">
-              ถึง: ${escapeHtml(recDest)}
-            </button>
-          `);
-        }
+      if (recRoutes.length > 1) {
+        const routeBtns = recRoutes
+          .map((rr) => {
+            const isActive =
+              (!rr.orig || originVal === rr.orig) && (!rr.dest || destVal === rr.dest);
+            const label = rr.orig && rr.dest ? `${rr.orig} → ${rr.dest}` : rr.orig || rr.dest;
+            return `
+              <button type="button" data-use-rec-route="1"
+                data-rec-orig="${escapeHtml(rr.orig)}" data-rec-dest="${escapeHtml(rr.dest)}"
+                class="px-2 py-0.5 rounded-md ${isActive ? 'bg-emerald-100 text-emerald-900 border-emerald-300' : 'bg-amber-100 hover:bg-amber-200 text-amber-950 border-amber-300'} border font-bold text-[11px] cursor-pointer transition">
+                ${isActive ? '<i class="fa-solid fa-check text-[10px] mr-0.5"></i>' : ''}${escapeHtml(label)}
+              </button>
+            `;
+          })
+          .join('');
         rHint.innerHTML = `
           <span class="inline-flex flex-wrap items-center gap-1.5">
-            <span class="text-amber-700 font-semibold"><i class="fa-solid fa-star text-[10px] mr-0.5"></i>แนะนำเส้นทาง:</span>
-            ${btns.join('')}
-            <span class="text-slate-500">หรือพิมพ์/เลือกเองได้อิสระ</span>
+            <span class="text-amber-700 font-semibold"><i class="fa-solid fa-star text-[10px] mr-0.5"></i>เส้นทางที่ผูก (${recRoutes.length}):</span>
+            ${routeBtns}
+            <span class="text-slate-500">คลิกเลือก หรือพิมพ์เองได้อิสระ</span>
           </span>
         `;
-      } else if (hasAnyRec) {
-        rHint.innerHTML = `<span class="text-emerald-700 font-semibold"><i class="fa-solid fa-circle-check mr-1"></i>ตรงกับเส้นทางที่แนะนำ — พิมพ์หรือเปลี่ยนต้นทาง-ปลายทางได้อิสระ</span>`;
       } else {
-        rHint.textContent = 'เลือกจากดรอปดาวน์หรือพิมพ์เองได้อิสระ — ระบบขึ้นแนะนำเส้นทางที่ผูกไว้ให้';
+        const needOrig = Boolean(recOrigin && originVal !== recOrigin);
+        const needDest = Boolean(recDest && destVal !== recDest);
+        const hasAnyRec = Boolean(recOrigin || recDest);
+
+        if (needOrig || needDest) {
+          const btns = [];
+          if (recOrigin && recDest && (needOrig || needDest)) {
+            btns.push(`
+              <button type="button" data-use-rec-route="1"
+                data-rec-orig="${escapeHtml(recOrigin)}" data-rec-dest="${escapeHtml(recDest)}"
+                class="px-2 py-0.5 rounded-md bg-amber-100 hover:bg-amber-200 text-amber-950 border border-amber-300 font-bold text-[11px] cursor-pointer transition">
+                ${escapeHtml(recOrigin)} → ${escapeHtml(recDest)} (กดใช้ทั้งคู่)
+              </button>
+            `);
+          }
+          if (needOrig) {
+            btns.push(`
+              <button type="button" data-use-rec-origin="${escapeHtml(recOrigin)}"
+                class="px-2 py-0.5 rounded-md bg-white hover:bg-amber-50 text-amber-900 border border-amber-300 font-semibold text-[11px] cursor-pointer transition">
+                จาก: ${escapeHtml(recOrigin)}
+              </button>
+            `);
+          }
+          if (needDest) {
+            btns.push(`
+              <button type="button" data-use-rec-dest="${escapeHtml(recDest)}"
+                class="px-2 py-0.5 rounded-md bg-white hover:bg-amber-50 text-amber-900 border border-amber-300 font-semibold text-[11px] cursor-pointer transition">
+                ถึง: ${escapeHtml(recDest)}
+              </button>
+            `);
+          }
+          rHint.innerHTML = `
+            <span class="inline-flex flex-wrap items-center gap-1.5">
+              <span class="text-amber-700 font-semibold"><i class="fa-solid fa-star text-[10px] mr-0.5"></i>แนะนำเส้นทาง:</span>
+              ${btns.join('')}
+              <span class="text-slate-500">หรือพิมพ์/เลือกเองได้อิสระ</span>
+            </span>
+          `;
+        } else if (hasAnyRec) {
+          rHint.innerHTML = `<span class="text-emerald-700 font-semibold"><i class="fa-solid fa-circle-check mr-1"></i>ตรงกับเส้นทางที่แนะนำ — พิมพ์หรือเปลี่ยนต้นทาง-ปลายทางได้อิสระ</span>`;
+        } else {
+          rHint.textContent = 'เลือกจากดรอปดาวน์หรือพิมพ์เองได้อิสระ — ระบบขึ้นแนะนำเส้นทางที่ผูกไว้ให้';
+        }
       }
     }
   }
@@ -4346,32 +4475,135 @@
       .join('');
   }
 
+  function getSiteBoundOrigins(s) {
+    if (!s) return [];
+    const arr = Array.isArray(s.default_origins) ? s.default_origins : [];
+    const seen = new Set();
+    const out = [];
+    for (const x of [...arr, s.default_origin]) {
+      const v = String(x || '').trim();
+      if (!v || seen.has(v)) continue;
+      seen.add(v);
+      out.push(v);
+    }
+    return out;
+  }
+
+  function getQuickRouteOriginChoices() {
+    const seen = new Set();
+    const out = [];
+    for (const r of state.routes || []) {
+      if (!r || !r.active) continue;
+      const o = String(r.origin || '').trim();
+      if (!o || seen.has(o)) continue;
+      seen.add(o);
+      out.push(o);
+    }
+    for (const s of state.sites || []) {
+      for (const o of getSiteBoundOrigins(s)) {
+        if (!o || seen.has(o)) continue;
+        seen.add(o);
+        out.push(o);
+      }
+    }
+    return out;
+  }
+
+  function renderOriginTagPicker(tagsEl, quickEl, selectedList, { removeAttr, toggleAttr }) {
+    const clean = [...new Set((selectedList || []).map((x) => String(x || '').trim()).filter(Boolean))];
+    if (tagsEl) {
+      if (clean.length === 0) {
+        tagsEl.innerHTML = '<span class="text-[11px] text-slate-400">ยังไม่ได้ผูกเส้นทาง — กดเลือกจากรายการด้านล่าง หรือพิมพ์แล้วกด "+ เพิ่มเส้นทาง"</span>';
+      } else {
+        tagsEl.innerHTML = clean
+          .map(
+            (orig) => `
+            <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-900 border border-emerald-300 text-xs font-semibold">
+              <i class="fa-solid fa-route text-[10px] text-emerald-700"></i>
+              <span>${escapeHtml(orig)}</span>
+              <button type="button" ${removeAttr}="${escapeHtml(orig)}" title="เอาเส้นทางนี้ออก"
+                class="w-4 h-4 rounded-full hover:bg-emerald-200 text-emerald-800 inline-flex items-center justify-center cursor-pointer">
+                <i class="fa-solid fa-xmark text-[10px]"></i>
+              </button>
+            </span>
+          `
+          )
+          .join('');
+      }
+    }
+    if (quickEl) {
+      const choices = getQuickRouteOriginChoices();
+      if (choices.length === 0) {
+        quickEl.innerHTML = '';
+      } else {
+        const selectedSet = new Set(clean);
+        quickEl.innerHTML =
+          '<span class="text-[11px] text-slate-500 font-medium mr-1">คลิกเลือกเส้นทางด่วน:</span>' +
+          choices
+            .map((orig) => {
+              const active = selectedSet.has(orig);
+              return `
+                <button type="button" ${toggleAttr}="${escapeHtml(orig)}"
+                  class="px-2 py-0.5 rounded-full text-[11px] font-semibold border transition cursor-pointer inline-flex items-center gap-1 ${
+                    active
+                      ? 'bg-emerald-600 text-white border-emerald-700 shadow-xs'
+                      : 'bg-white hover:bg-emerald-50 text-slate-700 border-slate-300'
+                  }">
+                  <i class="fa-solid ${active ? 'fa-check' : 'fa-plus'} text-[9px]"></i>
+                  <span>${escapeHtml(orig)}</span>
+                </button>
+              `;
+            })
+            .join('');
+      }
+    }
+  }
+
+  function renderAddSiteOriginPicker() {
+    renderOriginTagPicker($('site-add-origins-tags'), $('site-add-quick-routes'), state.newSiteOrigins, {
+      removeAttr: 'data-remove-new-site-origin',
+      toggleAttr: 'data-toggle-new-site-origin'
+    });
+  }
+
   function renderSitesList() {
+    renderAddSiteOriginPicker();
     const el = $('list-sites');
     if (state.sites.length === 0) {
       el.innerHTML = '<div class="py-10 text-center text-xs text-slate-400">ยังไม่มีโครงการ — พิมพ์ชื่อโครงการในช่องด้านบน แล้วกด "เพิ่มโครงการ"</div>';
       return;
     }
     el.innerHTML = state.sites
-      .map(
-        (s, i) => `
+      .map((s, i) => {
+        const directOrigins = getSiteBoundOrigins(s);
+        const routeLinked = (state.routes || [])
+          .filter((r) => r && r.active && (r.default_site === s.site_name || r.destination === s.site_name))
+          .map((r) => r.origin);
+        const allOrigins = [...new Set([...directOrigins, ...routeLinked])].filter(Boolean);
+        return `
         <div class="px-4 py-3 flex flex-wrap items-center justify-between gap-3 ${s.active ? 'bg-white' : 'bg-slate-50 opacity-65'}">
-          <div class="flex flex-wrap items-center gap-2">
-            <span class="text-xs font-bold text-slate-400 w-6">${i + 1}.</span>
+          <div class="flex flex-wrap items-center gap-2 min-w-0 flex-1">
+            <span class="text-xs font-bold text-slate-400 w-6 shrink-0">${i + 1}.</span>
             <span class="font-semibold text-sm text-slate-900">${escapeHtml(s.site_name)}</span>
             ${
               s.zone_name
                 ? `<span class="px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-200 text-[11px] font-semibold">โซน: ${escapeHtml(s.zone_name)}</span>`
                 : '<span class="text-[11px] text-slate-400">ไม่ระบุชื่อโซน</span>'
             }
-            ${
-              s.default_origin
-                ? `<span class="px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 text-[11px] font-semibold"><i class="fa-solid fa-location-dot text-[10px] mr-1"></i>จุดรับประจำ: ${escapeHtml(s.default_origin)}</span>`
-                : ''
-            }
+            ${allOrigins
+              .map(
+                (orig) =>
+                  `<span class="px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 text-[11px] font-semibold"><i class="fa-solid fa-route text-[10px] mr-1"></i>${escapeHtml(orig)}</span>`
+              )
+              .join('')}
             ${s.active ? '' : '<span class="text-[10px] px-2 py-0.5 rounded-full bg-slate-200 text-slate-600 font-semibold">ปิดใช้งาน</span>'}
           </div>
-          <div class="flex items-center gap-1.5">
+          <div class="flex items-center gap-1.5 shrink-0">
+            <button type="button" data-bo="edit-site" data-id="${s.id}" title="ผูกหรือแก้ไขเส้นทางของโครงการนี้"
+              class="min-h-[32px] px-2.5 py-1 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 text-[11px] font-semibold inline-flex items-center gap-1 cursor-pointer transition">
+              <i class="fa-solid fa-route text-[10px]"></i>
+              <span>${allOrigins.length > 0 ? `เส้นทาง (${allOrigins.length})` : '+ ผูกเส้นทาง'}</span>
+            </button>
             <button type="button" data-bo="toggle-site" data-id="${s.id}" title="${s.active ? 'ปิดใช้งาน' : 'เปิดใช้งาน'}"
               class="w-8 h-8 rounded-lg ${s.active ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-slate-200 text-slate-600 border-slate-300'} border inline-flex items-center justify-center cursor-pointer">
               <i class="fa-solid ${s.active ? 'fa-toggle-on' : 'fa-toggle-off'}"></i>
@@ -4386,8 +4618,8 @@
             </button>
           </div>
         </div>
-      `
-      )
+      `;
+      })
       .join('');
   }
 
@@ -4500,16 +4732,24 @@
     e.preventDefault();
     const site_name = $('input-site-name').value.trim();
     const zone_name = $('input-site-zone').value.trim();
-    const default_origin = $('input-site-default-origin') ? $('input-site-default-origin').value.trim() : '';
+    const typedOrigin = $('input-site-default-origin') ? $('input-site-default-origin').value.trim() : '';
+    const default_origins = [...new Set([...(state.newSiteOrigins || []), ...(typedOrigin ? [typedOrigin] : [])])];
     if (!site_name) return;
     try {
       await apiFetch('/api/master/sites', {
         method: 'POST',
-        body: JSON.stringify({ site_name, zone_name, default_origin })
+        body: JSON.stringify({
+          site_name,
+          zone_name,
+          default_origin: default_origins[0] || '',
+          default_origins
+        })
       });
       $('input-site-name').value = '';
       $('input-site-zone').value = '';
       if ($('input-site-default-origin')) $('input-site-default-origin').value = '';
+      state.newSiteOrigins = [];
+      renderAddSiteOriginPicker();
       showToast(`เพิ่มไซต์งาน/โครงการ "${site_name}" เรียบร้อยแล้ว`, 'success');
       await loadMasterData();
     } catch (err) {
@@ -4659,10 +4899,11 @@
   }
 
   function openEditSiteModal(s) {
+    let selectedOrigins = [...getSiteBoundOrigins(s)];
     openModal(
       `
       <div class="p-5 sm:p-6 space-y-4">
-        <h3 class="text-base font-bold text-slate-900">แก้ไขไซต์งาน / โครงการ</h3>
+        <h3 class="text-base font-bold text-slate-900">แก้ไขโครงการ &amp; ผูกเส้นทาง (ผูกได้หลายเส้นทาง)</h3>
         <form id="modal-edit-form" class="space-y-3.5">
           <div>
             <label class="block text-xs font-semibold text-slate-700 mb-1">ชื่อโครงการ / ไซต์งาน (site_name) *</label>
@@ -4674,10 +4915,20 @@
             <input type="text" id="m-zone-name" value="${escapeHtml(s.zone_name)}"
               class="w-full min-h-[42px] px-3 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600" />
           </div>
-          <div>
-            <label class="block text-xs font-semibold text-slate-700 mb-1">จุดรับต้นทางที่ผูกกับโครงการนี้ (ไม่บังคับ)</label>
-            <input type="text" id="m-site-origin" list="dl-bo-origins" autocomplete="off" value="${escapeHtml(s.default_origin || '')}" placeholder="เลือกหรือพิมพ์จุดรับประจำ..."
-              class="w-full min-h-[42px] px-3 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600" />
+          <div class="p-3 rounded-xl bg-slate-50 border border-slate-200 space-y-2.5">
+            <label for="m-site-origin" class="block text-xs font-semibold text-slate-700">
+              <i class="fa-solid fa-route text-emerald-600 mr-1"></i>เส้นทาง / จุดรับที่ผูกกับโครงการนี้ (เลือกได้หลายเส้นทาง)
+            </label>
+            <div class="flex items-center gap-2">
+              <input type="text" id="m-site-origin" list="dl-bo-origins" autocomplete="off" placeholder="พิมพ์หรือเลือกจุดรับ/เส้นทาง แล้วกด + เพิ่ม..."
+                class="flex-1 min-h-[38px] px-3 py-1.5 rounded-xl border border-slate-300 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-emerald-600" />
+              <button type="button" id="m-site-origin-add"
+                class="min-h-[38px] px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold flex items-center gap-1 cursor-pointer shrink-0">
+                <i class="fa-solid fa-plus"></i><span>เพิ่ม</span>
+              </button>
+            </div>
+            <div id="m-site-origins-tags" class="flex flex-wrap items-center gap-1.5"></div>
+            <div id="m-site-quick-routes" class="flex flex-wrap items-center gap-1.5 pt-1 border-t border-slate-200/70"></div>
           </div>
           <div class="flex justify-end gap-2 pt-2 border-t border-slate-100">
             <button type="button" id="m-cancel" class="min-h-[40px] px-4 py-2 rounded-xl border border-slate-300 text-xs sm:text-sm cursor-pointer">ยกเลิก</button>
@@ -4687,17 +4938,65 @@
       </div>
       `,
       (box) => {
+        const originInput = box.querySelector('#m-site-origin');
+        const tagsEl = box.querySelector('#m-site-origins-tags');
+        const quickEl = box.querySelector('#m-site-quick-routes');
+
+        const redrawPicker = () => {
+          renderOriginTagPicker(tagsEl, quickEl, selectedOrigins, {
+            removeAttr: 'data-remove-m-origin',
+            toggleAttr: 'data-toggle-m-origin'
+          });
+        };
+
+        const addTypedOrigin = () => {
+          const val = originInput.value.trim();
+          if (!val) return;
+          if (!selectedOrigins.includes(val)) selectedOrigins.push(val);
+          originInput.value = '';
+          redrawPicker();
+        };
+
+        redrawPicker();
+
+        box.querySelector('#m-site-origin-add').addEventListener('click', addTypedOrigin);
+        originInput.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' && originInput.value.trim()) {
+            e.preventDefault();
+            addTypedOrigin();
+          }
+        });
+        tagsEl.addEventListener('click', (e) => {
+          const btn = e.target.closest('button[data-remove-m-origin]');
+          if (!btn) return;
+          const val = btn.dataset.removeMOrigin || '';
+          selectedOrigins = selectedOrigins.filter((x) => x !== val);
+          redrawPicker();
+        });
+        quickEl.addEventListener('click', (e) => {
+          const btn = e.target.closest('button[data-toggle-m-origin]');
+          if (!btn) return;
+          const val = btn.dataset.toggleMOrigin || '';
+          if (!val) return;
+          if (selectedOrigins.includes(val)) selectedOrigins = selectedOrigins.filter((x) => x !== val);
+          else selectedOrigins.push(val);
+          redrawPicker();
+        });
+
         box.querySelector('#m-cancel').addEventListener('click', closeModal);
         box.querySelector('#modal-edit-form').addEventListener('submit', async (e) => {
           e.preventDefault();
           try {
+            const leftover = originInput.value.trim();
+            const finalOrigins = [...new Set([...selectedOrigins, ...(leftover ? [leftover] : [])])];
             const newSiteName = box.querySelector('#m-site-name').value.trim();
             await apiFetch(`/api/master/sites/${s.id}`, {
               method: 'PUT',
               body: JSON.stringify({
                 site_name: newSiteName,
                 zone_name: box.querySelector('#m-zone-name').value.trim(),
-                default_origin: box.querySelector('#m-site-origin').value.trim()
+                default_origin: finalOrigins[0] || '',
+                default_origins: finalOrigins
               })
             });
             if (state.boundBillingSite && state.boundBillingSite === s.site_name && newSiteName) {
@@ -5336,6 +5635,41 @@
     $('form-add-vehicle').addEventListener('submit', handleAddVehicle);
     $('form-add-worker').addEventListener('submit', handleAddWorker);
     $('form-add-site').addEventListener('submit', handleAddSite);
+    const addNewSiteOriginTag = () => {
+      const inp = $('input-site-default-origin');
+      if (!inp) return;
+      const val = inp.value.trim();
+      if (!val) return;
+      if (!state.newSiteOrigins.includes(val)) state.newSiteOrigins.push(val);
+      inp.value = '';
+      renderAddSiteOriginPicker();
+    };
+    $('btn-add-site-origin-tag').addEventListener('click', addNewSiteOriginTag);
+    $('input-site-default-origin').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && $('input-site-default-origin').value.trim()) {
+        e.preventDefault();
+        addNewSiteOriginTag();
+      }
+    });
+    $('site-add-origins-tags').addEventListener('click', (e) => {
+      const btn = e.target.closest('button[data-remove-new-site-origin]');
+      if (!btn) return;
+      const val = btn.dataset.removeNewSiteOrigin || '';
+      state.newSiteOrigins = state.newSiteOrigins.filter((x) => x !== val);
+      renderAddSiteOriginPicker();
+    });
+    $('site-add-quick-routes').addEventListener('click', (e) => {
+      const btn = e.target.closest('button[data-toggle-new-site-origin]');
+      if (!btn) return;
+      const val = btn.dataset.toggleNewSiteOrigin || '';
+      if (!val) return;
+      if (state.newSiteOrigins.includes(val)) {
+        state.newSiteOrigins = state.newSiteOrigins.filter((x) => x !== val);
+      } else {
+        state.newSiteOrigins.push(val);
+      }
+      renderAddSiteOriginPicker();
+    });
     $('form-add-route').addEventListener('submit', handleAddRoute);
     $('form-settings-quota').addEventListener('submit', handleQuotaSubmit);
     $('view-back-office').addEventListener('click', handleBackOfficeActionClick);
