@@ -764,6 +764,34 @@
     const recSiteReason = recSites[0] ? recSites[0].reason : '';
 
     // 3. รวบรวมเส้นทางทั้งหมดที่ผูกไว้ (รองรับหลายเส้นทางต่อ 1 โครงการ!)
+    const rawSiteBoundRoutes = [];
+    const seenSiteBoundKey = new Set();
+    const pushSiteBound = (orig, dest, reason) => {
+      const o = String(orig || '').trim();
+      const d = String(dest || '').trim();
+      if (!o && !d) return;
+      const key = `${o}||${d}`;
+      if (seenSiteBoundKey.has(key)) return;
+      seenSiteBoundKey.add(key);
+      rawSiteBoundRoutes.push({ orig: o, dest: d, reason });
+    };
+
+    const workerMatchesSelectedSite =
+      !siteName || !worker || !worker.default_site || worker.default_site === siteName;
+
+    if (siteObj) {
+      for (const orig of siteOriginsOf(siteObj)) {
+        const mr = state.routes.find(
+          (r) => r.active && r.origin === orig && (r.default_site === siteObj.site_name || r.destination === siteObj.site_name)
+        );
+        const dest = (mr && mr.destination) || siteObj.site_name;
+        pushSiteBound(orig, dest, `ผูกกับโครงการ ${siteObj.site_name}`);
+      }
+    }
+    for (const r of routesBySite) {
+      pushSiteBound(r.origin, r.destination || siteName, `ผูกกับโครงการ ${siteName}`);
+    }
+
     const rawRoutes = [];
     const seenRouteKey = new Set();
     const pushRawRoute = (orig, dest, reason) => {
@@ -777,19 +805,14 @@
     };
 
     const effectiveDestForSite = siteName || (worker && worker.default_site) || '';
-    if (worker && (worker.default_origin || worker.default_destination)) {
+    if (worker && workerMatchesSelectedSite && (worker.default_origin || worker.default_destination)) {
       const wDest = worker.default_destination || siteName || worker.default_site || '';
-      pushRawRoute(worker.default_origin, wDest, `ผูกกับ ${worker.name}`);
-    }
-    if (siteObj) {
-      for (const orig of siteOriginsOf(siteObj)) {
-        const mr = state.routes.find((r) => r.active && r.origin === orig && (r.default_site === siteObj.site_name || r.destination === siteObj.site_name));
-        const dest = (mr && mr.destination) || siteObj.site_name;
-        pushRawRoute(orig, dest, `ผูกกับโครงการ ${siteObj.site_name}`);
+      if (!siteName || rawSiteBoundRoutes.length === 0 || rawSiteBoundRoutes.some((r) => r.orig === worker.default_origin)) {
+        pushRawRoute(worker.default_origin, wDest, `ผูกกับ ${worker.name}`);
       }
     }
-    for (const r of routesBySite) {
-      pushRawRoute(r.origin, r.destination || siteName, `ผูกกับโครงการ ${siteName}`);
+    for (const sr of rawSiteBoundRoutes) {
+      pushRawRoute(sr.orig, sr.dest, sr.reason);
     }
     if (rawRoutes.length === 0) {
       let fallbackDest = '';
@@ -808,6 +831,12 @@
     }
 
     const recRoutes = rawRoutes.map((r) => ({
+      orig: state.isSwapped ? r.dest : r.orig,
+      dest: state.isSwapped ? r.orig : r.dest,
+      reason: r.reason
+    }));
+
+    const siteBoundRoutes = rawSiteBoundRoutes.map((r) => ({
       orig: state.isSwapped ? r.dest : r.orig,
       dest: state.isSwapped ? r.orig : r.dest,
       reason: r.reason
@@ -836,7 +865,8 @@
       recOriginReason,
       recDest,
       recDestReason,
-      recRoutes
+      recRoutes,
+      siteBoundRoutes
     };
   }
 
@@ -917,6 +947,16 @@
       return dedup(list);
     }
     if (id === 'form-origin') {
+      // เมื่อเลือกโครงการแล้ว ให้แสดงเฉพาะเส้นทางที่ผูกกับโครงการนั้นเท่านั้น (แต่ยังพิมพ์เองได้อิสระ)
+      if (rec.siteName) {
+        const scoped = [];
+        for (const rr of rec.recRoutes || []) {
+          if (rr.orig) {
+            scoped.push({ value: rr.orig, sub: `★ แนะนำ (${rr.reason})`, recommended: true });
+          }
+        }
+        return dedup(scoped);
+      }
       const list = [];
       for (const rr of rec.recRoutes || []) {
         if (rr.orig) {
@@ -940,6 +980,16 @@
       return dedup(list);
     }
     if (id === 'form-destination') {
+      // เมื่อเลือกโครงการแล้ว ให้แสดงเฉพาะปลายทาง/เส้นทางที่ผูกกับโครงการนั้นเท่านั้น (แต่ยังพิมพ์เองได้อิสระ)
+      if (rec.siteName) {
+        const scoped = [];
+        for (const rr of rec.recRoutes || []) {
+          if (rr.dest) {
+            scoped.push({ value: rr.dest, sub: `★ แนะนำ (${rr.reason})`, recommended: true });
+          }
+        }
+        return dedup(scoped);
+      }
       const list = [];
       for (const rr of rec.recRoutes || []) {
         if (rr.dest) {
@@ -998,32 +1048,49 @@
       visibleItems = list;
       hiIdx = -1;
 
+      const selectedSite = $('form-site') ? $('form-site').value.trim() : '';
+      const isRouteScoped = Boolean(selectedSite && (id === 'form-origin' || id === 'form-destination'));
+
       if (list.length === 0) {
-        menu.innerHTML = all.length === 0
-          ? '<div class="px-3.5 py-2.5 text-xs text-slate-400 text-center">ยังไม่มีรายการตั้งค่า — พิมพ์ข้อความเองได้เลย</div>'
-          : `<div class="px-3.5 py-2.5 text-xs text-slate-500 text-center">ไม่พบในรายการ — ใช้ข้อความที่พิมพ์เอง <strong>"${escapeHtml(curVal)}"</strong> ได้ทันที</div>`;
+        if (all.length === 0 && isRouteScoped) {
+          menu.innerHTML = curVal
+            ? `<div class="px-3.5 py-2.5 text-xs text-slate-600 text-center">โครงการ <strong>"${escapeHtml(selectedSite)}"</strong> ยังไม่ได้ผูกเส้นทาง — ใช้ข้อความที่พิมพ์เอง <strong>"${escapeHtml(curVal)}"</strong> ได้ทันที</div>`
+            : `<div class="px-3.5 py-2.5 text-xs text-slate-500 text-center">โครงการ <strong>"${escapeHtml(selectedSite)}"</strong> ยังไม่ได้ผูกเส้นทาง — พิมพ์ชื่อเส้นทางเองได้เลย</div>`;
+        } else {
+          menu.innerHTML = all.length === 0
+            ? '<div class="px-3.5 py-2.5 text-xs text-slate-400 text-center">ยังไม่มีรายการตั้งค่า — พิมพ์ข้อความเองได้เลย</div>'
+            : `<div class="px-3.5 py-2.5 text-xs text-slate-500 text-center">${isRouteScoped ? 'ไม่พบในเส้นทางที่ผูกกับโครงการนี้' : 'ไม่พบในรายการ'} — ใช้ข้อความที่พิมพ์เอง <strong>"${escapeHtml(curVal)}"</strong> ได้ทันที</div>`;
+        }
       } else {
-        menu.innerHTML = list
-          .map((o, idx) => {
-            const selected = o.value === curVal;
-            const rowCls = selected
-              ? 'bg-indigo-50 text-indigo-900 font-semibold'
-              : o.recommended
-                ? 'bg-amber-50/90 hover:bg-amber-100/80 text-amber-950 font-semibold border-b border-amber-200/80'
-                : 'text-slate-800 hover:bg-slate-100';
-            const subCls = o.recommended ? 'text-[11px] text-amber-700 font-semibold' : 'text-[11px] text-slate-400 font-normal';
-            return `
-              <button type="button" data-combo-opt="${idx}"
-                class="w-full text-left px-3.5 py-2 text-xs sm:text-sm flex items-center justify-between gap-2 transition cursor-pointer ${rowCls}">
-                <span class="truncate">${escapeHtml(o.value)}</span>
-                <span class="flex items-center gap-1.5 shrink-0">
-                  ${o.sub ? `<span class="${subCls}">${escapeHtml(o.sub)}</span>` : ''}
-                  ${selected ? '<i class="fa-solid fa-check text-indigo-600 text-[11px]"></i>' : ''}
-                </span>
-              </button>
-            `;
-          })
-          .join('');
+        const scopeBanner = isRouteScoped
+          ? `<div class="px-3 py-1.5 bg-slate-50 border-b border-slate-200 text-[11px] font-semibold text-slate-600 flex items-center justify-between gap-2">
+              <span><i class="fa-solid fa-route text-emerald-600 mr-1"></i>เฉพาะที่ผูกกับโครงการ ${escapeHtml(selectedSite)}</span>
+              <span class="text-[10px] text-slate-400 font-normal">พิมพ์ชื่ออื่นเองได้</span>
+            </div>`
+          : '';
+        menu.innerHTML =
+          scopeBanner +
+          list
+            .map((o, idx) => {
+              const selected = o.value === curVal;
+              const rowCls = selected
+                ? 'bg-indigo-50 text-indigo-900 font-semibold'
+                : o.recommended
+                  ? 'bg-amber-50/90 hover:bg-amber-100/80 text-amber-950 font-semibold border-b border-amber-200/80'
+                  : 'text-slate-800 hover:bg-slate-100';
+              const subCls = o.recommended ? 'text-[11px] text-amber-700 font-semibold' : 'text-[11px] text-slate-400 font-normal';
+              return `
+                <button type="button" data-combo-opt="${idx}"
+                  class="w-full text-left px-3.5 py-2 text-xs sm:text-sm flex items-center justify-between gap-2 transition cursor-pointer ${rowCls}">
+                  <span class="truncate">${escapeHtml(o.value)}</span>
+                  <span class="flex items-center gap-1.5 shrink-0">
+                    ${o.sub ? `<span class="${subCls}">${escapeHtml(o.sub)}</span>` : ''}
+                    ${selected ? '<i class="fa-solid fa-check text-indigo-600 text-[11px]"></i>' : ''}
+                  </span>
+                </button>
+              `;
+            })
+            .join('');
       }
     };
 
